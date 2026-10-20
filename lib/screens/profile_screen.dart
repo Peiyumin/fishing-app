@@ -177,11 +177,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         child: CircleAvatar(
                           radius: 32,
                           backgroundColor: Colors.white,
-                          backgroundImage:
-                              (sp.avatar != null && sp.avatar!.isNotEmpty)
-                                  ? NetworkImage(sp.avatar!)
-                                  : null,
-                          child: (sp.avatar == null || sp.avatar!.isEmpty)
+                          // 必须用 avatarUrl（内部走 ApiConfig.mediaUrl）：
+                          // 后台返回的地址常会丢掉 :8801 端口，直接用原始
+                          // avatar 会 404 → 头像显示成一个白圆。
+                          backgroundImage: (sp.avatarUrl != null &&
+                                  sp.avatarUrl!.isNotEmpty)
+                              ? NetworkImage(sp.avatarUrl!)
+                              : null,
+                          child: (sp.avatarUrl == null || sp.avatarUrl!.isEmpty)
                               ? const Icon(Icons.person,
                                   size: 36, color: AppTheme.primary)
                               : null,
