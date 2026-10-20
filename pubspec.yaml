@@ -28,6 +28,11 @@ dependencies:
   intl: ^0.19.0
   # 简单全局状态（登录态）
   provider: ^6.1.2
+  # 本地持久化（登录态留存：退出 App 不掉线，重装才需重新登录）
+  shared_preferences: ^2.2.2
+  # 热更新：下载目录 + 安卓 apk 跳转安装
+  path_provider: ^2.1.1
+  open_filex: ^5.0.0
   gal: 2.1.1
 
 dev_dependencies:
@@ -43,4 +48,12 @@ dependency_overrides:
 flutter:
   uses-material-design: true
   assets:
-    - assets/
+    # 内置头像（新注册用户随机分配）—— 显式列出，确保打进安装包
+    - assets/avatars/avatar_01.png
+    - assets/avatars/avatar_02.png
+    - assets/avatars/avatar_03.png
+    - assets/avatars/avatar_04.png
+    - assets/avatars/avatar_05.png
+    - assets/avatars/avatar_06.png
+    - assets/avatars/avatar_07.png
+    - assets/avatars/avatar_08.png
