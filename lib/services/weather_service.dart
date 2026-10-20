@@ -17,6 +17,11 @@ class WeatherService {
   static const String _curCacheKey = 'wx_current_v1';
   static const String _fcCacheKey = 'wx_forecast_v1';
 
+  /// 测试专用：非空时替代真实的网络拉取，避免测试环境联网超时。
+  /// 生产代码默认 null。
+  static Future<WeatherBundle> Function(double lat, double lng)?
+      testForecastOverride;
+
   /// 拉取当前天气（成功后写缓存）
   ///
   /// `cloud_cover` 与 `precipitation` 是校正天气现象的关键：
@@ -88,6 +93,9 @@ class WeatherService {
 
   /// 拉取 7 天预报 + 逐小时（温度/湿度/气压/降雨概率/降雨量/风/紫外线）
   static Future<WeatherBundle> fetchForecast(double lat, double lng) async {
+    if (testForecastOverride != null) {
+      return testForecastOverride!(lat, lng);
+    }
     final uri = Uri.parse(
       '$_base?latitude=$lat&longitude=$lng'
       '&current=temperature_2m,relative_humidity_2m,precipitation,weather_code,'
