@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modify this file to customize your launch splash screen -->
+<!-- 启动闪屏背景：Flutter 引擎画出第一帧之前由系统显示。
+     原来是 @android:color/white —— 冷启动先白屏一下再变绿，观感就是
+     「打开 App 白屏过一会才正常」。改成品牌深湖绿 #0F7A53，
+     与 Flutter 侧 SplashScreen 底色一致，过渡无缝。 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@android:color/white" />
-
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
-        <bitmap
-            android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+    <item>
+        <color android:color="#FF0F7A53" />
+    </item>
 </layer-list>
