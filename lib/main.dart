@@ -41,6 +41,8 @@ class MyApp extends StatelessWidget {
       title: '垂钓圈',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
+      // 首帧还没画出来时，系统窗口底色用品牌绿，避免冷启动闪一下白屏
+      color: AppTheme.primary,
       home: const StartupGate(),
     );
   }
@@ -66,8 +68,18 @@ class _StartupGateState extends State<StartupGate> {
     _load();
   }
 
+  /// 启动配置最多等这么久：超时就用「无启动内容」直接进首页。
+  /// 服务器慢 / 断网时不能让用户一直干等在启动页（表现为「白屏过一会才进」）。
+  static const _bootTimeout = Duration(milliseconds: 2500);
+
   Future<void> _load() async {
-    final boot = await AppService.bootstrap();
+    AppBootstrap boot;
+    try {
+      boot = await AppService.bootstrap().timeout(_bootTimeout);
+    } catch (_) {
+      // 超时或后端不可用：不展示启动广告/预览页，直接进首页
+      boot = const AppBootstrap();
+    }
     if (!mounted) return;
     setState(() {
       _boot = boot;
