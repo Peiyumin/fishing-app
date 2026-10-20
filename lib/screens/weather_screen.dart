@@ -24,9 +24,14 @@ class _WeatherScreenState extends State<WeatherScreen> {
   int _metricTab = 0; // 0天气 1风 2大气压 3垂钓指数
   static const _metricNames = ['天气', '风', '大气压', '垂钓指数'];
 
+  /// 打开页面时的当前小时：作为「时间段」基准。
+  /// 7 天预报 / 顶部实况 / AI 判断都锚定在这一小时，而不是用全天聚合。
+  int _refHour = DateTime.now().hour;
+
   @override
   void initState() {
     super.initState();
+    _refHour = DateTime.now().hour; // 锁定打开时刻的小时
     _load();
   }
 
@@ -114,9 +119,17 @@ class _WeatherScreenState extends State<WeatherScreen> {
         _DateTabs(
           days: b.days,
           selected: _selected,
+          bundle: b,
+          refHour: _refHour,
           onSelect: (i) => setState(() => _selected = i),
         ),
-        _SummaryCard(day: day, stats: s, isToday: _selected == 0, bundle: b),
+        _SummaryCard(
+          day: day,
+          stats: s,
+          isToday: _selected == 0,
+          bundle: b,
+          refHour: _refHour,
+        ),
         const SizedBox(height: 10),
         _MetricTabs(
           names: _metricNames,
@@ -140,9 +153,16 @@ class _WeatherScreenState extends State<WeatherScreen> {
 class _DateTabs extends StatelessWidget {
   final List<DaySummary> days;
   final int selected;
+  final WeatherBundle bundle;
+  final int refHour;
   final ValueChanged<int> onSelect;
-  const _DateTabs(
-      {required this.days, required this.selected, required this.onSelect});
+  const _DateTabs({
+    required this.days,
+    required this.selected,
+    required this.bundle,
+    required this.refHour,
+    required this.onSelect,
+  });
 
   static const _weekday = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
@@ -155,20 +175,26 @@ class _DateTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final periodDay = refHour >= 6 && refHour < 18;
     return SizedBox(
-      height: 62,
+      height: 88,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         itemCount: days.length,
         separatorBuilder: (_, __) => const SizedBox(width: 6),
         itemBuilder: (_, i) {
           final d = days[i].date;
           final sel = i == selected;
+          final rp = bundle.dayRefHour(d, refHour);
+          final code = rp?.weatherCode ?? days[i].weatherCode;
+          final temp = rp?.temp ?? (days[i].tempMax + days[i].tempMin) / 2;
+          final txtColor = sel ? Colors.white : Colors.black87;
+          final subColor = sel ? Colors.white70 : Colors.grey;
           return GestureDetector(
             onTap: () => onSelect(i),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               decoration: BoxDecoration(
                 color: sel ? AppTheme.accent : Colors.white,
                 borderRadius: BorderRadius.circular(20),
@@ -181,15 +207,24 @@ class _DateTabs extends StatelessWidget {
                 children: [
                   Text(_label(i, d),
                       style: TextStyle(
-                          color: sel ? Colors.white : Colors.black87,
+                          color: txtColor,
                           fontWeight: FontWeight.w600,
                           fontSize: 13)),
+                  const SizedBox(height: 3),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Wmo.icon(code, day: periodDay),
+                          size: 18, color: Wmo.color(code, day: periodDay)),
+                      const SizedBox(width: 3),
+                      Text('${temp.round()}°',
+                          style: TextStyle(color: txtColor, fontSize: 13)),
+                    ],
+                  ),
                   const SizedBox(height: 2),
                   Text(
                     '${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}',
-                    style: TextStyle(
-                        color: sel ? Colors.white70 : Colors.grey,
-                        fontSize: 11),
+                    style: TextStyle(color: subColor, fontSize: 11),
                   ),
                 ],
               ),
@@ -259,23 +294,44 @@ class _SummaryCard extends StatelessWidget {
   final _DayStats stats;
   final bool isToday;
   final WeatherBundle bundle;
+  final int refHour;
   const _SummaryCard({
     required this.day,
     required this.stats,
     required this.isToday,
     required this.bundle,
+    required this.refHour,
   });
 
   @override
   Widget build(BuildContext context) {
-    final score = isToday ? bundle.currentFishIndex : day.fishIndex;
-    final hum = isToday ? bundle.curHumidity.toDouble() : stats.avgHumidity;
-    final pres = isToday ? bundle.curPressure : stats.avgPressure;
-    final wind = isToday ? bundle.curWindSpeed : stats.avgWind;
-    final wdir = isToday ? bundle.curWindDir : stats.domWindDir;
-    final uv = day.uvMax ?? stats.avgUv;
-    final rainProb = day.precipProbMax;
-    final rainMm = isToday ? bundle.curPrecip : day.precipSum;
+    // —— 锚定「当前 / 对应时间段」的天气，而不是全天聚合 ——
+    final rp = bundle.dayRefHour(day.date, refHour);
+    final periodDay = refHour >= 6 && refHour < 18;
+
+    final int wcode =
+        isToday ? bundle.curCode : (rp?.weatherCode ?? day.weatherCode);
+    final double temp =
+        isToday ? bundle.curTemp : (rp?.temp ?? (day.tempMax + day.tempMin) / 2);
+    final score = isToday
+        ? bundle.currentFishIndex
+        : (rp?.fishIndex ?? day.fishIndex);
+    final hum = isToday
+        ? bundle.curHumidity.toDouble()
+        : (rp?.humidity.toDouble() ?? stats.avgHumidity);
+    final pres =
+        isToday ? bundle.curPressure : (rp?.pressure ?? stats.avgPressure);
+    final wind =
+        isToday ? bundle.curWindSpeed : (rp?.windSpeed ?? stats.avgWind);
+    final wdir = isToday ? bundle.curWindDir : (rp?.windDir ?? stats.domWindDir);
+    final uv = rp?.uv ?? day.uvMax ?? stats.avgUv;
+    final rainProb = rp?.precipProb ?? day.precipProbMax;
+    final rainMm = isToday ? bundle.curPrecip : (rp?.precip ?? day.precipSum);
+
+    // 顶部时间段的文字说明（今天=当前，其余=该时段的小时）
+    final periodText = isToday
+        ? '当前'
+        : '${refHour.toString().padLeft(2, '0')}:00';
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -283,24 +339,31 @@ class _SummaryCard extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         child: Column(
           children: [
-            // 顶部：天气图标 + 温度区间 + 垂钓指数环
+            // 顶部：天气图标 + 当前/时段温度 + 垂钓指数环
             Row(
               children: [
-                Icon(Wmo.icon(day.weatherCode),
-                    size: 40, color: Wmo.color(day.weatherCode)),
+                Icon(Wmo.icon(wcode, day: isToday ? true : periodDay),
+                    size: 40,
+                    color: Wmo.color(wcode, day: isToday ? true : periodDay)),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '${day.tempMin.toStringAsFixed(1)}°C ~ ${day.tempMax.toStringAsFixed(1)}°C',
+                        '${temp.toStringAsFixed(1)}°C',
                         style: const TextStyle(
                             fontSize: 20, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 2),
-                      Text(Wmo.text(day.weatherCode),
+                      Text('$periodText · ${Wmo.text(wcode)}',
                           style: const TextStyle(color: Colors.grey)),
+                      const SizedBox(height: 1),
+                      Text(
+                        '全天 ${day.tempMin.toStringAsFixed(0)}~${day.tempMax.toStringAsFixed(0)}°C',
+                        style: const TextStyle(
+                            color: Colors.grey, fontSize: 11),
+                      ),
                     ],
                   ),
                 ),
@@ -329,12 +392,10 @@ class _SummaryCard extends StatelessWidget {
               const SizedBox.shrink(),
             ]),
             const SizedBox(height: 12),
-            // AI 多因子垂钓建议
+            // AI 多因子垂钓建议（基于当前/时段天气，而非全天）
             _AiAdviceBlock(
               advice: FishingAdvisor.build(
-                temp: isToday
-                    ? bundle.curTemp
-                    : (day.tempMax + day.tempMin) / 2,
+                temp: temp,
                 tempMin: day.tempMin,
                 tempMax: day.tempMax,
                 pressure: pres,
@@ -343,8 +404,8 @@ class _SummaryCard extends StatelessWidget {
                 rainProb: rainProb,
                 rainMm: rainMm,
                 uv: uv,
-                weatherCode: day.weatherCode,
-                hour: isToday ? DateTime.now().hour : null,
+                weatherCode: wcode,
+                hour: isToday ? refHour : null,
               ),
             ),
           ],
