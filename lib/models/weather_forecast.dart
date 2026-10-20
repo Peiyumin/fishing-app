@@ -261,6 +261,7 @@ class WeatherBundle {
   final int curWindDir;
   final double curPrecip;
   final int curCode;
+  final int curPrecipProb; // 当前小时降雨概率 %
   // 全部逐小时（7×24）与 7 天日报
   final List<HourPoint> hours;
   final List<DaySummary> days;
@@ -275,6 +276,7 @@ class WeatherBundle {
     required this.curWindDir,
     required this.curPrecip,
     required this.curCode,
+    required this.curPrecipProb,
     required this.hours,
     required this.days,
   });
@@ -302,11 +304,39 @@ class WeatherBundle {
         .toList();
   }
 
+  /// 取某一天 [day]、某一自然小时 [hour] 的逐小时数据（用于「按时间段」显示天气）
+  HourPoint? hourAt(DateTime day, int hour) {
+    for (final h in hours) {
+      if (h.time.year == day.year &&
+          h.time.month == day.month &&
+          h.time.day == day.day &&
+          h.time.hour == hour) {
+        return h;
+      }
+    }
+    return null;
+  }
+
+  /// 取某一天「对应时间段」的逐小时数据：
+  /// 以 [refHour]（打开页面时的当前小时）为时间段基准 ——
+  /// 今天取真实当前小时、未来几天取同一小时，保证 7 天显示 / AI 判断
+  /// 都锚定在同一时段，而不是用「全天聚合」代表当天天气。
+  HourPoint? dayRefHour(DateTime day, int refHour) {
+    final h = hourAt(day, refHour);
+    if (h != null) return h;
+    // 兜底：取当天最接近 refHour 的那一小时
+    final dayHours = hoursOf(day);
+    if (dayHours.isEmpty) return null;
+    dayHours.sort((a, b) =>
+        (a.time.hour - refHour).abs().compareTo((b.time.hour - refHour).abs()));
+    return dayHours.first;
+  }
+
   /// 当日垂钓指数（用当前实况算）
   int get currentFishIndex => FishIndex.score(
         pressure: curPressure,
         windKmh: curWindSpeed,
-        precipProb: today.precipProbMax,
+        precipProb: curPrecipProb,
         temp: curTemp,
         code: curCode,
       );
@@ -427,6 +457,8 @@ class WeatherBundle {
 
     // 当前实况的天气现象也校正一次（云量取时间上最近的一小时）
     final curPrecipV = (cur?['precipitation'] as num?)?.toDouble() ?? 0;
+    final curPrecipProbV =
+        (cur?['precipitation_probability'] as num?)?.round() ?? 0;
     var curCodeV = (cur?['weather_code'] as num?)?.round() ?? 0;
     if (hours.isNotEmpty) {
       final nowH = DateTime.now();
@@ -456,6 +488,7 @@ class WeatherBundle {
       curWindDir: (cur?['wind_direction_10m'] as num?)?.round() ?? 0,
       curPrecip: curPrecipV,
       curCode: curCodeV,
+      curPrecipProb: curPrecipProbV,
       hours: hours,
       days: days,
     );
