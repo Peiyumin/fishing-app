@@ -42,6 +42,16 @@
 	<!-- 没有 加密/合规 特殊项，TestFlight 免答出口合规问卷 -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- 导航前置检测：iOS 必须在这里声明 scheme，否则 canLaunchUrl 永远返回 false，
+	     就检测不到用户装了高德 / 腾讯 / 百度地图 -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>iosamap</string>
+		<string>amap</string>
+		<string>qqmap</string>
+		<string>baidumap</string>
+		<string>comgooglemaps</string>
+	</array>
 	<key>UIRequiresFullScreen</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
