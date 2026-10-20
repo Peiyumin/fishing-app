@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
 import '../models/fishing_spot.dart';
 import '../models/post.dart';
+import '../services/location_service.dart';
 import '../services/post_service.dart';
 import '../services/session_provider.dart';
 import '../services/spot_service.dart';
 import '../services/weather_service.dart';
+import '../widgets/center_toast.dart';
 import '../widgets/grid_nav.dart';
+import '../widgets/location_prompt.dart';
 import '../widgets/post_card.dart';
 import '../widgets/section_header.dart';
 import '../widgets/spot_card.dart';
@@ -18,7 +20,6 @@ import 'search_screen.dart';
 import 'weather_screen.dart';
 import 'spots_screen.dart';
 import 'spot_detail_screen.dart';
-import '../widgets/center_toast.dart';
 
 /// 首页：搜索框 + 宫格导航 + 天气/钓点 + 实时动态流
 class HomeScreen extends StatefulWidget {
@@ -73,9 +74,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadWeather() async {
     double lat = 30.2741, lng = 120.1551; // 默认：杭州
     try {
-      final pos = await Geolocator.getCurrentPosition();
+      final pos = await LocationService.determinePosition();
       lat = pos.latitude;
       lng = pos.longitude;
+    } on LocationException catch (e) {
+      // 首次打开 App：权限被拒时引导用户授权（其他原因静默用默认坐标）
+      if (e.type == LocationErrorType.permissionDenied && mounted) {
+        LocationPrompt.showError(context, e);
+      }
     } catch (_) {
       // 忽略，使用默认坐标
     }
