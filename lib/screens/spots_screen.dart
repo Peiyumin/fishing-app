@@ -36,6 +36,7 @@ class _SpotsScreenState extends State<SpotsScreen>
   List<FishingSpot> _shops = []; // 渔具店（kind=shop）
   List<FishingSpot> _wild = []; // 野钓点（kind=wild）
   bool _loading = true;
+  bool _locating = false; // 正在定位（按钮转圈，避免「点了没反应」的错觉）
   String _type = '全部';
   final List<String> _types = ['全部', '黑坑', '路亚', '野钓场', '海钓', '渔具店'];
 
@@ -48,7 +49,9 @@ class _SpotsScreenState extends State<SpotsScreen>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _load();
-    _locate();
+    // 首帧后再定位：避免在 Flutter 首帧之前就弹系统权限框（iOS 会吞掉），
+    // 也不至于在没有地图实例时去操作 MapController。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _locate(silent: true));
   }
 
   @override
@@ -69,7 +72,12 @@ class _SpotsScreenState extends State<SpotsScreen>
   }
 
   /// 获取当前位置（仅用于距离展示与地图居中）
-  Future<void> _locate() async {
+  ///
+  /// [silent] = true 用于「打开页面自动定位」：失败不打扰用户。
+  /// 手动点「我的位置」按钮时 silent=false：转圈 + 结果 toast + 失败弹窗引导。
+  Future<void> _locate({bool silent = false}) async {
+    if (_locating) return; // 防连点重复请求（并发会把 iOS 权限框顶掉）
+    if (mounted) setState(() => _locating = true);
     try {
       final pos = await LocationService.determinePosition();
       if (!mounted) return;
@@ -78,11 +86,25 @@ class _SpotsScreenState extends State<SpotsScreen>
         _myLng = pos.longitude;
       });
       // 卫星地图居中到当前位置（WGS-84 → GCJ-02 后再定位）
-      final g = CoordTransform.wgs84ToGcj02(pos.latitude, pos.longitude);
-      _mapController.move(LatLng(g[0], g[1]), 13);
+      // 野钓 Tab 还没渲染时 MapController 未挂载，move 会抛错，这里单独兜住
+      try {
+        final g = CoordTransform.wgs84ToGcj02(pos.latitude, pos.longitude);
+        _mapController.move(LatLng(g[0], g[1]), 13);
+      } catch (_) {
+        // 地图未就绪：坐标已拿到，切到野钓 Tab 时会用当前位置作为中心
+      }
+      if (!silent && mounted) {
+        CenterToast.show(context, '已定位到当前位置', icon: Icons.my_location);
+      }
     } on LocationException catch (e) {
-      if (mounted) LocationPrompt.showError(context, e);
-    } catch (_) {/* 定位失败时用默认中心 */}
+      if (mounted && !silent) LocationPrompt.showError(context, e);
+    } catch (e) {
+      if (mounted && !silent) {
+        CenterToast.show(context, '定位失败：$e', icon: Icons.location_off_outlined);
+      }
+    } finally {
+      if (mounted) setState(() => _locating = false);
+    }
   }
 
   /// 与我的位置的距离文案（拿不到定位时返回 null）
@@ -479,8 +501,14 @@ class _SpotsScreenState extends State<SpotsScreen>
             backgroundColor: Colors.white,
             foregroundColor: AppTheme.accent,
             tooltip: '我的位置',
-            onPressed: _locate,
-            child: const Icon(Icons.my_location),
+            onPressed: () => _locate(),
+            child: _locating
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.my_location),
           ),
         ),
         // 添加野钓点（主入口）
