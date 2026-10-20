@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_theme.dart';
 import 'package:provider/provider.dart';
 
+import '../services/builtin_avatars.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
 
@@ -35,6 +36,11 @@ class _AuthScreenState extends State<AuthScreen> {
           return;
         }
         await sp.signUp(_phone.text.trim(), _pwd.text, _name.text.trim());
+        // 新用户随机分配一个安装包内置头像（上传失败不阻塞注册）
+        try {
+          final avatar = await BuiltinAvatars.uploadRandom();
+          if (avatar != null) await sp.updateProfile(avatar: avatar);
+        } catch (_) {}
       } else {
         await sp.signIn(_phone.text.trim(), _pwd.text);
       }
