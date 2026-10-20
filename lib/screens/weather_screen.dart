@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_theme.dart';
 
 import '../models/weather_forecast.dart';
+import '../services/fishing_advisor.dart';
 import '../services/location_service.dart';
 import '../services/weather_service.dart';
 import '../widgets/location_prompt.dart';
@@ -30,10 +31,23 @@ class _WeatherScreenState extends State<WeatherScreen> {
   }
 
   Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    // ① 先读缓存秒显（断网/弱网也能看上次预报）
+    if (_bundle == null) {
+      final cached = await WeatherService.readCachedForecast();
+      if (cached != null && mounted) {
+        setState(() {
+          _bundle = cached;
+          _loading = false;
+        });
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _loading = _bundle == null; // 已有缓存时不再转圈
+        _error = null;
+      });
+    }
+
     double lat = 30.2741, lng = 120.1551; // 默认：杭州
     try {
       final pos = await LocationService.determinePosition();
@@ -49,9 +63,15 @@ class _WeatherScreenState extends State<WeatherScreen> {
     }
     try {
       final b = await WeatherService.fetchForecast(lat, lng);
-      if (mounted) setState(() => _bundle = b);
+      if (mounted) {
+        setState(() {
+          _bundle = b;
+          _error = null;
+        });
+      }
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      // 有缓存时保留缓存，不把整页变成错误页
+      if (mounted && _bundle == null) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -287,27 +307,133 @@ class _SummaryCard extends StatelessWidget {
                 _FishRing(score: score),
               ],
             ),
-            const Divider(height: 18),
-            // 指标网格（3 列）
-            GridView.count(
-              crossAxisCount: 3,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              childAspectRatio: 1.25,
-              children: [
-                _Cell('湿度', '${hum.round()}%'),
-                _Cell('大气压(海平面)', '${pres.toStringAsFixed(1)} hpa'),
-                _Cell('紫外线指数', uv.toStringAsFixed(1)),
-                _Cell('风', '${windDirText(wdir)} ${(wind / 3.6).toStringAsFixed(1)} m/s'),
-                _Cell('温差', '${stats.tempRange.toStringAsFixed(1)}°C'),
-                _Cell('温差(与昨日)',
-                    '${stats.rangeVsYesterday >= 0 ? '+' : ''}${stats.rangeVsYesterday.toStringAsFixed(1)}°C'),
-                _Cell('降雨概率', '$rainProb%'),
-                _Cell('降雨量', '${rainMm.toStringAsFixed(1)}mm'),
-              ],
+            const Divider(height: 14),
+            // 指标网格（3 列，紧密排布，避免大片空白）
+            _MetricRow(cells: [
+              _Cell('湿度', '${hum.round()}%'),
+              _Cell('大气压(海平面)', '${pres.toStringAsFixed(1)} hpa'),
+              _Cell('紫外线指数', uv.toStringAsFixed(1)),
+            ]),
+            const Divider(height: 14),
+            _MetricRow(cells: [
+              _Cell('风',
+                  '${windDirText(wdir)} ${(wind / 3.6).toStringAsFixed(1)} m/s'),
+              _Cell('温差', '${stats.tempRange.toStringAsFixed(1)}°C'),
+              _Cell('温差(与昨日)',
+                  '${stats.rangeVsYesterday >= 0 ? '+' : ''}${stats.rangeVsYesterday.toStringAsFixed(1)}°C'),
+            ]),
+            const Divider(height: 14),
+            _MetricRow(cells: [
+              _Cell('降雨概率', '$rainProb%'),
+              _Cell('降雨量', '${rainMm.toStringAsFixed(1)}mm'),
+              const SizedBox.shrink(),
+            ]),
+            const SizedBox(height: 12),
+            // AI 多因子垂钓建议
+            _AiAdviceBlock(
+              advice: FishingAdvisor.build(
+                temp: isToday
+                    ? bundle.curTemp
+                    : (day.tempMax + day.tempMin) / 2,
+                tempMin: day.tempMin,
+                tempMax: day.tempMax,
+                pressure: pres,
+                windKmh: wind,
+                windDirDeg: wdir,
+                rainProb: rainProb,
+                rainMm: rainMm,
+                uv: uv,
+                weatherCode: day.weatherCode,
+                hour: isToday ? DateTime.now().hour : null,
+              ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 一行 3 个指标，等宽紧凑排布
+class _MetricRow extends StatelessWidget {
+  final List<Widget> cells;
+  const _MetricRow({required this.cells});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [for (final c in cells) Expanded(child: c)],
+    );
+  }
+}
+
+/// AI 垂钓建议卡片（头条 + 分条建议）
+class _AiAdviceBlock extends StatelessWidget {
+  final FishingAdvice advice;
+  const _AiAdviceBlock({required this.advice});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: BoxDecoration(
+        color: advice.color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: advice.color.withOpacity(0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.auto_awesome, size: 16, color: advice.color),
+              const SizedBox(width: 6),
+              Text('AI 垂钓建议',
+                  style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.bold,
+                      color: advice.color)),
+              const Spacer(),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                    color: advice.color,
+                    borderRadius: BorderRadius.circular(10)),
+                child: Text('${advice.level} · ${advice.score}',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(advice.headline,
+              style: const TextStyle(
+                  fontSize: 13.5, fontWeight: FontWeight.w600, height: 1.4)),
+          const SizedBox(height: 6),
+          ...advice.tips.map((t) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('• ',
+                        style: TextStyle(
+                            color: advice.color, fontWeight: FontWeight.bold)),
+                    Expanded(
+                      child: Text(t,
+                          style: const TextStyle(
+                              fontSize: 12.5,
+                              height: 1.45,
+                              color: Colors.black87)),
+                    ),
+                  ],
+                ),
+              )),
+        ],
       ),
     );
   }
@@ -321,8 +447,9 @@ class _Cell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(label,
