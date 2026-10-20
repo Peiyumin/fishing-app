@@ -9,6 +9,7 @@ import '../services/location_service.dart';
 import '../services/spot_service.dart';
 import '../services/session_provider.dart';
 import '../services/api_config.dart';
+import '../services/geo_place.dart';
 import '../utils/coord_transform.dart';
 import 'auth_screen.dart';
 import '../widgets/center_toast.dart';
@@ -33,6 +34,10 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
   LatLng? _picked; // WGS-84 坐标（存储用）
   bool _submitting = false;
   bool _locating = false;
+
+  // 选中位置的中文地址（由坐标反查得到，用于顶部提示）
+  GeoPlace? _geoAddress;
+  bool _resolvingAddress = false;
 
   // 默认中心：杭州（GCJ-02）
   final LatLng _defaultCenter = const LatLng(30.2741, 120.1551);
@@ -60,13 +65,29 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
       final p = LatLng(pos.latitude, pos.longitude); // WGS-84
       final g = CoordTransform.wgs84ToGcj02(pos.latitude, pos.longitude);
       _mapController.move(LatLng(g[0], g[1]), 15);
-      if (mounted) setState(() => _picked = p);
+      if (mounted) {
+        setState(() => _picked = p);
+        _resolveAddress(p.latitude, p.longitude);
+      }
     } on LocationException catch (e) {
       if (mounted) {
         LocationPrompt.showError(context, e);
       }
     } finally {
       if (mounted) setState(() => _locating = false);
+    }
+  }
+
+  /// 反查选中坐标的中文地址，结果写入 [_geoAddress]
+  Future<void> _resolveAddress(double lat, double lng) async {
+    if (mounted) setState(() => _resolvingAddress = true);
+    try {
+      final place = await GeoPlace.reverse(lat, lng);
+      if (mounted) setState(() => _geoAddress = place);
+    } catch (_) {
+      // 地址反查失败不影响选点
+    } finally {
+      if (mounted) setState(() => _resolvingAddress = false);
     }
   }
 
@@ -95,6 +116,7 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
         lng: _picked!.longitude,
         kind: 'wild', // 野钓点：保存后直接对全员展示
         fish: _fishCtrl.text.trim(),
+        address: _geoAddress?.bestAddress ?? '',
       );
       if (mounted) {
         CenterToast.show(context, '标记成功！所有钓友都能在卫星地图上看到');
@@ -137,7 +159,9 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
                       // 高德底图是 GCJ-02，点选后转回 WGS-84 存储
                       final w = CoordTransform.gcj02ToWgs84(
                           point.latitude, point.longitude);
-                      setState(() => _picked = LatLng(w[0], w[1]));
+                      final p = LatLng(w[0], w[1]);
+                      setState(() => _picked = p);
+                      _resolveAddress(p.latitude, p.longitude);
                     },
                   ),
                   children: [
@@ -190,9 +214,12 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
                           ? _locating
                               ? '📍 正在读取当前位置…'
                               : '👆 点击地图选择野钓点位置'
-                          : '已选位置（WGS84）：'
-                              '${_picked!.latitude.toStringAsFixed(6)}, '
-                              '${_picked!.longitude.toStringAsFixed(6)}',
+                          : _geoAddress == null
+                              ? _resolvingAddress
+                                  ? '📍 已选位置，正在解析地址…'
+                                  : '📍 已选位置：${_picked!.latitude.toStringAsFixed(4)}, '
+                                      '${_picked!.longitude.toStringAsFixed(4)}'
+                              : '📍 已选位置：${_geoAddress!.bestAddress}',
                       style: const TextStyle(fontSize: 13),
                     ),
                   ),
