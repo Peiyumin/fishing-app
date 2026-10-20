@@ -44,7 +44,11 @@ class WeatherCard extends StatelessWidget {
                         const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
                 if (placeLabel != null && placeLabel!.isNotEmpty) ...[
                   const SizedBox(width: 6),
-                  Flexible(
+                  // 注意：这里不能用 Flexible —— Flexible 会和下面的 Spacer
+                  // 平分剩余空间，把「垂钓指数」顶到中间去。用定宽盒子后，
+                  // 剩余空间全归 Spacer，指数胶囊才会紧贴卡片右侧。
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 84),
                     child: Text('· $placeLabel',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
