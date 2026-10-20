@@ -155,7 +155,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final sp = Provider.of<SessionProvider>(context);
-    final avatarUrl = sp.avatar;
+    // 用 avatarUrl（自动补端口/拼域名），直接用 sp.avatar 会因后台丢端口 404
+    final avatarUrl = sp.avatarUrl;
     final demo = !ApiConfig.enabled;
 
     return Scaffold(
