@@ -166,82 +166,90 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        // 左上角：定位地名（禹州 / 许昌…）+ 软件名
-        titleSpacing: 14,
-        title: Row(
-          children: [
-            // —— 定位地名（点击可刷新定位）——
-            InkWell(
-              onTap: () async {
-                GeoPlace.clearCache();
-                await _loadPlace(refresh: true);
-                await _loadWeather();
-                if (mounted) {
-                  CenterToast.show(context, '已重新定位');
-                }
-              },
-              borderRadius: BorderRadius.circular(20),
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.22),
+        // 顶部高度收紧（默认 56 → 46），软件名居中，定位地名浮在左侧
+        toolbarHeight: 46,
+        centerTitle: true,
+        titleSpacing: 12,
+        title: SizedBox(
+          width: double.infinity,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // —— 软件名：居中 ——
+              const Text(
+                '垂钓圈',
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1,
+                    color: Colors.white),
+              ),
+              // —— 定位地名：靠左浮层（点击可刷新定位）——
+              Align(
+                alignment: Alignment.centerLeft,
+                child: InkWell(
+                  onTap: () async {
+                    GeoPlace.clearCache();
+                    await _loadPlace(refresh: true);
+                    await _loadWeather();
+                    if (mounted) {
+                      CenterToast.show(context, '已重新定位');
+                    }
+                  },
                   borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_locatingPlace && _place == null)
-                      const SizedBox(
-                        width: 12,
-                        height: 12,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 1.6, color: Colors.white),
-                      )
-                    else
-                      const Icon(Icons.location_on,
-                          size: 14, color: Colors.white),
-                    const SizedBox(width: 3),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 88),
-                      child: Text(
-                        _place == null || _place!.label.isEmpty
-                            ? '定位中'
-                            : _place!.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white),
-                      ),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.22),
+                      borderRadius: BorderRadius.circular(20),
                     ),
-                    const Icon(Icons.keyboard_arrow_down,
-                        size: 15, color: Colors.white70),
-                  ],
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_locatingPlace && _place == null)
+                          const SizedBox(
+                            width: 11,
+                            height: 11,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 1.6, color: Colors.white),
+                          )
+                        else
+                          const Icon(Icons.location_on,
+                              size: 13, color: Colors.white),
+                        const SizedBox(width: 3),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 76),
+                          child: Text(
+                            _place == null || _place!.label.isEmpty
+                                ? '定位中'
+                                : _place!.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white),
+                          ),
+                        ),
+                        const Icon(Icons.keyboard_arrow_down,
+                            size: 14, color: Colors.white70),
+                      ],
+                    ),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
-            // —— 软件名（在地名右侧）——
-            const Text(
-              '垂钓圈',
-              style: TextStyle(
-                  fontSize: 19,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.5,
-                  color: Colors.white),
-            ),
-          ],
+            ],
+          ),
         ),
         flexibleSpace: Container(
           decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
         ),
-        // 顶部搜索框
+        // 顶部搜索框（高度一并收紧）
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(56),
+          preferredSize: const Size.fromHeight(50),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             child: InkWell(
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const SearchScreen()),
