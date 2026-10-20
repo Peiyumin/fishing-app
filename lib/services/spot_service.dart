@@ -1,4 +1,5 @@
 import '../models/fishing_spot.dart';
+import '../models/spot_comment.dart';
 import '../models/spot_report.dart';
 import 'api_client.dart';
 import 'api_config.dart';
@@ -194,5 +195,27 @@ class SpotService {
   static Future<List<SpotReport>> fetchReports() async {
     await Future.delayed(const Duration(milliseconds: 150));
     return List<SpotReport>.from(_demoReports);
+  }
+
+  // ---------------- 钓点评论（v16：需后台审核后展示） ----------------
+
+  /// 某个钓点「已审核通过」的评论列表（公开接口，未登录也能看）
+  static Future<List<SpotComment>> fetchComments(String spotId) async {
+    if (!ApiConfig.enabled) return const [];
+    final data = await ApiClient.get('/spots/$spotId/comments');
+    if (data is! List) return const [];
+    return data
+        .whereType<Map>()
+        .map((e) => SpotComment.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  /// 发表评论：提交后进入待审核，后台通过才在列表里显示
+  static Future<void> addComment(String spotId, String content) async {
+    if (!ApiConfig.enabled) {
+      throw Exception('演示模式暂不支持评论');
+    }
+    if (ApiClient.token == null) throw Exception('请先登录');
+    await ApiClient.post('/spots/$spotId/comment', {'content': content});
   }
 }
