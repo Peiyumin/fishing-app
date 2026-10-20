@@ -14,6 +14,7 @@ import '../utils/coord_transform.dart';
 import 'auth_screen.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/location_prompt.dart';
+import '../widgets/spot_map_marker.dart';
 
 /// 标记野钓点（kind=wild）
 /// 流程：打开自动读取当前位置 → 可在地图上拖动/点选微调 →
@@ -32,6 +33,7 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
   final _descCtrl = TextEditingController();
 
   LatLng? _picked; // WGS-84 坐标（存储用）
+  LatLng? _myLocation; // 当前定位（GCJ-02，仅作「我在哪」指示，与钓点区分）
   bool _submitting = false;
   bool _locating = false;
 
@@ -66,7 +68,10 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
       final g = CoordTransform.wgs84ToGcj02(pos.latitude, pos.longitude);
       _mapController.move(LatLng(g[0], g[1]), 15);
       if (mounted) {
-        setState(() => _picked = p);
+        setState(() {
+          _picked = p;
+          _myLocation = LatLng(g[0], g[1]);
+        });
         _resolveAddress(p.latitude, p.longitude);
       }
     } on LocationException catch (e) {
@@ -180,12 +185,23 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
                     if (pickedGcj != null)
                       MarkerLayer(
                         markers: [
+                          if (_myLocation != null)
+                            Marker(
+                              point: _myLocation!,
+                              width: 24,
+                              height: 24,
+                              alignment: Alignment.center,
+                              child: const MyLocationMarker(),
+                            ),
                           Marker(
                             point: pickedGcj,
-                            width: 40,
-                            height: 40,
-                            child: const Icon(Icons.location_on,
-                                color: AppTheme.danger, size: 38),
+                            width: 72,
+                            height: 60,
+                            alignment: Alignment.center,
+                            child: const SpotMapMarker(
+                              color: AppTheme.danger,
+                              label: '钓点',
+                            ),
                           ),
                         ],
                       ),
@@ -213,13 +229,13 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
                       _picked == null
                           ? _locating
                               ? '📍 正在读取当前位置…'
-                              : '👆 点击地图选择野钓点位置'
+                              : '👆 点地图微调位置 · 蓝点=我的位置 · 红标=钓点'
                           : _geoAddress == null
                               ? _resolvingAddress
-                                  ? '📍 已选位置，正在解析地址…'
-                                  : '📍 已选位置：${_picked!.latitude.toStringAsFixed(4)}, '
+                                  ? '📍 已选钓点，正在解析地址…'
+                                  : '📍 已选钓点：${_picked!.latitude.toStringAsFixed(4)}, '
                                       '${_picked!.longitude.toStringAsFixed(4)}'
-                              : '📍 已选位置：${_geoAddress!.bestAddress}',
+                              : '📍 已选钓点：${_geoAddress!.bestAddress}',
                       style: const TextStyle(fontSize: 13),
                     ),
                   ),
