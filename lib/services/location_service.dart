@@ -48,6 +48,11 @@ class LocationException implements Exception {
 class LocationService {
   static const _timeout = Duration(seconds: 15);
 
+  /// 测试专用：非空时替代真实定位（避免测试环境 geolocator 平台通道
+  /// 在 fake-async 下永不返回导致挂起）。生产代码默认 null。
+  static Future<Position> Function({LocationAccuracy accuracy})?
+      testDetermineOverride;
+
   /// 正在进行的权限请求（保证全局同一时刻只有一次，避免并发把系统弹框顶掉）
   static Future<LocationPermission>? _permFuture;
 
@@ -83,6 +88,9 @@ class LocationService {
   static Future<Position> determinePosition({
     LocationAccuracy accuracy = LocationAccuracy.high,
   }) async {
+    if (testDetermineOverride != null) {
+      return testDetermineOverride!(accuracy: accuracy);
+    }
     // 1. 定位服务（GPS 总开关）
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
