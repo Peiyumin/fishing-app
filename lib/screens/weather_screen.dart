@@ -395,19 +395,6 @@ class _AiAdviceBlock extends StatelessWidget {
                       fontSize: 13.5,
                       fontWeight: FontWeight.bold,
                       color: advice.color)),
-              const Spacer(),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                    color: advice.color,
-                    borderRadius: BorderRadius.circular(10)),
-                child: Text('${advice.level} · ${advice.score}',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600)),
-              ),
             ],
           ),
           const SizedBox(height: 8),
