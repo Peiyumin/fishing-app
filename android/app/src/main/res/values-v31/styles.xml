@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12（API 31）起系统会先显示自己的 SplashScreen：
+         不指定 android:windowSplashScreenBackground 时默认是白底，
+         冷启动就先闪一下白屏（用户反馈的「白屏过一会才正常」）。
+         这里把系统启动画面底色设成品牌深湖绿 #0F7A53，
+         与 Flutter 侧 SplashScreen 同色，过渡无缝。 -->
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:windowSplashScreenBackground">#FF0F7A53</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+    </style>
+</resources>
