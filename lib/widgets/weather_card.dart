@@ -14,20 +14,6 @@ class WeatherCard extends StatelessWidget {
   final String? placeLabel;
   const WeatherCard({super.key, required this.weather, this.placeLabel});
 
-  // 适宜指数 → 颜色
-  Color _indexColor() {
-    switch (weather.fishIndex) {
-      case '极佳':
-        return AppTheme.primary;
-      case '良好':
-        return AppTheme.accent;
-      case '一般':
-        return AppTheme.warning;
-      default:
-        return AppTheme.danger;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final advice = FishingAdvisor.build(
@@ -67,17 +53,19 @@ class WeatherCard extends StatelessWidget {
                   ),
                 ],
                 const Spacer(),
-                // 适宜指数徽标
+                // 垂钓指数：直接显示分数，贴右侧显示
                 Container(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                   decoration: BoxDecoration(
-                    color: _indexColor(),
+                    color: advice.color,
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: Text('适宜：${weather.fishIndex}',
+                  child: Text('垂钓指数：${advice.score}',
                       style: const TextStyle(
-                          color: Colors.white, fontSize: 12)),
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600)),
                 ),
               ],
             ),
