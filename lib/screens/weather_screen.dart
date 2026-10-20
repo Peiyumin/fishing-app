@@ -1,14 +1,36 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
-import '../app_theme.dart';
-
+import '../models/fishing_species.dart';
 import '../models/weather_forecast.dart';
 import '../services/fishing_advisor.dart';
 import '../services/location_service.dart';
 import '../services/weather_service.dart';
+import '../utils/geo_names.dart';
 import '../widgets/location_prompt.dart';
 
-/// 天气预报独立页：7 天 + 逐小时（气压/温差/降雨概率/风向风速/紫外线/垂钓指数）
+/// 深空配色（对齐钓鱼天气参考稿）
+class _Pal {
+  static const bg0 = Color(0xFF070D19);
+  static const bg1 = Color(0xFF0C1730);
+  static const card = Color(0xFF111D33);
+  static const cardAlt = Color(0xFF0E1828);
+  static const line = Color(0xFF1E2C46);
+  static const head = Color(0xFF12354B);
+  static const txt = Color(0xFFE9F0FA);
+  static const muted = Color(0xFF7F93AE);
+  static const gold = Color(0xFFF3C860);
+  static const accent = Color(0xFF54C8DE);
+  static const green = Color(0xFF7CE58C);
+  static const lime = Color(0xFFD8E86A);
+  static const amber = Color(0xFFF2C24B);
+  static const rise = Color(0xFFFF7A6B);
+  static const fall = Color(0xFF5FD3AE);
+}
+
+/// 钓鱼天气预报：鱼种 × 钓法 × 逐小时鱼情
 class WeatherScreen extends StatefulWidget {
   const WeatherScreen({super.key});
 
@@ -20,23 +42,25 @@ class _WeatherScreenState extends State<WeatherScreen> {
   WeatherBundle? _bundle;
   bool _loading = true;
   String? _error;
-  int _selected = 0; // 选中的日期索引（0=今天）
-  int _metricTab = 0; // 0天气 1风 2大气压 3垂钓指数
-  static const _metricNames = ['天气', '风', '大气压', '垂钓指数'];
+  String? _city;
 
-  /// 打开页面时的当前小时：作为「时间段」基准。
-  /// 7 天预报 / 顶部实况 / AI 判断都锚定在这一小时，而不是用全天聚合。
+  int _selected = 0; // 选中的日期索引（0=今天）
+  int _modeIdx = 0; // 0台钓 1路亚 2海钓
+  int _spIdx = 0; // 鱼种
   int _refHour = DateTime.now().hour;
 
   @override
   void initState() {
     super.initState();
-    _refHour = DateTime.now().hour; // 锁定打开时刻的小时
+    _refHour = DateTime.now().hour;
     _load();
+    // 城市名（失败不影响主流程）
+    GeoNames.currentCity().then((c) {
+      if (mounted && c != null && c.isNotEmpty) setState(() => _city = c);
+    });
   }
 
   Future<void> _load() async {
-    // ① 先读缓存秒显（断网/弱网也能看上次预报）
     if (_bundle == null) {
       final cached = await WeatherService.readCachedForecast();
       if (cached != null && mounted) {
@@ -48,7 +72,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
     }
     if (mounted) {
       setState(() {
-        _loading = _bundle == null; // 已有缓存时不再转圈
+        _loading = _bundle == null;
         _error = null;
       });
     }
@@ -59,7 +83,6 @@ class _WeatherScreenState extends State<WeatherScreen> {
       lat = pos.latitude;
       lng = pos.longitude;
     } on LocationException catch (e) {
-      // 权限被拒时引导授权；GPS 未开/超时等用默认坐标
       if (e.type == LocationErrorType.permissionDenied && mounted) {
         LocationPrompt.showError(context, e);
       }
@@ -75,7 +98,6 @@ class _WeatherScreenState extends State<WeatherScreen> {
         });
       }
     } catch (e) {
-      // 有缓存时保留缓存，不把整页变成错误页
       if (mounted && _bundle == null) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -85,121 +107,669 @@ class _WeatherScreenState extends State<WeatherScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: _Pal.bg0,
       appBar: AppBar(
-        title: const Text('天气预报'),
+        backgroundColor: _Pal.bg0,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        centerTitle: true,
+        foregroundColor: Colors.white,
+        systemOverlayStyle: SystemUiOverlayStyle.light,
+        title: const Text('钓鱼天气预报',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
         actions: [
           IconButton(
             tooltip: '刷新',
             onPressed: _load,
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh, size: 21),
           ),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? _ErrorView(message: _error!, onRetry: _load)
-              : _bundle == null || _bundle!.days.isEmpty
-                  ? const Center(child: Text('暂无天气数据'))
-                  : RefreshIndicator(
-                      onRefresh: _load,
-                      child: _buildBody(_bundle!),
-                    ),
+      body: Stack(
+        children: [
+          const Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [_Pal.bg0, _Pal.bg1, _Pal.bg0],
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(child: CustomPaint(painter: _StarPainter())),
+          _content(),
+        ],
+      ),
+    );
+  }
+
+  Widget _content() {
+    if (_loading && _bundle == null) {
+      return const Center(
+        child: CircularProgressIndicator(color: _Pal.accent, strokeWidth: 2.5),
+      );
+    }
+    if (_error != null && _bundle == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.cloud_off, size: 54, color: _Pal.muted),
+              const SizedBox(height: 12),
+              Text('天气加载失败\n$_error',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: _Pal.muted, fontSize: 13)),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: _load,
+                child: const Text('重试', style: TextStyle(color: _Pal.gold)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    final b = _bundle;
+    if (b == null || b.days.isEmpty) {
+      return const Center(
+        child: Text('暂无天气数据', style: TextStyle(color: _Pal.muted)),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: _Pal.accent,
+      backgroundColor: _Pal.card,
+      child: _buildBody(b),
     );
   }
 
   Widget _buildBody(WeatherBundle b) {
-    final day = b.days[_selected];
+    final sp = FishingSpecies.all[_spIdx];
+    final mode = FishingMode.all[_modeIdx];
+    final metrics = WaterMetrics.derive(b.hours);
+    final idxOf = <DateTime, int>{
+      for (var i = 0; i < b.hours.length; i++) b.hours[i].time: i
+    };
+
+    final dayIdx = _selected.clamp(0, b.days.length - 1);
+    final day = b.days[dayIdx];
     final dayHours = b.hoursOf(day.date);
-    final s = _DayStats.compute(b, _selected);
+
+    final rows = <_HourRow>[];
+    for (final h in dayHours) {
+      final i = idxOf[h.time] ?? -1;
+      final w = i >= 0 ? metrics[i] : WaterMetrics(h.temp, 7.0);
+      final prev = i > 0 ? b.hours[i - 1] : null;
+      final prevW = i > 0 ? metrics[i - 1] : null;
+      rows.add(_HourRow(
+        h: h,
+        w: w,
+        prev: prev,
+        prevW: prevW,
+        score: Bite.score(h: h, w: w, sp: sp, mode: mode),
+      ));
+    }
 
     return ListView(
-      padding: const EdgeInsets.only(bottom: 24),
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 30),
       children: [
-        _DateTabs(
-          days: b.days,
-          selected: _selected,
+        _LocationBar(city: _city),
+        _NowCard(
           bundle: b,
-          refHour: _refHour,
-          onSelect: (i) => setState(() => _selected = i),
-        ),
-        _SummaryCard(
-          day: day,
-          stats: s,
-          isToday: _selected == 0,
-          bundle: b,
-          refHour: _refHour,
+          metrics: metrics,
+          sp: sp,
+          mode: mode,
         ),
         const SizedBox(height: 10),
-        _MetricTabs(
-          names: _metricNames,
-          selected: _metricTab,
-          onSelect: (i) => setState(() => _metricTab = i),
+        _DateStrip(
+          bundle: b,
+          metrics: metrics,
+          idxOf: idxOf,
+          sp: sp,
+          mode: mode,
+          selected: dayIdx,
+          onSelect: (i) => setState(() => _selected = i),
         ),
-        _SparklineCard(
-          hours: dayHours,
-          metric: _metricTab,
-          day: day,
+        const SizedBox(height: 2),
+        _ModeRow(
+          selected: _modeIdx,
+          onSelect: (i) => setState(() => _modeIdx = i),
         ),
-        _HourTable(hours: dayHours),
+        _SpeciesChips(
+          selected: _spIdx,
+          onSelect: (i) => setState(() => _spIdx = i),
+        ),
+        _TitleRow(mode: mode, sp: sp),
+        _ActionRow(
+          onAi: () => _showAi(b, sp),
+          onCompare: () => _showCompare(b, sp, mode, metrics, idxOf),
+          onExplain: _showExplain,
+        ),
+        _HourTable(
+          rows: rows,
+          nowHour: dayIdx == 0 ? DateTime.now().hour : null,
+        ),
       ],
+    );
+  }
+
+  // ───────────────────────── 弹层 ─────────────────────────
+
+  void _sheet(String title, List<Widget> body) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: _Pal.card,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.62,
+        minChildSize: 0.32,
+        maxChildSize: 0.92,
+        builder: (_, ctrl) => ListView(
+          controller: ctrl,
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 30),
+          children: [
+            Row(
+              children: [
+                Text(title,
+                    style: const TextStyle(
+                        color: _Pal.txt,
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w700)),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () => Navigator.of(context).pop(),
+                  child: const Icon(Icons.close, size: 18, color: _Pal.muted),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...body,
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAi(WeatherBundle b, FishingSpecies sp) {
+    final day = b.days[_selected.clamp(0, b.days.length - 1)];
+    final h = b.dayRefHour(day.date, _refHour);
+    final i = h == null ? -1 : b.hours.indexOf(h);
+    final metrics = WaterMetrics.derive(b.hours);
+    final w = i >= 0 ? metrics[i] : WaterMetrics(b.curTemp, 7.0);
+
+    final advice = FishingAdvisor.build(
+      temp: h?.temp ?? b.curTemp,
+      tempMin: day.tempMin,
+      tempMax: day.tempMax,
+      pressure: h?.pressure ?? b.curPressure,
+      windKmh: h?.windSpeed ?? b.curWindSpeed,
+      windDirDeg: h?.windDir ?? b.curWindDir,
+      rainProb: h?.precipProb ?? day.precipProbMax,
+      rainMm: h?.precip ?? day.precipSum,
+      uv: h?.uv,
+      weatherCode: h?.weatherCode ?? day.weatherCode,
+      hour: h?.time.hour,
+    );
+
+    _sheet('AI 解析 · ${sp.name}', [
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: _Pal.cardAlt,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _Pal.line),
+        ),
+        child: Row(
+          children: [
+            _kv('水温', '${w.temp.toStringAsFixed(1)}℃'),
+            _kv('溶氧', '${w.oxygen.toStringAsFixed(2)} mg/L'),
+            _kv('指数', '${advice.score}'),
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+      Text(advice.headline,
+          style: const TextStyle(
+              color: _Pal.txt, fontSize: 13.5, height: 1.5)),
+      const SizedBox(height: 12),
+      ...advice.tips.map((t) => Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('· ',
+                    style: TextStyle(
+                        color: _Pal.gold, fontWeight: FontWeight.bold)),
+                Expanded(
+                  child: Text(t,
+                      style: const TextStyle(
+                          color: Color(0xFFBBC9DC),
+                          fontSize: 12.5,
+                          height: 1.55)),
+                ),
+              ],
+            ),
+          )),
+      const SizedBox(height: 6),
+      const Text('依据：气压 · 风 · 水温 · 溶氧 · 时段活性 · 鱼种习性（离线规则引擎）',
+          style: TextStyle(color: _Pal.muted, fontSize: 10.5)),
+    ]);
+  }
+
+  Widget _kv(String k, String v) => Expanded(
+        child: Column(
+          children: [
+            Text(k, style: const TextStyle(color: _Pal.muted, fontSize: 10)),
+            const SizedBox(height: 3),
+            Text(v,
+                style: const TextStyle(
+                    color: _Pal.txt,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600)),
+          ],
+        ),
+      );
+
+  void _showCompare(
+      WeatherBundle b,
+      FishingSpecies sp,
+      FishingMode mode,
+      List<WaterMetrics> metrics,
+      Map<DateTime, int> idxOf) {
+    final day = b.days[_selected.clamp(0, b.days.length - 1)];
+    final h = b.dayRefHour(day.date, _refHour);
+    final i = h == null ? -1 : (idxOf[h.time] ?? -1);
+    final w = i >= 0 ? metrics[i] : WaterMetrics(b.curTemp, 7.0);
+
+    final list = FishingSpecies.all
+        .map((s) => MapEntry(
+            s,
+            h == null
+                ? 0
+                : Bite.score(h: h, w: w, sp: s, mode: mode)))
+        .toList()
+      ..sort((a, b2) => b2.value.compareTo(a.value));
+
+    _sheet('鱼种对比 · ${mode.name}', [
+      Text('同一时段（${_refHour.toString().padLeft(2, '0')}:00）各鱼种鱼情',
+          style: const TextStyle(color: _Pal.muted, fontSize: 11.5)),
+      const SizedBox(height: 14),
+      ...list.map((e) {
+        final s = e.key;
+        final v = e.value;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(s.name,
+                      style: const TextStyle(
+                          color: _Pal.txt,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600)),
+                  const SizedBox(width: 8),
+                  Text('${s.optLow.toStringAsFixed(0)}~${s.optHigh.toStringAsFixed(0)}℃',
+                      style: const TextStyle(
+                          color: _Pal.muted, fontSize: 10)),
+                  const Spacer(),
+                  Text('$v',
+                      style: TextStyle(
+                          color: _scoreColor(v),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(width: 6),
+                  Text(Bite.label(v),
+                      style: TextStyle(color: _scoreColor(v), fontSize: 10.5)),
+                ],
+              ),
+              const SizedBox(height: 6),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: v / 100,
+                  minHeight: 5,
+                  backgroundColor: _Pal.line,
+                  valueColor: AlwaysStoppedAnimation(_scoreColor(v)),
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(s.habit,
+                  style: const TextStyle(color: _Pal.muted, fontSize: 10.5)),
+            ],
+          ),
+        );
+      }),
+    ]);
+  }
+
+  void _showExplain() {
+    _sheet('指标解读', [
+      _explainItem('指数（鱼情）',
+          '综合「气象适宜度 × 鱼种适温 × 溶氧 × 时段活性 × 钓法」得出的 0~100 分。'
+          '78 分以上为爆护，45 分以上为有口，低于 45 分基本无口。'),
+      _explainItem('气温 / 气压',
+          '来自 Open-Meteo 实测与预报。气压下方的箭头是逐小时升降：'
+          '↑ 上升（鱼活性转好），↓ 下降（鱼易上浮、吃口变轻）。'),
+      _explainItem('风',
+          '数字为风速 km/h，下方标签是风力等级与风向。微风（1~3 级）最利于作钓，'
+          '大风会压口且影响抛投。'),
+      _explainItem('水温',
+          '无免费实测接口，按「水体热惯性」从气温序列推算：水温变化远比气温平缓，'
+          '白天表层略升、夜间回落。不同鱼种适温区间不同。'),
+      _explainItem('水氧（溶氧）',
+          '同样按水文学经验模型估算：水温越低饱和溶氧越高，风浪增氧、气压升高提升溶解量，'
+          '白天藻类光合作用产氧、凌晨耗氧。低于 4mg/L 鱼基本不开口。'),
+      _explainItem('有口 / 爆护 / 无口',
+          '把上面所有因子折算成一句结论，直接告诉你这一小时值不值得下竿。'),
+    ]);
+  }
+
+  Widget _explainItem(String title, String body) => Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title,
+                style: const TextStyle(
+                    color: _Pal.gold,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 5),
+            Text(body,
+                style: const TextStyle(
+                    color: Color(0xFFBBC9DC), fontSize: 12, height: 1.55)),
+          ],
+        ),
+      );
+}
+
+// ============================================================
+// 顶部定位条
+// ============================================================
+class _LocationBar extends StatelessWidget {
+  final String? city;
+  const _LocationBar({this.city});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 2, 14, 8),
+      child: Row(
+        children: [
+          const Icon(Icons.place, size: 15, color: _Pal.accent),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              city ?? '当前位置',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  color: _Pal.txt,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600),
+            ),
+          ),
+          const Icon(Icons.keyboard_arrow_down, size: 16, color: _Pal.muted),
+        ],
+      ),
     );
   }
 }
 
 // ============================================================
-// 日期选项卡（今天/明天/周X + MM-DD）
+// 当前实况卡（顶部显示当前时间天气）
 // ============================================================
-class _DateTabs extends StatelessWidget {
-  final List<DaySummary> days;
-  final int selected;
+class _NowCard extends StatelessWidget {
   final WeatherBundle bundle;
-  final int refHour;
-  final ValueChanged<int> onSelect;
-  const _DateTabs({
-    required this.days,
-    required this.selected,
+  final List<WaterMetrics> metrics;
+  final FishingSpecies sp;
+  final FishingMode mode;
+  const _NowCard({
     required this.bundle,
-    required this.refHour,
+    required this.metrics,
+    required this.sp,
+    required this.mode,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // 取与当前时刻最近的一小时，作为水温/溶氧与评分的依据
+    int best = -1;
+    var bestDiff = 1 << 30;
+    final now = DateTime.now();
+    for (var i = 0; i < bundle.hours.length; i++) {
+      final d = bundle.hours[i].time.difference(now).inMinutes.abs();
+      if (d < bestDiff) {
+        bestDiff = d;
+        best = i;
+      }
+    }
+    final h = best >= 0 ? bundle.hours[best] : null;
+    final w = best >= 0 ? metrics[best] : WaterMetrics(bundle.curTemp, 7.0);
+    final prev = best > 0 ? bundle.hours[best - 1] : null;
+    final score = h == null
+        ? bundle.currentFishIndex
+        : Bite.score(h: h, w: w, sp: sp, mode: mode);
+
+    final pres = bundle.curPressure;
+    final pDelta = prev == null ? 0.0 : pres - prev.pressure;
+    final wind = bundle.curWindSpeed;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+      decoration: BoxDecoration(
+        color: _Pal.card.withOpacity(0.75),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _Pal.line),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Icon(Wmo.icon(bundle.curCode),
+                  size: 38, color: Wmo.color(bundle.curCode)),
+              const SizedBox(width: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(bundle.curTemp.toStringAsFixed(1),
+                          style: const TextStyle(
+                              color: _Pal.txt,
+                              fontSize: 26,
+                              height: 1,
+                              fontWeight: FontWeight.w700)),
+                      const Text('°C',
+                          style: TextStyle(
+                              color: _Pal.gold,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text('当前 · ${Wmo.text(bundle.curCode)}',
+                      style: const TextStyle(color: _Pal.muted, fontSize: 11)),
+                ],
+              ),
+              const Spacer(),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('$score',
+                      style: TextStyle(
+                          color: _scoreColor(score),
+                          fontSize: 24,
+                          height: 1,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 3),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: _scoreColor(score).withOpacity(0.16),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(Bite.label(score),
+                        style: TextStyle(
+                            color: _scoreColor(score),
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _Stat(
+                label: '气压 (hPa)',
+                value: pres.toStringAsFixed(0),
+                extra: _trendText(pDelta, fontSize: 9),
+              ),
+              _Stat(
+                label: '风',
+                value: '${windDirText(bundle.curWindDir)} ${_beaufort(wind)}级',
+              ),
+              _Stat(label: '水温', value: '${w.temp.toStringAsFixed(1)}℃'),
+              _Stat(label: '溶氧', value: w.oxygen.toStringAsFixed(2)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Stat extends StatelessWidget {
+  final String label;
+  final String value;
+  final Widget? extra;
+  const _Stat({required this.label, required this.value, this.extra});
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Column(
+        children: [
+          Text(label,
+              style: const TextStyle(color: _Pal.muted, fontSize: 9),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 3),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(value,
+                    maxLines: 1,
+                    style: const TextStyle(
+                        color: _Pal.txt,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600)),
+                if (extra != null) extra!,
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================
+// 日期胶囊（7 天）
+// ============================================================
+class _DateStrip extends StatelessWidget {
+  final WeatherBundle bundle;
+  final List<WaterMetrics> metrics;
+  final Map<DateTime, int> idxOf;
+  final FishingSpecies sp;
+  final FishingMode mode;
+  final int selected;
+  final ValueChanged<int> onSelect;
+
+  const _DateStrip({
+    required this.bundle,
+    required this.metrics,
+    required this.idxOf,
+    required this.sp,
+    required this.mode,
+    required this.selected,
     required this.onSelect,
   });
 
-  static const _weekday = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+  static const _wd = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
   String _label(int i, DateTime d) {
     if (i == 0) return '今天';
     if (i == 1) return '明天';
     if (i == 2) return '后天';
-    return _weekday[d.weekday - 1];
+    return _wd[d.weekday - 1];
+  }
+
+  /// 全天平均鱼情（用于胶囊下的鱼图标）
+  int _dayScore(int i) {
+    final hs = bundle.hoursOf(bundle.days[i].date);
+    if (hs.isEmpty) return 0;
+    var sum = 0;
+    for (final h in hs) {
+      final k = idxOf[h.time] ?? -1;
+      final w = k >= 0 ? metrics[k] : WaterMetrics(h.temp, 7.0);
+      sum += Bite.score(h: h, w: w, sp: sp, mode: mode);
+    }
+    return (sum / hs.length).round();
   }
 
   @override
   Widget build(BuildContext context) {
-    final periodDay = refHour >= 6 && refHour < 18;
     return SizedBox(
-      height: 88,
+      height: 94,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        itemCount: days.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        itemCount: bundle.days.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, i) {
-          final d = days[i].date;
+          final d = bundle.days[i].date;
           final sel = i == selected;
-          final rp = bundle.dayRefHour(d, refHour);
-          final code = rp?.weatherCode ?? days[i].weatherCode;
-          final temp = rp?.temp ?? (days[i].tempMax + days[i].tempMin) / 2;
-          final txtColor = sel ? Colors.white : Colors.black87;
-          final subColor = sel ? Colors.white70 : Colors.grey;
+          final sc = _dayScore(i);
+          final n = Bite.fishCount(sc);
+          final disabled = sc < 45;
+
           return GestureDetector(
             onTap: () => onSelect(i),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              width: 62,
+              padding: const EdgeInsets.symmetric(vertical: 8),
               decoration: BoxDecoration(
-                color: sel ? AppTheme.accent : Colors.white,
-                borderRadius: BorderRadius.circular(20),
+                gradient: sel
+                    ? const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF3B4A67), Color(0xFF26324C)],
+                      )
+                    : null,
+                color: sel ? null : Colors.transparent,
+                borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: sel ? AppTheme.accent : Colors.grey.shade300,
+                  color: sel ? const Color(0xFF9FB0CB) : _Pal.line,
+                  width: sel ? 1.2 : 1,
                 ),
               ),
               child: Column(
@@ -207,24 +777,33 @@ class _DateTabs extends StatelessWidget {
                 children: [
                   Text(_label(i, d),
                       style: TextStyle(
-                          color: txtColor,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13)),
+                          color: sel ? Colors.white : _Pal.muted,
+                          fontSize: 11,
+                          fontWeight:
+                              sel ? FontWeight.w600 : FontWeight.normal)),
                   const SizedBox(height: 3),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Wmo.icon(code, day: periodDay),
-                          size: 18, color: Wmo.color(code, day: periodDay)),
-                      const SizedBox(width: 3),
-                      Text('${temp.round()}°',
-                          style: TextStyle(color: txtColor, fontSize: 13)),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
                   Text(
-                    '${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}',
-                    style: TextStyle(color: subColor, fontSize: 11),
+                    '${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}',
+                    style: TextStyle(
+                        color: sel ? Colors.white : const Color(0xFFB9C7DA),
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 5),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(
+                      3,
+                      (k) => Text(
+                        '🐟',
+                        style: TextStyle(
+                          fontSize: 8,
+                          color: k < n
+                              ? (disabled ? _Pal.muted : _Pal.gold)
+                              : Colors.transparent,
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -237,619 +816,620 @@ class _DateTabs extends StatelessWidget {
 }
 
 // ============================================================
-// 某日聚合统计（从逐小时推导，7 天通用）
+// 钓法切换
 // ============================================================
-class _DayStats {
-  final double avgHumidity;
-  final double avgPressure;
-  final double avgWind; // km/h
-  final int domWindDir;
-  final double avgUv;
-  final double tempRange;
-  final double rangeVsYesterday;
+class _ModeRow extends StatelessWidget {
+  final int selected;
+  final ValueChanged<int> onSelect;
+  const _ModeRow({required this.selected, required this.onSelect});
 
-  _DayStats({
-    required this.avgHumidity,
-    required this.avgPressure,
-    required this.avgWind,
-    required this.domWindDir,
-    required this.avgUv,
-    required this.tempRange,
-    required this.rangeVsYesterday,
-  });
-
-  static _DayStats compute(WeatherBundle b, int index) {
-    final day = b.days[index];
-    final hs = b.hoursOf(day.date);
-    double avg(List<double> xs) =>
-        xs.isEmpty ? 0 : xs.reduce((a, c) => a + c) / xs.length;
-    final hum = avg(hs.map((h) => h.humidity.toDouble()).toList());
-    final pres = avg(hs.map((h) => h.pressure).toList());
-    final wind = avg(hs.map((h) => h.windSpeed).toList());
-    final uvs = hs.where((h) => h.uv != null).map((h) => h.uv!).toList();
-    final uv = avg(uvs);
-    // 主导风向：出现最多的方位（简化为平均）
-    final domDir = hs.isEmpty
-        ? day.windDirDom
-        : avg(hs.map((h) => h.windDir.toDouble()).toList()).round();
-    final range = day.tempMax - day.tempMin;
-    final prevRange = index > 0 ? b.days[index - 1].tempRange : range;
-    return _DayStats(
-      avgHumidity: hum,
-      avgPressure: pres,
-      avgWind: wind,
-      domWindDir: domDir,
-      avgUv: uv,
-      tempRange: range,
-      rangeVsYesterday: range - prevRange,
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 2),
+      child: Row(
+        children: [
+          for (var i = 0; i < FishingMode.all.length; i++) ...[
+            GestureDetector(
+              onTap: () => onSelect(i),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    FishingMode.all[i].name,
+                    style: TextStyle(
+                      color: i == selected ? _Pal.gold : _Pal.muted,
+                      fontSize: i == selected ? 16 : 14,
+                      fontWeight:
+                          i == selected ? FontWeight.w700 : FontWeight.normal,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    width: i == selected ? 18 : 0,
+                    height: 2.5,
+                    decoration: BoxDecoration(
+                      color: _Pal.gold,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 22),
+          ],
+          const Spacer(),
+          const Icon(Icons.grid_view_rounded, size: 17, color: _Pal.muted),
+        ],
+      ),
     );
   }
 }
 
 // ============================================================
-// 当日概览卡片：温度区间 + 垂钓指数环 + 指标网格
+// 鱼种 chips
 // ============================================================
-class _SummaryCard extends StatelessWidget {
-  final DaySummary day;
-  final _DayStats stats;
-  final bool isToday;
-  final WeatherBundle bundle;
-  final int refHour;
-  const _SummaryCard({
-    required this.day,
-    required this.stats,
-    required this.isToday,
-    required this.bundle,
-    required this.refHour,
+class _SpeciesChips extends StatelessWidget {
+  final int selected;
+  final ValueChanged<int> onSelect;
+  const _SpeciesChips({required this.selected, required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        itemCount: FishingSpecies.all.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          final sel = i == selected;
+          return GestureDetector(
+            onTap: () => onSelect(i),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: sel ? _Pal.gold.withOpacity(0.14) : Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: sel ? _Pal.gold : _Pal.line,
+                  width: sel ? 1.1 : 1,
+                ),
+              ),
+              child: Text(
+                FishingSpecies.all[i].name,
+                style: TextStyle(
+                  color: sel ? _Pal.gold : const Color(0xFFB9C7DA),
+                  fontSize: 12.5,
+                  fontWeight: sel ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ============================================================
+// 标题 + 图例
+// ============================================================
+class _TitleRow extends StatelessWidget {
+  final FishingMode mode;
+  final FishingSpecies sp;
+  const _TitleRow({required this.mode, required this.sp});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 6),
+      child: Row(
+        children: [
+          Flexible(
+            child: RichText(
+              overflow: TextOverflow.ellipsis,
+              text: TextSpan(
+                children: [
+                  TextSpan(
+                    text: '${mode.name}·${sp.name}',
+                    style: const TextStyle(
+                        color: _Pal.gold,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700),
+                  ),
+                  const TextSpan(
+                    text: '逐小时钓鱼指数',
+                    style: TextStyle(color: _Pal.txt, fontSize: 13.5),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 58,
+                height: 5,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(3),
+                  gradient: const LinearGradient(
+                    colors: [
+                      Color(0xFFE5484D),
+                      Color(0xFFF2C24B),
+                      Color(0xFF7CE58C)
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 3),
+              const Row(
+                children: [
+                  Text('宜钓指数',
+                      style: TextStyle(color: _Pal.muted, fontSize: 8.5)),
+                  SizedBox(width: 6),
+                  Text('高', style: TextStyle(color: _Pal.green, fontSize: 8.5)),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================
+// 三个功能按钮
+// ============================================================
+class _ActionRow extends StatelessWidget {
+  final VoidCallback onAi;
+  final VoidCallback onCompare;
+  final VoidCallback onExplain;
+  const _ActionRow({
+    required this.onAi,
+    required this.onCompare,
+    required this.onExplain,
   });
 
   @override
   Widget build(BuildContext context) {
-    // —— 锚定「当前 / 对应时间段」的天气，而不是全天聚合 ——
-    final rp = bundle.dayRefHour(day.date, refHour);
-    final periodDay = refHour >= 6 && refHour < 18;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
+      child: Row(
+        children: [
+          _Act(icon: Icons.auto_awesome, label: 'AI解析', onTap: onAi),
+          const SizedBox(width: 8),
+          _Act(icon: Icons.swap_horiz, label: '鱼种对比', onTap: onCompare),
+          const SizedBox(width: 8),
+          _Act(icon: Icons.menu_book_outlined, label: '解读', onTap: onExplain),
+        ],
+      ),
+    );
+  }
+}
 
-    final int wcode =
-        isToday ? bundle.curCode : (rp?.weatherCode ?? day.weatherCode);
-    final double temp =
-        isToday ? bundle.curTemp : (rp?.temp ?? (day.tempMax + day.tempMin) / 2);
-    final score = isToday
-        ? bundle.currentFishIndex
-        : (rp?.fishIndex ?? day.fishIndex);
-    final hum = isToday
-        ? bundle.curHumidity.toDouble()
-        : (rp?.humidity.toDouble() ?? stats.avgHumidity);
-    final pres =
-        isToday ? bundle.curPressure : (rp?.pressure ?? stats.avgPressure);
-    final wind =
-        isToday ? bundle.curWindSpeed : (rp?.windSpeed ?? stats.avgWind);
-    final wdir = isToday ? bundle.curWindDir : (rp?.windDir ?? stats.domWindDir);
-    final uv = rp?.uv ?? day.uvMax ?? stats.avgUv;
-    final rainProb = rp?.precipProb ?? day.precipProbMax;
-    final rainMm = isToday ? bundle.curPrecip : (rp?.precip ?? day.precipSum);
+class _Act extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  const _Act({required this.icon, required this.label, required this.onTap});
 
-    // 顶部时间段的文字说明（今天=当前，其余=该时段的小时）
-    final periodText = isToday
-        ? '当前'
-        : '${refHour.toString().padLeft(2, '0')}:00';
-
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          children: [
-            // 顶部：天气图标 + 当前/时段温度 + 垂钓指数环
-            Row(
-              children: [
-                Icon(Wmo.icon(wcode, day: isToday ? true : periodDay),
-                    size: 40,
-                    color: Wmo.color(wcode, day: isToday ? true : periodDay)),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${temp.toStringAsFixed(1)}°C',
-                        style: const TextStyle(
-                            fontSize: 20, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 2),
-                      Text('$periodText · ${Wmo.text(wcode)}',
-                          style: const TextStyle(color: Colors.grey)),
-                      const SizedBox(height: 1),
-                      Text(
-                        '全天 ${day.tempMin.toStringAsFixed(0)}~${day.tempMax.toStringAsFixed(0)}°C',
-                        style: const TextStyle(
-                            color: Colors.grey, fontSize: 11),
-                      ),
-                    ],
-                  ),
-                ),
-                _FishRing(score: score),
-              ],
-            ),
-            const Divider(height: 14),
-            // 指标网格（3 列，紧密排布，避免大片空白）
-            _MetricRow(cells: [
-              _Cell('湿度', '${hum.round()}%'),
-              _Cell('大气压(海平面)', '${pres.toStringAsFixed(1)} hpa'),
-              _Cell('紫外线指数', uv.toStringAsFixed(1)),
-            ]),
-            const Divider(height: 14),
-            _MetricRow(cells: [
-              _Cell('风',
-                  '${windDirText(wdir)} ${(wind / 3.6).toStringAsFixed(1)} m/s'),
-              _Cell('温差', '${stats.tempRange.toStringAsFixed(1)}°C'),
-              _Cell('温差(与昨日)',
-                  '${stats.rangeVsYesterday >= 0 ? '+' : ''}${stats.rangeVsYesterday.toStringAsFixed(1)}°C'),
-            ]),
-            const Divider(height: 14),
-            _MetricRow(cells: [
-              _Cell('降雨概率', '$rainProb%'),
-              _Cell('降雨量', '${rainMm.toStringAsFixed(1)}mm'),
-              const SizedBox.shrink(),
-            ]),
-            const SizedBox(height: 12),
-            // AI 多因子垂钓建议（基于当前/时段天气，而非全天）
-            _AiAdviceBlock(
-              advice: FishingAdvisor.build(
-                temp: temp,
-                tempMin: day.tempMin,
-                tempMax: day.tempMax,
-                pressure: pres,
-                windKmh: wind,
-                windDirDeg: wdir,
-                rainProb: rainProb,
-                rainMm: rainMm,
-                uv: uv,
-                weatherCode: wcode,
-                hour: isToday ? refHour : null,
-              ),
-            ),
-          ],
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          height: 34,
+          decoration: BoxDecoration(
+            color: _Pal.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _Pal.line),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 14, color: _Pal.gold),
+              const SizedBox(width: 5),
+              Text(label,
+                  style: const TextStyle(color: _Pal.txt, fontSize: 11.5)),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-/// 一行 3 个指标，等宽紧凑排布
-class _MetricRow extends StatelessWidget {
-  final List<Widget> cells;
-  const _MetricRow({required this.cells});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [for (final c in cells) Expanded(child: c)],
-    );
-  }
+// ============================================================
+// 逐小时表格
+// ============================================================
+class _HourRow {
+  final HourPoint h;
+  final WaterMetrics w;
+  final HourPoint? prev;
+  final WaterMetrics? prevW;
+  final int score;
+  const _HourRow({
+    required this.h,
+    required this.w,
+    required this.prev,
+    required this.prevW,
+    required this.score,
+  });
 }
 
-/// AI 垂钓建议卡片（头条 + 分条建议）
-class _AiAdviceBlock extends StatelessWidget {
-  final FishingAdvice advice;
-  const _AiAdviceBlock({required this.advice});
+class _HourTable extends StatelessWidget {
+  final List<_HourRow> rows;
+  final int? nowHour;
+  const _HourTable({required this.rows, this.nowHour});
+
+  static const int _fTime = 20;
+  static const int _fWx = 40;
+  static const int _fTemp = 30;
+  static const int _fPres = 34;
+  static const int _fWind = 36;
+  static const int _fWater = 26;
+  static const int _fO2 = 30;
+  static const int _fScore = 34;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
       decoration: BoxDecoration(
-        color: advice.color.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: advice.color.withOpacity(0.25)),
+        color: _Pal.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _Pal.line),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.auto_awesome, size: 16, color: advice.color),
-              const SizedBox(width: 6),
-              Text('AI 垂钓建议',
-                  style: TextStyle(
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.bold,
-                      color: advice.color)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(advice.headline,
-              style: const TextStyle(
-                  fontSize: 13.5, fontWeight: FontWeight.w600, height: 1.4)),
-          const SizedBox(height: 6),
-          ...advice.tips.map((t) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('• ',
-                        style: TextStyle(
-                            color: advice.color, fontWeight: FontWeight.bold)),
-                    Expanded(
-                      child: Text(t,
-                          style: const TextStyle(
-                              fontSize: 12.5,
-                              height: 1.45,
-                              color: Colors.black87)),
-                    ),
-                  ],
-                ),
-              )),
-        ],
-      ),
-    );
-  }
-}
-
-class _Cell extends StatelessWidget {
-  final String label;
-  final String value;
-  const _Cell(this.label, this.value);
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(label,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 11, color: Colors.grey)),
-          const SizedBox(height: 3),
-          Text(value,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                  fontSize: 14, fontWeight: FontWeight.w600)),
-        ],
-      ),
-    );
-  }
-}
-
-/// 垂钓指数圆环
-class _FishRing extends StatelessWidget {
-  final int score;
-  const _FishRing({required this.score});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = FishIndex.color(score);
-    return SizedBox(
-      width: 66,
-      height: 66,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          SizedBox(
-            width: 66,
-            height: 66,
-            child: CircularProgressIndicator(
-              value: score / 100,
-              strokeWidth: 7,
-              backgroundColor: Colors.grey.shade200,
-              valueColor: AlwaysStoppedAnimation(color),
-            ),
-          ),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('垂钓指数',
-                  style: TextStyle(fontSize: 9, color: Colors.grey.shade600)),
-              Text('$score',
-                  style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: color)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ============================================================
-// 指标切换（天气/风/大气压/垂钓指数）
-// ============================================================
-class _MetricTabs extends StatelessWidget {
-  final List<String> names;
-  final int selected;
-  final ValueChanged<int> onSelect;
-  const _MetricTabs(
-      {required this.names, required this.selected, required this.onSelect});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: Row(
-        children: List.generate(names.length, (i) {
-          final sel = i == selected;
-          return Expanded(
-            child: GestureDetector(
-              onTap: () => onSelect(i),
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 3),
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(
-                  color: sel ? AppTheme.accent : Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                      color: sel ? AppTheme.accent : Colors.grey.shade300),
-                ),
-                alignment: Alignment.center,
-                child: Text(names[i],
-                    style: TextStyle(
-                        color: sel ? Colors.white : Colors.black87,
-                        fontSize: 13,
-                        fontWeight: sel ? FontWeight.w600 : FontWeight.normal)),
-              ),
-            ),
-          );
-        }),
-      ),
-    );
-  }
-}
-
-// ============================================================
-// 24 小时指标走势（折线）
-// ============================================================
-class _SparklineCard extends StatelessWidget {
-  final List<HourPoint> hours;
-  final int metric;
-  final DaySummary day;
-  const _SparklineCard(
-      {required this.hours, required this.metric, required this.day});
-
-  (String, Color) get _meta {
-    switch (metric) {
-      case 1:
-        return ('风速 km/h', AppTheme.accent);
-      case 2:
-        return ('大气压 hPa', AppTheme.violet);
-      case 3:
-        return ('垂钓指数', AppTheme.primary);
-      default:
-        return ('温度 ℃', AppTheme.warning);
-    }
-  }
-
-  List<double> _values() {
-    switch (metric) {
-      case 1:
-        return hours.map((h) => h.windSpeed).toList();
-      case 2:
-        return hours.map((h) => h.pressure).toList();
-      case 3:
-        return hours.map((h) => h.fishIndex.toDouble()).toList();
-      default:
-        return hours.map((h) => h.temp).toList();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final (title, color) = _meta;
-    final vals = _values();
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                    width: 4,
-                    height: 14,
-                    color: color,
-                    margin: const EdgeInsets.only(right: 6)),
-                Text('24小时$title',
-                    style: const TextStyle(fontWeight: FontWeight.w600)),
-              ],
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 90,
-              width: double.infinity,
-              child: vals.length < 2
-                  ? const Center(child: Text('数据不足'))
-                  : CustomPaint(painter: _LinePainter(vals, color)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _LinePainter extends CustomPainter {
-  final List<double> values;
-  final Color color;
-  _LinePainter(this.values, this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final minV = values.reduce((a, b) => a < b ? a : b);
-    final maxV = values.reduce((a, b) => a > b ? a : b);
-    final span = (maxV - minV).abs() < 0.001 ? 1.0 : (maxV - minV);
-    final dx = size.width / (values.length - 1);
-
-    final path = Path();
-    final fill = Path()..moveTo(0, size.height);
-    for (var i = 0; i < values.length; i++) {
-      final x = dx * i;
-      final y = size.height - ((values[i] - minV) / span) * (size.height - 8) - 4;
-      if (i == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
-      fill.lineTo(x, y);
-    }
-    fill.lineTo(size.width, size.height);
-    fill.close();
-
-    canvas.drawPath(
-      fill,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [color.withOpacity(0.28), color.withOpacity(0.02)],
-        ).createShader(Rect.fromLTWH(0, 0, size.width, size.height)),
-    );
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
-        ..strokeJoin = StrokeJoin.round,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _LinePainter old) =>
-      old.values != values || old.color != color;
-}
-
-// ============================================================
-// 逐小时表格：时间 | 天气 | 温度 | 大气压 | 湿度 | 降雨概率
-// ============================================================
-class _HourTable extends StatelessWidget {
-  final List<HourPoint> hours;
-  const _HourTable({required this.hours});
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
+          // 表头
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: const BoxDecoration(
-              color: AppTheme.accent,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
-            ),
+            color: _Pal.head,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
             child: const Row(
               children: [
-                _H('时间', flex: 2),
-                _H('天气', flex: 2),
-                _H('温度', flex: 2),
-                _H('大气压', flex: 2),
-                _H('湿度', flex: 2),
-                _H('降雨概率', flex: 2),
+                _Th('时间', _fTime),
+                _Th('天气', _fWx),
+                _Th2('气温', '°C', _fTemp),
+                _Th2('气压', 'hPa', _fPres),
+                _Th2('风', 'km/h', _fWind),
+                _Th2('水温', '°C', _fWater),
+                _Th2('水氧', 'mg/L', _fO2),
+                _Th2('指数', '鱼情', _fScore),
               ],
             ),
           ),
-          if (hours.isEmpty)
+          if (rows.isEmpty)
             const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('暂无逐小时数据'),
+              padding: EdgeInsets.all(18),
+              child: Text('暂无逐小时数据',
+                  style: TextStyle(color: _Pal.muted, fontSize: 12)),
             ),
-          ...hours.map((h) {
-            final day = h.time.hour >= 6 && h.time.hour < 18;
-            return Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-              decoration: BoxDecoration(
-                border: Border(
-                    bottom: BorderSide(color: Colors.grey.shade200)),
-              ),
-              child: Row(
-                children: [
-                  _C(h.hhmm, flex: 2, bold: true),
-                  Expanded(
-                    flex: 2,
-                    child: Icon(Wmo.icon(h.weatherCode, day: day),
-                        size: 18,
-                        color: Wmo.color(h.weatherCode, day: day)),
+          ...rows.asMap().entries.map((e) => _row(e.key, e.value)),
+        ],
+      ),
+    );
+  }
+
+  Widget _row(int i, _HourRow r) {
+    final h = r.h;
+    final isDay = h.time.hour >= 6 && h.time.hour < 18;
+    final isNow = nowHour != null && h.time.hour == nowHour;
+
+    // 气温冷热标签
+    Widget? tempTag;
+    if (h.temp < 15) {
+      tempTag = _miniTag('冷', const Color(0xFFFF8A7A));
+    } else if (h.temp > 28) {
+      tempTag = _miniTag('热', _Pal.amber);
+    }
+
+    // 气压升降
+    Widget presTrend;
+    if (r.prev == null) {
+      presTrend = const Text('—',
+          style: TextStyle(color: _Pal.muted, fontSize: 8.5));
+    } else {
+      final d = h.pressure - r.prev!.pressure;
+      final up = d >= 0;
+      presTrend = Text(
+        '${up ? '↑' : '↓'} ${up ? '+' : '-'}${d.abs().toStringAsFixed(1)}',
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.clip,
+        style: TextStyle(
+            color: up ? _Pal.rise : _Pal.fall,
+            fontSize: 8.5,
+            fontWeight: FontWeight.w600),
+      );
+    }
+
+    // 溶氧升降
+    Widget o2Trend;
+    if (r.prevW == null) {
+      o2Trend = const Text('—',
+          style: TextStyle(color: _Pal.muted, fontSize: 8.5));
+    } else {
+      final d = r.w.oxygen - r.prevW!.oxygen;
+      o2Trend = Text(
+        '${d >= 0 ? '+' : '-'}${d.abs().toStringAsFixed(2)}',
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.clip,
+        style: TextStyle(
+            color: d >= 0 ? _Pal.fall : _Pal.rise, fontSize: 8.5),
+      );
+    }
+
+    final sc = r.score;
+    final scColor = _scoreColor(sc);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
+      decoration: BoxDecoration(
+        color: isNow
+            ? const Color(0xFF17324A)
+            : (i.isEven ? Colors.transparent : const Color(0x08FFFFFF)),
+        border: const Border(
+          bottom: BorderSide(color: _Pal.line, width: 0.6),
+        ),
+      ),
+      child: Row(
+        children: [
+          _Td(
+            flex: _fTime,
+            child: Text(h.time.hour.toString().padLeft(2, '0'),
+                style: const TextStyle(
+                    color: _Pal.txt,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600)),
+          ),
+          _Td(
+            flex: _fWx,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Wmo.icon(h.weatherCode, day: isDay),
+                    size: 18, color: Wmo.color(h.weatherCode, day: isDay)),
+                const SizedBox(height: 2),
+                Text(Wmo.text(h.weatherCode),
+                    maxLines: 1,
+                    overflow: TextOverflow.clip,
+                    style: const TextStyle(color: _Pal.muted, fontSize: 8.5)),
+              ],
+            ),
+          ),
+          _Td(
+            flex: _fTemp,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(h.temp.toStringAsFixed(1),
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.clip,
+                    style: const TextStyle(color: _Pal.txt, fontSize: 12)),
+                if (tempTag != null) tempTag,
+              ],
+            ),
+          ),
+          _Td(
+            flex: _fPres,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(h.pressure.toStringAsFixed(1),
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.clip,
+                    style: const TextStyle(color: _Pal.txt, fontSize: 11)),
+                const SizedBox(height: 1),
+                presTrend,
+              ],
+            ),
+          ),
+          _Td(
+            flex: _fWind,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${h.windSpeed.round()}',
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.clip,
+                    style: const TextStyle(color: _Pal.txt, fontSize: 12)),
+                const SizedBox(height: 2),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 2, vertical: 0.5),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(3),
+                    border: Border.all(color: _Pal.line),
                   ),
-                  _C('${h.temp.toStringAsFixed(0)}°C', flex: 2),
-                  _C('${h.pressure.toStringAsFixed(0)}', flex: 2),
-                  _C('${h.humidity}%', flex: 2),
-                  _C('${h.precipProb}%', flex: 2),
-                ],
-              ),
-            );
-          }),
+                  child: Text(
+                    '${_beaufort(h.windSpeed)}级·${windDirText(h.windDir)}',
+                    maxLines: 1,
+                    style: const TextStyle(color: _Pal.muted, fontSize: 7.5),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _Td(
+            flex: _fWater,
+            child: Text(r.w.temp.toStringAsFixed(1),
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.clip,
+                style: const TextStyle(color: _Pal.txt, fontSize: 12)),
+          ),
+          _Td(
+            flex: _fO2,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(r.w.oxygen.toStringAsFixed(2),
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.clip,
+                    style: const TextStyle(color: _Pal.txt, fontSize: 11)),
+                const SizedBox(height: 1),
+                o2Trend,
+              ],
+            ),
+          ),
+          _Td(
+            flex: _fScore,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('$sc',
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.clip,
+                    style: TextStyle(
+                        color: scColor,
+                        fontSize: 15,
+                        height: 1.05,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(height: 1),
+                Text(Bite.label(sc),
+                    style: TextStyle(color: scColor, fontSize: 8.5)),
+                const SizedBox(height: 1),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: List.generate(
+                    Bite.fishCount(sc),
+                    (_) => const Text('🐟', style: TextStyle(fontSize: 7.5)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniTag(String text, Color color) => Container(
+        margin: const EdgeInsets.only(top: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 0.5),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.16),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: Text(text, style: TextStyle(color: color, fontSize: 7.5)),
+      );
+}
+
+class _Th extends StatelessWidget {
+  final String text;
+  final int flex;
+  const _Th(this.text, this.flex);
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      flex: flex,
+      child: Text(text,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Color(0xFFCBDAEA), fontSize: 10)),
+    );
+  }
+}
+
+class _Th2 extends StatelessWidget {
+  final String main;
+  final String sub;
+  final int flex;
+  const _Th2(this.main, this.sub, this.flex);
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      flex: flex,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(main,
+              style: const TextStyle(color: Color(0xFFCBDAEA), fontSize: 10)),
+          Text(sub,
+              style: const TextStyle(color: Color(0xFF7F93AE), fontSize: 7.5)),
         ],
       ),
     );
   }
 }
 
-class _H extends StatelessWidget {
-  final String text;
+class _Td extends StatelessWidget {
   final int flex;
-  const _H(this.text, {this.flex = 1});
+  final Widget child;
+  const _Td({required this.flex, required this.child});
 
   @override
   Widget build(BuildContext context) {
-    return Expanded(
-      flex: flex,
-      child: Text(text,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-              color: Colors.white,
-              fontSize: 12,
-              fontWeight: FontWeight.w600)),
-    );
+    return Expanded(flex: flex, child: Center(child: child));
   }
 }
 
-class _C extends StatelessWidget {
-  final String text;
-  final int flex;
-  final bool bold;
-  const _C(this.text, {this.flex = 1, this.bold = false});
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      flex: flex,
-      child: Text(text,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-              fontSize: 12,
-              color: Colors.black87,
-              fontWeight: bold ? FontWeight.w600 : FontWeight.normal)),
-    );
-  }
+// ============================================================
+// 工具
+// ============================================================
+Color _scoreColor(int s) {
+  if (s >= 78) return _Pal.green;
+  if (s >= 60) return _Pal.lime;
+  if (s >= 45) return _Pal.amber;
+  return _Pal.muted;
 }
 
-class _ErrorView extends StatelessWidget {
-  final String message;
-  final VoidCallback onRetry;
-  const _ErrorView({required this.message, required this.onRetry});
+Widget _trendText(double d, {double fontSize = 9}) {
+  final up = d >= 0;
+  return Text(
+    '${up ? '↑' : '↓'}${d.abs().toStringAsFixed(1)}',
+    style: TextStyle(
+        color: up ? _Pal.rise : _Pal.fall,
+        fontSize: fontSize,
+        fontWeight: FontWeight.w600),
+  );
+}
+
+/// 蒲福风力等级（按 km/h）
+int _beaufort(double kmh) {
+  if (kmh < 1) return 0;
+  if (kmh < 6) return 1;
+  if (kmh < 12) return 2;
+  if (kmh < 20) return 3;
+  if (kmh < 29) return 4;
+  if (kmh < 39) return 5;
+  if (kmh < 50) return 6;
+  if (kmh < 62) return 7;
+  return 8;
+}
+
+/// 深空星点背景
+class _StarPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rnd = math.Random(20261020);
+    final p = Paint();
+    for (var i = 0; i < 90; i++) {
+      final x = rnd.nextDouble() * size.width;
+      final y = rnd.nextDouble() * size.height;
+      final r = 0.4 + rnd.nextDouble() * 1.2;
+      p.color = Colors.white.withOpacity(0.10 + rnd.nextDouble() * 0.42);
+      canvas.drawCircle(Offset(x, y), r, p);
+    }
+  }
 
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.cloud_off, size: 64, color: Colors.grey),
-            const SizedBox(height: 12),
-            Text('天气加载失败\n$message', textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            ElevatedButton(onPressed: onRetry, child: const Text('重试')),
-          ],
-        ),
-      ),
-    );
-  }
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
