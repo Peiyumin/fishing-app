@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../app_theme.dart';
 import '../models/fishing_spot.dart';
 import '../models/post.dart';
+import '../services/geo_place.dart';
 import '../services/location_service.dart';
 import '../services/post_service.dart';
 import '../services/session_provider.dart';
@@ -36,12 +37,30 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loadingWeather = true;
   bool _loadingPosts = true;
 
+  /// 当前定位的地名（首页左上角显示「禹州 / 许昌」这类短名）
+  GeoPlace? _place;
+  bool _locatingPlace = false;
+
   @override
   void initState() {
     super.initState();
+    _loadPlace();
     _loadWeather();
     _loadSpots();
     _loadFeed();
+  }
+
+  /// 解析当前定位的中文地名（显示在软件名左侧）
+  Future<void> _loadPlace({bool refresh = false}) async {
+    if (_locatingPlace) return;
+    _locatingPlace = true;
+    if (mounted && refresh) setState(() {});
+    try {
+      final p = await GeoPlace.current(refresh: refresh);
+      if (mounted && p != null) setState(() => _place = p);
+    } finally {
+      if (mounted) setState(() => _locatingPlace = false);
+    }
   }
 
   String? _lastSessionAvatar;
@@ -71,7 +90,22 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _watchedUserId;
 
   // 获取定位后拉天气；定位失败则默认杭州坐标
+  //
+  // 策略：先读本地缓存「秒显」上次天气（断网/弱网也能看），
+  // 再在后台拉最新值覆盖。这样每次打开 App 不会白屏转圈。
   Future<void> _loadWeather() async {
+    // ① 缓存秒显（仅当当前还没有数据时，避免覆盖刚拉到的真实值）
+    if (_weather == null) {
+      final cached = await WeatherService.readCachedCurrent();
+      if (cached != null && mounted && _weather == null) {
+        setState(() {
+          _weather = cached;
+          _loadingWeather = false;
+        });
+      }
+    }
+
+    // ② 定位
     double lat = 30.2741, lng = 120.1551; // 默认：杭州
     try {
       final pos = await LocationService.determinePosition();
@@ -85,15 +119,24 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (_) {
       // 忽略，使用默认坐标
     }
+
+    // ③ 后台刷新最新天气
     try {
       final w = await WeatherService.fetch(lat, lng);
-      if (mounted) setState(() => _weather = w);
+      if (mounted) {
+        setState(() {
+          _weather = w;
+          _loadingWeather = false;
+        });
+      }
     } catch (e) {
       if (mounted) {
-        CenterToast.show(context, '天气加载失败：$e');
+        setState(() => _loadingWeather = false);
+        // 已有缓存时不打扰用户；完全没有数据时才提示
+        if (_weather == null) {
+          CenterToast.show(context, '天气暂不可用，请检查网络');
+        }
       }
-    } finally {
-      if (mounted) setState(() => _loadingWeather = false);
     }
   }
 
@@ -123,7 +166,74 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('垂钓圈'),
+        // 左上角：定位地名（禹州 / 许昌…）+ 软件名
+        titleSpacing: 14,
+        title: Row(
+          children: [
+            // —— 定位地名（点击可刷新定位）——
+            InkWell(
+              onTap: () async {
+                GeoPlace.clearCache();
+                await _loadPlace(refresh: true);
+                await _loadWeather();
+                if (mounted) {
+                  CenterToast.show(context, '已重新定位');
+                }
+              },
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.22),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_locatingPlace && _place == null)
+                      const SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 1.6, color: Colors.white),
+                      )
+                    else
+                      const Icon(Icons.location_on,
+                          size: 14, color: Colors.white),
+                    const SizedBox(width: 3),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 88),
+                      child: Text(
+                        _place == null || _place!.label.isEmpty
+                            ? '定位中'
+                            : _place!.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white),
+                      ),
+                    ),
+                    const Icon(Icons.keyboard_arrow_down,
+                        size: 15, color: Colors.white70),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            // —— 软件名（在地名右侧）——
+            const Text(
+              '垂钓圈',
+              style: TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                  color: Colors.white),
+            ),
+          ],
+        ),
         flexibleSpace: Container(
           decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
         ),
@@ -179,7 +289,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     :                           Column(
                         children: [
                           SectionHeader(
-                            title: '实时天气',
+                            title: (_place == null || _place!.label.isEmpty)
+                                ? '实时天气'
+                                : '${_place!.label} · 实时天气',
                             actionLabel: '7天预报',
                             onAction: () => Navigator.of(context).push(
                               MaterialPageRoute(
@@ -192,7 +304,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                   builder: (_) => const WeatherScreen()),
                             ),
                             borderRadius: BorderRadius.circular(14),
-                            child: WeatherCard(weather: _weather!),
+                            child: WeatherCard(
+                              weather: _weather!,
+                              placeLabel: _place?.label,
+                            ),
                           ),
                         ],
                       ),
