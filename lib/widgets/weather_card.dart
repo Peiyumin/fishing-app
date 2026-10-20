@@ -2,13 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import '../models/weather_forecast.dart';
+import '../services/fishing_advisor.dart';
 import '../services/weather_service.dart';
 
 /// 首页「钓鱼天气」卡片
 /// 显示气温、湿度、风速、气压 + 垂钓适宜指数与建议
 class WeatherCard extends StatelessWidget {
   final FishingWeather weather;
-  const WeatherCard({super.key, required this.weather});
+
+  /// 定位地名（如「禹州」），有值时显示在标题旁，让用户知道看的是哪里的天气
+  final String? placeLabel;
+  const WeatherCard({super.key, required this.weather, this.placeLabel});
 
   // 适宜指数 → 颜色
   Color _indexColor() {
@@ -26,6 +30,13 @@ class WeatherCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final advice = FishingAdvisor.build(
+      temp: weather.temperature,
+      pressure: weather.pressure,
+      windKmh: weather.windSpeed,
+      weatherCode: weather.weatherCode,
+      hour: DateTime.now().hour,
+    );
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Padding(
@@ -42,9 +53,19 @@ class WeatherCard extends StatelessWidget {
                   color: Wmo.color(weather.weatherCode),
                 ),
                 const SizedBox(width: 6),
-                const Text('钓鱼天气',
+                Text('钓鱼天气',
                     style:
-                        TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                        const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                if (placeLabel != null && placeLabel!.isNotEmpty) ...[
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text('· $placeLabel',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 12.5, color: AppTheme.textSecondary)),
+                  ),
+                ],
                 const Spacer(),
                 // 适宜指数徽标
                 Container(
@@ -80,8 +101,19 @@ class WeatherCard extends StatelessWidget {
                 color: AppTheme.primaryLight,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Text('💡 ${weather.fishAdvice}',
-                  style: const TextStyle(fontSize: 13, color: AppTheme.primary)),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.auto_awesome,
+                      size: 15, color: AppTheme.primary),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text('AI 建议：${advice.headline}',
+                        style: const TextStyle(
+                            fontSize: 13, color: AppTheme.primary)),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
