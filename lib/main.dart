@@ -13,15 +13,20 @@ import 'screens/discover_screen.dart';
 import 'screens/spots_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/publish_hub_screen.dart';
+import 'widgets/update_dialog.dart';
 
 void main() async {
   // Flutter 绑定初始化（必须在 async main 开头调用）
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 恢复本地登录态：只要用户没点「退出登录」，重开 App 保持在线
+  final session = SessionProvider();
+  await session.restore();
+
   runApp(
     // 用 Provider 在全局共享登录态
     ChangeNotifierProvider(
-      create: (_) => SessionProvider(),
+      create: (_) => session,
       child: const MyApp(),
     ),
   );
@@ -68,6 +73,8 @@ class _StartupGateState extends State<StartupGate> {
       _boot = boot;
       _loading = false;
     });
+    // 启动后检查热更新（有新版本才弹窗；强制更新不可跳过）
+    UpdateDialog.checkAndShow(context);
   }
 
   /// 清空启动内容 → 进入主框架
