@@ -3,14 +3,15 @@ import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../models/fishing_spot.dart';
+import '../services/location_service.dart';
 import '../services/session_provider.dart';
 import '../services/spot_service.dart';
 import '../utils/coord_transform.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/location_prompt.dart';
 import 'auth_screen.dart';
 import 'publish_spot_screen.dart';
 import 'publish_venue_screen.dart';
@@ -70,8 +71,7 @@ class _SpotsScreenState extends State<SpotsScreen>
   /// 获取当前位置（仅用于距离展示与地图居中）
   Future<void> _locate() async {
     try {
-      final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
+      final pos = await LocationService.determinePosition();
       if (!mounted) return;
       setState(() {
         _myLat = pos.latitude;
@@ -80,6 +80,8 @@ class _SpotsScreenState extends State<SpotsScreen>
       // 卫星地图居中到当前位置（WGS-84 → GCJ-02 后再定位）
       final g = CoordTransform.wgs84ToGcj02(pos.latitude, pos.longitude);
       _mapController.move(LatLng(g[0], g[1]), 13);
+    } on LocationException catch (e) {
+      if (mounted) LocationPrompt.showError(context, e);
     } catch (_) {/* 定位失败时用默认中心 */}
   }
 
