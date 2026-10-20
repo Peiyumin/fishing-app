@@ -6,11 +6,13 @@ import 'package:provider/provider.dart';
 
 import '../models/post.dart';
 import '../services/api_config.dart';
+import '../services/follow_service.dart';
 import '../services/post_service.dart';
 import '../services/session_provider.dart';
 import '../widgets/post_video_player.dart';
 import '../widgets/user_avatar.dart';
 import 'auth_screen.dart';
+import 'user_profile_screen.dart';
 import '../widgets/center_toast.dart';
 
 /// 动态详情：大图 + 正文 + 评论区 + 发表评论
@@ -28,12 +30,152 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   final _ctrl = TextEditingController();
   bool _loading = true;
 
+  /// 作者关注状态（详情页头像行右侧「加关注」）
+  bool _following = false;
+  bool _followBusy = false;
+
   @override
   void initState() {
     super.initState();
     _post = widget.post;
+    _following = widget.post.isFollowing;
     _loadComments();
     _trackView();
+  }
+
+  /// 加关注 / 取消关注（未登录先去登录）
+  Future<void> _toggleFollow() async {
+    if (_followBusy || _post.isMe) return;
+    final sp = Provider.of<SessionProvider>(context, listen: false);
+    if (!sp.isLoggedIn) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const AuthScreen()),
+      );
+      return;
+    }
+    setState(() => _followBusy = true);
+    try {
+      final r = await FollowService.toggleFollow(
+        _post.userId,
+        _following,
+      );
+      if (!mounted) return;
+      setState(() {
+        _following = r.following;
+        _post = _post.copyWith(isFollowing: r.following);
+      });
+      // ignore: use_build_context_synchronously
+      CenterToast.show(context, r.following ? '已关注' : '已取消关注');
+    } catch (e) {
+      if (mounted) CenterToast.show(context, '操作失败：$e');
+    } finally {
+      if (mounted) setState(() => _followBusy = false);
+    }
+  }
+
+  /// 等级徽章（淡蓝底 + LV 数字，与社区常见样式一致）
+  Widget _levelBadge(int level) {
+    final lv = level <= 0 ? 1 : level;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE8F3FF),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: const Color(0xFFB7DBFF), width: 0.8),
+      ),
+      child: Text(
+        'LV$lv',
+        style: const TextStyle(
+          fontSize: 10.5,
+          height: 1.25,
+          fontWeight: FontWeight.w700,
+          color: Color(0xFF1677FF),
+        ),
+      ),
+    );
+  }
+
+  /// 标题下方的作者行：头像 + 昵称 + 等级 + 时间/地区 + 加关注
+  Widget _authorRow() {
+    final name =
+        (_post.username ?? '').trim().isNotEmpty ? _post.username! : '钓友';
+    final area = _post.city.trim().isNotEmpty
+        ? _post.city.trim()
+        : (_post.locationName ?? '').trim();
+    final meta = area.isEmpty ? _post.timeAgo : '${_post.timeAgo} · $area';
+
+    return Row(
+      children: [
+        InkWell(
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+                builder: (_) => UserProfileScreen(userId: _post.userId)),
+          ),
+          borderRadius: BorderRadius.circular(30),
+          child: UserAvatar(
+            url: ApiConfig.mediaUrl(_post.avatarUrl),
+            userId: _post.userId,
+            radius: 21,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  _levelBadge(_post.userLevel),
+                ],
+              ),
+              const SizedBox(height: 3),
+              Text(
+                meta,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 12, color: AppTheme.textSecondary),
+              ),
+            ],
+          ),
+        ),
+        if (!_post.isMe)
+          SizedBox(
+            height: 30,
+            child: ElevatedButton(
+              onPressed: _followBusy ? null : _toggleFollow,
+              style: ElevatedButton.styleFrom(
+                backgroundColor:
+                    _following ? AppTheme.primarySoft : const Color(0xFF1677FF),
+                foregroundColor:
+                    _following ? AppTheme.textSecondary : Colors.white,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6)),
+              ),
+              child: Text(
+                _followBusy ? '…' : (_following ? '已关注' : '加关注'),
+                style: const TextStyle(
+                    fontSize: 12.5, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   /// 浏览量 +1（热门/推荐算法依据；失败静默）
@@ -229,6 +371,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     color: AppTheme.textPrimary,
                   ),
                 ),
+                const SizedBox(height: 12),
+                // 作者：头像 + 昵称 + 等级 + 时间/地区 + 加关注
+                _authorRow(),
                 const SizedBox(height: 12),
                 // 标题下的分割线
                 const Divider(height: 1, thickness: 1, color: AppTheme.divider),
