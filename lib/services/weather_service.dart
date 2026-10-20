@@ -1,15 +1,23 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/weather_forecast.dart';
 
 /// 钓鱼天气服务
 /// 使用 Open-Meteo 免费接口（无需 API Key）：实时气温、湿度、风速、气压
 /// 并基于气象数据给出一个简单的「垂钓适宜指数」
+///
+/// 关键设计：本服务把每次成功拉取的结果写入本地缓存。
+/// 首页 / 天气页打开时先读缓存「秒显」上一次的数据，再后台刷新最新值，
+/// 网络差或断网时也能看到上次天气，不会白屏或反复转圈。
 class WeatherService {
   static const String _base = 'https://api.open-meteo.com/v1/forecast';
 
-  /// 拉取当前天气
+  static const String _curCacheKey = 'wx_current_v1';
+  static const String _fcCacheKey = 'wx_forecast_v1';
+
+  /// 拉取当前天气（成功后写缓存）
   static Future<FishingWeather> fetch(double lat, double lng) async {
     final uri = Uri.parse(
       '$_base?latitude=$lat&longitude=$lng'
@@ -21,7 +29,56 @@ class WeatherService {
     }
     final json = jsonDecode(res.body) as Map<String, dynamic>;
     final cur = json['current'] as Map<String, dynamic>;
-    return FishingWeather.fromOpenMeteo(cur);
+    final w = FishingWeather.fromOpenMeteo(cur);
+    await _saveCache(_curCacheKey, {
+      'lat': lat,
+      'lng': lng,
+      'ts': DateTime.now().millisecondsSinceEpoch,
+      'current': cur,
+    });
+    return w;
+  }
+
+  /// 读当前天气缓存（无缓存 / 解析失败返回 null）
+  static Future<FishingWeather?> readCachedCurrent() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final raw = sp.getString(_curCacheKey);
+      if (raw == null || raw.isEmpty) return null;
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      final cur = m['current'];
+      if (cur is! Map) return null;
+      return FishingWeather.fromOpenMeteo(Map<String, dynamic>.from(cur));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 读 7 天预报缓存（无缓存返回 null）
+  static Future<WeatherBundle?> readCachedForecast() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final raw = sp.getString(_fcCacheKey);
+      if (raw == null || raw.isEmpty) return null;
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      final j = m['json'];
+      if (j is! Map) return null;
+      final lat = (m['lat'] as num?)?.toDouble() ?? 0;
+      final lng = (m['lng'] as num?)?.toDouble() ?? 0;
+      return WeatherBundle.fromOpenMeteo(
+          lat, lng, Map<String, dynamic>.from(j));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> _saveCache(String key, Map<String, dynamic> data) async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString(key, jsonEncode(data));
+    } catch (_) {
+      // 缓存失败不影响主流程
+    }
   }
 
   /// 拉取 7 天预报 + 逐小时（温度/湿度/气压/降雨概率/降雨量/风/紫外线）
@@ -43,7 +100,14 @@ class WeatherService {
       throw Exception('天气获取失败：${res.statusCode}');
     }
     final json = jsonDecode(res.body) as Map<String, dynamic>;
-    return WeatherBundle.fromOpenMeteo(lat, lng, json);
+    final bundle = WeatherBundle.fromOpenMeteo(lat, lng, json);
+    await _saveCache(_fcCacheKey, {
+      'lat': lat,
+      'lng': lng,
+      'ts': DateTime.now().millisecondsSinceEpoch,
+      'json': json,
+    });
+    return bundle;
   }
 }
 
