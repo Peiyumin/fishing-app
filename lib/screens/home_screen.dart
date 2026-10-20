@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -41,25 +43,50 @@ class _HomeScreenState extends State<HomeScreen> {
   GeoPlace? _place;
   bool _locatingPlace = false;
 
+  /// 首帧渲染完成的信号：定位/权限请求都要等它，
+  /// 否则 iOS 会因为在首帧之前弹系统权限框而直接丢掉弹框
+  /// （表现：iOS 从不提示定位权限、打开 App 不会自动定位）。
+  final Completer<void> _firstFrame = Completer<void>();
+
   @override
   void initState() {
     super.initState();
-    _loadPlace();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_firstFrame.isCompleted) _firstFrame.complete();
+    });
+    _loadPlace(); // 先用缓存秒显地名（断网也能看到上次城市）
     _loadWeather();
     _loadSpots();
     _loadFeed();
+    // 首帧渲染完成后再真正定位一次，保证打开 App 就自动获取当前位置
+    WidgetsBinding.instance.addPostFrameCallback((_) => _autoLocate());
+  }
+
+  /// 打开 App 自动定位（每次进首页都刷新一次地名，不需要手动点）
+  Future<void> _autoLocate() async {
+    // 等界面稳一稳再请求权限，系统弹框才有宿主窗口
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+    if (!mounted) return;
+    await _loadPlace(refresh: true);
   }
 
   /// 解析当前定位的中文地名（显示在软件名左侧）
+  ///
+  /// 并发保护：多个入口同时触发时排队执行，绝不并发调用
+  /// requestPermission（并发会把 iOS 的系统权限框顶掉）。
   Future<void> _loadPlace({bool refresh = false}) async {
-    if (_locatingPlace) return;
+    while (_locatingPlace) {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!mounted) return;
+    }
     _locatingPlace = true;
-    if (mounted && refresh) setState(() {});
+    if (mounted) setState(() {});
     try {
       final p = await GeoPlace.current(refresh: refresh);
       if (mounted && p != null) setState(() => _place = p);
     } finally {
-      if (mounted) setState(() => _locatingPlace = false);
+      _locatingPlace = false;
+      if (mounted) setState(() {});
     }
   }
 
@@ -106,6 +133,9 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     // ② 定位
+    //    等首帧渲染完再请求权限：iOS 在首帧之前弹系统定位框会被丢掉
+    await _firstFrame.future;
+    if (!mounted) return;
     double lat = 30.2741, lng = 120.1551; // 默认：杭州
     try {
       final pos = await LocationService.determinePosition();
