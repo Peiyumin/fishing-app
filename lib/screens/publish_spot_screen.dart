@@ -2,16 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong2.dart';
 import 'package:provider/provider.dart';
 
+import '../services/location_service.dart';
 import '../services/spot_service.dart';
 import '../services/session_provider.dart';
 import '../services/api_config.dart';
 import '../utils/coord_transform.dart';
 import 'auth_screen.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/location_prompt.dart';
 
 /// 标记野钓点（kind=wild）
 /// 流程：打开自动读取当前位置 → 可在地图上拖动/点选微调 →
@@ -55,15 +56,14 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
   Future<void> _useMyLocation() async {
     setState(() => _locating = true);
     try {
-      final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
+      final pos = await LocationService.determinePosition();
       final p = LatLng(pos.latitude, pos.longitude); // WGS-84
       final g = CoordTransform.wgs84ToGcj02(pos.latitude, pos.longitude);
       _mapController.move(LatLng(g[0], g[1]), 15);
-      setState(() => _picked = p);
-    } catch (_) {
+      if (mounted) setState(() => _picked = p);
+    } on LocationException catch (e) {
       if (mounted) {
-        CenterToast.show(context, '定位失败，请直接在地图上点选');
+        LocationPrompt.showError(context, e);
       }
     } finally {
       if (mounted) setState(() => _locating = false);
