@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:geolocator/geolocator.dart';
+import 'package:geolocator/geolocator.dart' show LocationAccuracy;
+
+import '../services/location_service.dart';
 
 /// 逆地编码：经纬度 → 中文地址 / 地级市名
 ///
@@ -19,8 +21,8 @@ class GeoNames {
   static Future<String?> currentCity() async {
     if (_cachedCity != null) return _cachedCity;
     try {
-      final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.medium);
+      final pos = await LocationService.determinePosition(
+          accuracy: LocationAccuracy.medium);
       final r = await reverse(pos.latitude, pos.longitude);
       final city = r?['city'] as String?;
       if (city != null && city.isNotEmpty) {
@@ -35,8 +37,8 @@ class GeoNames {
   static Future<String?> currentAddress() async {
     if (_cachedAddress != null) return _cachedAddress;
     try {
-      final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
+      final pos = await LocationService.determinePosition(
+          accuracy: LocationAccuracy.high);
       final r = await reverse(pos.latitude, pos.longitude);
       final display = r?['display'] as String?;
       if (display != null && display.isNotEmpty) {
