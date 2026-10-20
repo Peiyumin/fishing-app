@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
-import 'package:geolocator/geolocator.dart';
 
 import '../models/weather_forecast.dart';
+import '../services/location_service.dart';
 import '../services/weather_service.dart';
+import '../widgets/location_prompt.dart';
 
 /// 天气预报独立页：7 天 + 逐小时（气压/温差/降雨概率/风向风速/紫外线/垂钓指数）
 class WeatherScreen extends StatefulWidget {
@@ -35,9 +36,14 @@ class _WeatherScreenState extends State<WeatherScreen> {
     });
     double lat = 30.2741, lng = 120.1551; // 默认：杭州
     try {
-      final pos = await Geolocator.getCurrentPosition();
+      final pos = await LocationService.determinePosition();
       lat = pos.latitude;
       lng = pos.longitude;
+    } on LocationException catch (e) {
+      // 权限被拒时引导授权；GPS 未开/超时等用默认坐标
+      if (e.type == LocationErrorType.permissionDenied && mounted) {
+        LocationPrompt.showError(context, e);
+      }
     } catch (_) {
       // 用默认坐标
     }
