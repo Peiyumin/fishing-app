@@ -18,6 +18,7 @@ import '../utils/geo_names.dart';
 import 'auth_screen.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/location_prompt.dart';
+import '../widgets/spot_map_marker.dart';
 
 /// 钓场 / 渔具店提交表单（图4）
 /// 填写后提交后台审核，通过后才对其他用户展示。
@@ -48,6 +49,7 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
   bool _submitting = false;
 
   LatLng? _picked; // WGS-84 坐标（存储用）
+  LatLng? _myLocation; // 当前定位（GCJ-02 之上展示用，仅作「我在哪」指示）
   // 默认中心：杭州（GCJ-02，高德底图坐标系）
   final LatLng _defaultCenter = const LatLng(30.2741, 120.1551);
 
@@ -90,19 +92,30 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
     }
   }
 
-  /// 定位填址：读取当前位置 → 反查中文地址 → 自动填入「详细地址」
+  /// 定位填址：读取当前位置 → 移动地图并记下坐标 → 反查中文地址填入「详细地址」
+  /// 这样点「获取定位」后，顶部地图会直接切到定位到的位置，而不是只填文字。
   Future<void> _fillAddressByLocation() async {
     if (_locatingAddr) return;
     setState(() => _locatingAddr = true);
     try {
-      final addr = await GeoNames.currentAddress();
+      final pos = await LocationService.determinePosition();
+      final p = LatLng(pos.latitude, pos.longitude); // WGS-84
+      // 高德底图是 GCJ-02，居中时先转换
+      final g = CoordTransform.wgs84ToGcj02(pos.latitude, pos.longitude);
+      _mapController.move(LatLng(g[0], g[1]), 15);
       if (!mounted) return;
-      if (addr == null || addr.isEmpty) {
-        CenterToast.show(context, '定位失败，请手动填写地址');
-      } else {
-        _addrCtrl.text = addr;
-        CenterToast.show(context, '已自动填入当前位置');
-      }
+      setState(() {
+        _picked = p;
+        _myLocation = LatLng(g[0], g[1]);
+      });
+      final r = await GeoNames.reverse(pos.latitude, pos.longitude);
+      if (!mounted) return;
+      _addrCtrl.text = (r?['display'] as String?) ?? '';
+      CenterToast.show(context, '已定位到当前位置');
+    } on LocationException catch (e) {
+      if (mounted) LocationPrompt.showError(context, e);
+    } catch (_) {
+      if (mounted) CenterToast.show(context, '定位失败，请手动填写地址');
     } finally {
       if (mounted) setState(() => _locatingAddr = false);
     }
@@ -115,7 +128,11 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
       // 高德底图是 GCJ-02，居中时先转换
       final g = CoordTransform.wgs84ToGcj02(pos.latitude, pos.longitude);
       _mapController.move(LatLng(g[0], g[1]), 15);
-      setState(() => _picked = p);
+      if (!mounted) return;
+      setState(() {
+        _picked = p;
+        _myLocation = LatLng(g[0], g[1]);
+      });
     } on LocationException catch (e) {
       if (mounted) {
         LocationPrompt.showError(context, e);
@@ -244,12 +261,23 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
                     if (pickedGcj != null)
                       MarkerLayer(
                         markers: [
+                          if (_myLocation != null)
+                            Marker(
+                              point: _myLocation!,
+                              width: 24,
+                              height: 24,
+                              alignment: Alignment.center,
+                              child: const MyLocationMarker(),
+                            ),
                           Marker(
                             point: pickedGcj,
-                            width: 40,
-                            height: 40,
-                            child: const Icon(Icons.place,
-                                color: AppTheme.primary, size: 38),
+                            width: 72,
+                            height: 60,
+                            alignment: Alignment.center,
+                            child: const SpotMapMarker(
+                              color: AppTheme.primary,
+                              label: '钓点',
+                            ),
                           ),
                         ],
                       ),
@@ -268,8 +296,8 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
                     ),
                     child: Text(
                       _picked == null
-                          ? '👆 点击地图选择${_isShop ? '渔具店' : '钓场'}位置'
-                          : '已选坐标（WGS84）：'
+                          ? '👆 点击地图或点「获取定位」选择${_isShop ? '渔具店' : '钓点'}位置'
+                          : '已选${_isShop ? '渔具店' : '钓点'}坐标（WGS84）：'
                               '${_picked!.latitude.toStringAsFixed(5)}, '
                               '${_picked!.longitude.toStringAsFixed(5)}',
                       style: const TextStyle(fontSize: 12.5),
