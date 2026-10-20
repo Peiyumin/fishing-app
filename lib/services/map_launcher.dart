@@ -38,6 +38,66 @@ class _MapOption {
 ///   高德 / 腾讯 → GCJ-02（先转换再传）
 ///   百度       → coord_type=wgs84 直传原始坐标
 class MapLauncher {
+  /// 一键直接调起本机地图 App 开始导航（不弹选择框）
+  ///
+  /// 说明：
+  ///  · 目的地优先用**中文地址**（address 非空时），这样地图 App 的
+  ///    「终点」栏里显示的是「河南省禹州市小刘垂钓园」而不是一串数字；
+  ///  · Android 依次尝试 高德 → 百度 → 系统 geo:（geo: 会让系统自己选默认地图）；
+  ///  · iOS 用 Apple 地图（maps://），同样把地址填进终点栏；
+  ///  · 全部失败时退回原来的多地图选择面板，保证用户还能导。
+  static Future<void> navigate(
+    BuildContext context, {
+    required double lat,
+    required double lng,
+    required String name,
+    String address = '',
+  }) async {
+    final gcj = CoordTransform.wgs84ToGcj02(lat, lng);
+    final dlat = gcj[0], dlng = gcj[1];
+    final dest = address.trim().isNotEmpty ? address.trim() : name.trim();
+    final destQ = Uri.encodeComponent(dest);
+    final nameQ = Uri.encodeComponent(name.trim().isEmpty ? dest : name.trim());
+
+    final candidates = <Uri>[];
+
+    if (Platform.isIOS) {
+      // Apple 地图：daddr 用地址，导航栏直接显示中文地址
+      candidates.add(Uri.parse(
+          'maps://?daddr=$destQ&dirflg=d&q=$nameQ'));
+      candidates.add(Uri.parse(
+          'http://maps.apple.com/?daddr=$destQ&dirflg=d'));
+    } else if (Platform.isAndroid) {
+      // 高德：dlat/dlon 精确定位 + destinationName 显示名称
+      candidates.add(Uri.parse('amapuri://route/plan/?dlat=$dlat&dlon=$dlng'
+          '&dev=0&t=2&destinationName=$nameQ&dname=$destQ'));
+      // 百度：destination 用地址名（导航栏显示地址）
+      candidates.add(Uri.parse('baidumap://map/direction?destination=$destQ'
+          '&coord_type=gcj02&mode=driving&src=android.fishingapp'));
+      // 系统地图选择器（装了腾讯/其他地图也能兜住）
+      candidates.add(Uri.parse('geo:$lat,$lng?q=$lat,$lng($destQ)'));
+    } else {
+      candidates.add(Uri.parse('https://uri.amap.com/navigation?to=$dlng,$dlat,$nameQ'
+          '&mode=car&src=fishing_app'));
+    }
+
+    for (final uri in candidates) {
+      try {
+        if (await canLaunchUrl(uri)) {
+          final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+          if (ok) return;
+        }
+      } catch (_) {
+        // 试下一个
+      }
+    }
+
+    // 全部失败：退回多地图选择面板
+    if (context.mounted) {
+      await showNavSheet(context, lat: lat, lng: lng, name: name);
+    }
+  }
+
   static Future<void> showNavSheet(
     BuildContext context, {
     required double lat,
