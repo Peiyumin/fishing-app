@@ -3,16 +3,17 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
+import '../services/location_service.dart';
 import '../services/post_service.dart';
 import '../services/session_provider.dart';
 import '../services/api_config.dart';
 import '../utils/geo_names.dart';
 import 'auth_screen.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/location_prompt.dart';
 
 /// 发布页：支持 5 种类别（渔获 / 问答 / 说说 / 出售二手 / 求购二手）
 /// - 图片多选（最多 9 张），视频单选（与图片二选一）
@@ -155,15 +156,15 @@ class _PublishScreenState extends State<PublishScreen> {
 
   Future<void> _getLocation() async {
     try {
-      final pos = await Geolocator.getCurrentPosition();
+      final pos = await LocationService.determinePosition();
       setState(() {
         _lat = pos.latitude;
         _lng = pos.longitude;
         _locationName = '${pos.latitude.toStringAsFixed(3)}, '
             '${pos.longitude.toStringAsFixed(3)}';
       });
-    } catch (_) {
-      CenterToast.show(context, '定位失败，可手动填写');
+    } on LocationException catch (e) {
+      LocationPrompt.showError(context, e);
     }
   }
 
