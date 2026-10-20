@@ -4,15 +4,16 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:gal/gal.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../app_theme.dart';
 import '../models/weather_forecast.dart';
+import '../services/location_service.dart';
 import '../services/weather_service.dart';
 import '../utils/geo_names.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/location_prompt.dart';
 import 'publish_screen.dart';
 
 /// 水印相机：拍照后自动叠加
@@ -96,8 +97,7 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen> {
   /// 并行取定位地址 + 天气（任一失败不影响拍照打卡，水印少显示一行而已）
   Future<void> _loadInfo() async {
     try {
-      final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
+      final pos = await LocationService.determinePosition();
       final results = await Future.wait([
         GeoNames.reverse(pos.latitude, pos.longitude),
         WeatherService.fetch(pos.latitude, pos.longitude),
@@ -124,6 +124,12 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen> {
         }
         _loadingInfo = false;
       });
+    } on LocationException catch (e) {
+      // 权限被拒时引导授权；GPS 未开/超时等静默跳过（水印不显示地址行）
+      if (e.type == LocationErrorType.permissionDenied && mounted) {
+        LocationPrompt.showError(context, e);
+      }
+      if (mounted) setState(() => _loadingInfo = false);
     } catch (_) {
       if (mounted) setState(() => _loadingInfo = false);
     }
