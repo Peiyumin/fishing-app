@@ -13,8 +13,8 @@ class Wmo {
   static const Map<int, String> _text = {
     0: '晴', 1: '少云', 2: '多云', 3: '阴',
     45: '雾', 48: '雾凇',
-    51: '小毛雨', 53: '毛雨', 55: '大毛雨',
-    56: '冻毛雨', 57: '强冻毛雨',
+    51: '毛毛雨', 53: '小雨', 55: '小雨',
+    56: '冻雨', 57: '冻雨',
     61: '小雨', 63: '中雨', 65: '大雨',
     66: '冻雨', 67: '强冻雨',
     71: '小雪', 73: '中雪', 75: '大雪', 77: '雪粒',
@@ -123,6 +123,43 @@ String windDirText(num? deg) {
   return dirs[idx];
 }
 
+/// 天气现象校正
+///
+/// 全球数值模式（ECMWF / GFS / GRAPES）在「实际并未下雨」时也常给出
+/// drizzle（51/53/55）或小雨代码，直接展示就会把晴天报成「小毛雨」，
+/// 与中央气象台发布的实况差距很大。
+/// 这里用**实测降水量 + 云量**回推天气现象，口径贴近中国气象局：
+///   降水 ≥ 0.1mm  → 认为确实在下，保留原代码
+///   降水 < 0.1mm  → 按云量重新判定：<10% 晴 / <30% 少云 / <70% 多云 / 其余 阴
+class WeatherCodeFix {
+  static bool isWetCode(int code) =>
+      (code >= 51 && code <= 67) ||
+      (code >= 80 && code <= 82) ||
+      (code >= 85 && code <= 86);
+
+  /// 云量 → 天气代码（中国气象局口径：晴 <10%，少云 <30%，多云 <70%，阴 ≥70%）
+  static int? byCloud(double? cloudCover) {
+    if (cloudCover == null) return null;
+    if (cloudCover < 10) return 0;
+    if (cloudCover < 30) return 1;
+    if (cloudCover < 70) return 2;
+    return 3;
+  }
+
+  static int adjust({
+    required int code,
+    required double precipMm,
+    double? cloudCover,
+    double rainThreshold = 0.1,
+  }) {
+    if (code >= 95) return code; // 雷暴：极端天气提示优先，不做降级
+    if (code == 45 || code == 48) return code; // 雾 / 雾凇：与云量无关，保留
+    if (precipMm >= rainThreshold) return code; // 确实在下雨/雪，采信模式给的现象
+    // 没有实测降水：以云量为准重新判定（云量比模式给的天气代码可靠得多）
+    return byCloud(cloudCover) ?? code;
+  }
+}
+
 /// 单个小时的天气
 class HourPoint {
   final DateTime time;
@@ -135,6 +172,7 @@ class HourPoint {
   final int windDir; // 度
   final double? uv; // 紫外线
   final int weatherCode;
+  final double? cloudCover; // 云量 %（用于天气现象校正）
 
   const HourPoint({
     required this.time,
@@ -147,6 +185,7 @@ class HourPoint {
     required this.windDir,
     this.uv,
     required this.weatherCode,
+    this.cloudCover,
   });
 
   String get hhmm => '${time.hour.toString().padLeft(2, '0')}:00';
@@ -189,6 +228,25 @@ class DaySummary {
   double get tempRange => tempMax - tempMin;
 
   int get fishIndex => FishIndex.daily(this);
+
+  DaySummary copyWith({
+    int? weatherCode,
+    double? tempMax,
+    double? tempMin,
+  }) =>
+      DaySummary(
+        date: date,
+        weatherCode: weatherCode ?? this.weatherCode,
+        tempMax: tempMax ?? this.tempMax,
+        tempMin: tempMin ?? this.tempMin,
+        precipSum: precipSum,
+        precipProbMax: precipProbMax,
+        windSpeedMax: windSpeedMax,
+        windDirDom: windDirDom,
+        uvMax: uvMax,
+        sunrise: sunrise,
+        sunset: sunset,
+      );
 }
 
 /// 一次天气预报请求的完整数据
@@ -287,6 +345,7 @@ class WeatherBundle {
         windDir: (at(hourly, 'wind_direction_10m', i) ?? 0).round(),
         uv: at(hourly, 'uv_index', i)?.toDouble(),
         weatherCode: (at(hourly, 'weather_code', i) ?? 0).round(),
+        cloudCover: at(hourly, 'cloud_cover', i)?.toDouble(),
       ));
     }
 
@@ -316,6 +375,77 @@ class WeatherBundle {
       ));
     }
 
+    // —— 用逐小时数据校正「今日温度区间」与「天气现象」——
+    // 中央气象台的「今天最低」= 今夜到明晨的最低温；而 Open-Meteo 的
+    // temperature_2m_min 是整个自然日（含已经过去的清晨）的最低值，
+    // 两者能差 4-5℃，这就是之前「13.3~24.0」与官方「24/9」差很大的原因。
+    for (var i = 0; i < days.length; i++) {
+      final d = days[i];
+      final dayHours = hours
+          .where((h) =>
+              h.time.year == d.date.year &&
+              h.time.month == d.date.month &&
+              h.time.day == d.date.day)
+          .toList();
+      if (dayHours.isEmpty) continue;
+
+      // 1) 天气现象校正：无实测降水时按云量回推，避免「晴天报成小毛雨」
+      final pSum = dayHours.fold<double>(0, (a, h) => a + h.precip);
+      final clouds =
+          dayHours.map((h) => h.cloudCover).whereType<double>().toList();
+      final meanCloud =
+          clouds.isEmpty ? null : clouds.reduce((a, b) => a + b) / clouds.length;
+      final code = WeatherCodeFix.adjust(
+        code: d.weatherCode,
+        precipMm: pSum,
+        cloudCover: meanCloud,
+        // 日报是全天累计降水，0.2mm 这种量级在体感上等于没下，
+        // 所以日尺度用 0.5mm 作为「真的会下雨」的门槛
+        rainThreshold: 0.5,
+      );
+
+      var tMax = d.tempMax;
+      var tMin = d.tempMin;
+
+      // 2) 今日温度：最高取当日逐小时最大值；最低取今晚 20:00 → 次日 08:00
+      if (i == 0) {
+        tMax = dayHours.map((h) => h.temp).reduce((a, b) => a > b ? a : b);
+        final nightStart = DateTime(d.date.year, d.date.month, d.date.day, 20);
+        final nightEnd = nightStart.add(const Duration(hours: 12));
+        final nightTemps = hours
+            .where(
+                (h) => !h.time.isBefore(nightStart) && h.time.isBefore(nightEnd))
+            .map((h) => h.temp)
+            .toList();
+        if (nightTemps.isNotEmpty) {
+          tMin = nightTemps.reduce((a, b) => a < b ? a : b);
+        }
+      }
+
+      days[i] = d.copyWith(weatherCode: code, tempMax: tMax, tempMin: tMin);
+    }
+
+    // 当前实况的天气现象也校正一次（云量取时间上最近的一小时）
+    final curPrecipV = (cur?['precipitation'] as num?)?.toDouble() ?? 0;
+    var curCodeV = (cur?['weather_code'] as num?)?.round() ?? 0;
+    if (hours.isNotEmpty) {
+      final nowH = DateTime.now();
+      var nearest = hours.first;
+      var bestMin = 1 << 30;
+      for (final h in hours) {
+        final diff = h.time.difference(nowH).inMinutes.abs();
+        if (diff < bestMin) {
+          bestMin = diff;
+          nearest = h;
+        }
+      }
+      curCodeV = WeatherCodeFix.adjust(
+        code: curCodeV,
+        precipMm: curPrecipV,
+        cloudCover: nearest.cloudCover,
+      );
+    }
+
     return WeatherBundle(
       lat: lat,
       lng: lng,
@@ -324,8 +454,8 @@ class WeatherBundle {
       curPressure: (cur?['pressure_msl'] as num?)?.toDouble() ?? 0,
       curWindSpeed: (cur?['wind_speed_10m'] as num?)?.toDouble() ?? 0,
       curWindDir: (cur?['wind_direction_10m'] as num?)?.round() ?? 0,
-      curPrecip: (cur?['precipitation'] as num?)?.toDouble() ?? 0,
-      curCode: (cur?['weather_code'] as num?)?.round() ?? 0,
+      curPrecip: curPrecipV,
+      curCode: curCodeV,
       hours: hours,
       days: days,
     );
