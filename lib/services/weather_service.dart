@@ -18,10 +18,15 @@ class WeatherService {
   static const String _fcCacheKey = 'wx_forecast_v1';
 
   /// 拉取当前天气（成功后写缓存）
+  ///
+  /// `cloud_cover` 与 `precipitation` 是校正天气现象的关键：
+  /// 全球模式常在「实际没下雨」时也给 drizzle 代码，只看 weather_code 会把
+  /// 晴天报成「小毛雨」。用实测降水量 + 云量回推天气现象，才与中央气象台一致。
   static Future<FishingWeather> fetch(double lat, double lng) async {
     final uri = Uri.parse(
       '$_base?latitude=$lat&longitude=$lng'
-      '&current=temperature_2m,relative_humidity_2m,wind_speed_10m,pressure_msl,weather_code',
+      '&current=temperature_2m,relative_humidity_2m,wind_speed_10m,pressure_msl,'
+      'weather_code,precipitation,cloud_cover',
     );
     final res = await http.get(uri);
     if (res.statusCode != 200) {
@@ -89,7 +94,7 @@ class WeatherService {
       'wind_speed_10m,wind_direction_10m,pressure_msl'
       '&hourly=temperature_2m,relative_humidity_2m,precipitation,'
       'precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m,'
-      'pressure_msl,uv_index'
+      'pressure_msl,uv_index,cloud_cover'
       '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,'
       'precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant,'
       'uv_index_max,sunrise,sunset'
@@ -137,7 +142,17 @@ class FishingWeather {
     final hum = (cur['relative_humidity_2m'] as num).toInt();
     final wind = (cur['wind_speed_10m'] as num).toDouble();
     final pres = (cur['pressure_msl'] as num).toDouble();
-    final code = (cur['weather_code'] as num).toInt();
+    final rawCode = (cur['weather_code'] as num).toInt();
+    final precip = (cur['precipitation'] as num?)?.toDouble() ?? 0;
+    final cloud = (cur['cloud_cover'] as num?)?.toDouble();
+
+    // 天气现象校正：没有实测降水时，不采信模式给出的「毛雨/小雨」代码，
+    // 改用云量回推（晴 / 少云 / 多云 / 阴），与中央气象台发布的实况一致。
+    final code = WeatherCodeFix.adjust(
+      code: rawCode,
+      precipMm: precip,
+      cloudCover: cloud,
+    );
 
     // —— 简化版垂钓适宜指数（生产可接更专业的鱼情模型）——
     // 气压 1005-1025 且 风速 < 20 且 非暴雨/雷暴 → 适宜
