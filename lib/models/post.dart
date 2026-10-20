@@ -26,6 +26,9 @@ class Post {
   final int viewCount; // 浏览人数（热门/推荐算法依据）
   final String city; // 发布时定位的地级市（同城过滤）
   final bool likedByMe; // 当前用户是否已点赞（前端高亮用）
+  final int userLevel; // 作者等级（LV1–LV30，后端按经验值换算）
+  final bool isFollowing; // 我是否已关注作者
+  final bool isMe; // 作者是不是我自己
 
   static const Map<String, String> categoryLabels = {
     'post': '渔获',
@@ -55,6 +58,9 @@ class Post {
     this.viewCount = 0,
     this.city = '',
     this.likedByMe = false,
+    this.userLevel = 1,
+    this.isFollowing = false,
+    this.isMe = false,
   });
 
   /// 把 Supabase 返回的 JSON 转成 Post
@@ -83,7 +89,12 @@ class Post {
       createdAt: DateTime.parse(json['created_at'] as String),
       likeCount: (json['like_count'] as num?)?.toInt() ?? 0,
       commentCount: (json['comment_count'] as num?)?.toInt() ?? 0,
+      viewCount: (json['view_count'] as num?)?.toInt() ?? 0,
+      city: (json['city'] ?? '').toString(),
       likedByMe: likedByMe,
+      userLevel: (json['user_level'] as num?)?.toInt() ?? 1,
+      isFollowing: json['is_following'] == true,
+      isMe: json['is_me'] == true,
     );
   }
 
@@ -126,6 +137,9 @@ class Post {
     int? viewCount,
     String? city,
     bool? likedByMe,
+    int? userLevel,
+    bool? isFollowing,
+    bool? isMe,
   }) {
     return Post(
       id: id ?? this.id,
@@ -147,6 +161,9 @@ class Post {
       viewCount: viewCount ?? this.viewCount,
       city: city ?? this.city,
       likedByMe: likedByMe ?? this.likedByMe,
+      userLevel: userLevel ?? this.userLevel,
+      isFollowing: isFollowing ?? this.isFollowing,
+      isMe: isMe ?? this.isMe,
     );
   }
 }
