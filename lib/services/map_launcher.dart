@@ -1,51 +1,40 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app_theme.dart';
 import '../utils/coord_transform.dart';
 import '../widgets/center_toast.dart';
 
-/// 单个地图渠道：原生 scheme（已安装）+ 网页版兜底
-class _MapOption {
+/// 一个可导航的地图 App（已安装才会出现在选择列表里）
+class _NavTarget {
   final String name;
-  final String nativeUrl;
-  final String webUrl;
+  final String nativeUrl; // 原生 scheme，直接唤起 App 并进入导航
   final Color color;
   final IconData icon;
-  bool installed = false;
 
-  _MapOption({
+  const _NavTarget({
     required this.name,
     required this.nativeUrl,
-    required this.webUrl,
     required this.color,
     required this.icon,
   });
-
-  String get url => installed ? nativeUrl : webUrl;
-  String get subtitle => installed ? '已安装 · 直接导航' : '网页版导航';
 }
 
 /// 第三方地图导航启动器
-/// 点击「导航前往」列出高德 / 腾讯 / 百度三家：
-///   · 手机装了对应 App → 用原生 scheme 唤起 App 直接驾车导航
-///   · 没装 → 打开该地图网页版导航（浏览器里也能走）
 ///
-/// 坐标系说明：库内存 WGS-84
-///   高德 / 腾讯 → GCJ-02（先转换再传）
-///   百度       → coord_type=wgs84 直传原始坐标
+/// 交互设计（v17）：**先检测、再让用户选**
+///   1. 点「导航前往」后，用 canLaunchUrl 探测手机上真正装了哪些地图 App；
+///   2. 弹窗只列出「已安装」的地图（高德 / 腾讯 / 百度 / 苹果地图），
+///      没装的一律不显示，也不会偷偷跳到网页版；
+///   3. 用户点哪个就用原生 scheme 唤起那个 App，并把**中文地址**填进终点栏；
+///   4. 一个都没装时，明确提示「请先安装地图 App」，网页版只作为用户主动选择的兜底。
+///
+/// 坐标系：库内存 WGS-84
+///   高德 / 腾讯 / 百度 → GCJ-02（先转换）
 class MapLauncher {
-  /// 一键直接调起本机地图 App 开始导航（不弹选择框）
-  ///
-  /// 说明：
-  ///  · 目的地优先用**中文地址**（address 非空时），这样地图 App 的
-  ///    「终点」栏里显示的是「河南省禹州市小刘垂钓园」而不是一串数字；
-  ///  · Android 依次尝试 高德 → 百度 → 系统 geo:（geo: 会让系统自己选默认地图）；
-  ///  · iOS 用 Apple 地图（maps://），同样把地址填进终点栏；
-  ///  · 全部失败时退回原来的多地图选择面板，保证用户还能导。
+  /// 让用户选一个已安装的地图 App 去导航
   static Future<void> navigate(
     BuildContext context, {
     required double lat,
@@ -55,176 +44,223 @@ class MapLauncher {
   }) async {
     final gcj = CoordTransform.wgs84ToGcj02(lat, lng);
     final dlat = gcj[0], dlng = gcj[1];
+
+    // 终点优先用中文地址，让地图 App 的终点栏显示地名而不是一串数字
     final dest = address.trim().isNotEmpty ? address.trim() : name.trim();
     final destQ = Uri.encodeComponent(dest);
     final nameQ = Uri.encodeComponent(name.trim().isEmpty ? dest : name.trim());
+    final coord = '${dlat.toStringAsFixed(6)},${dlng.toStringAsFixed(6)}';
 
-    final candidates = <Uri>[];
+    final targets = <_NavTarget>[];
 
-    if (Platform.isIOS) {
-      // Apple 地图：daddr 用地址，导航栏直接显示中文地址
-      candidates.add(Uri.parse(
-          'maps://?daddr=$destQ&dirflg=d&q=$nameQ'));
-      candidates.add(Uri.parse(
-          'http://maps.apple.com/?daddr=$destQ&dirflg=d'));
-    } else if (Platform.isAndroid) {
-      // 高德：dlat/dlon 精确定位 + destinationName 显示名称
-      candidates.add(Uri.parse('amapuri://route/plan/?dlat=$dlat&dlon=$dlng'
-          '&dev=0&t=2&destinationName=$nameQ&dname=$destQ'));
-      // 百度：destination 用地址名（导航栏显示地址）
-      candidates.add(Uri.parse('baidumap://map/direction?destination=$destQ'
-          '&coord_type=gcj02&mode=driving&src=android.fishingapp'));
-      // 系统地图选择器（装了腾讯/其他地图也能兜住）
-      candidates.add(Uri.parse('geo:$lat,$lng?q=$lat,$lng($destQ)'));
-    } else {
-      candidates.add(Uri.parse('https://uri.amap.com/navigation?to=$dlng,$dlat,$nameQ'
-          '&mode=car&src=fishing_app'));
+    if (Platform.isAndroid) {
+      targets.addAll([
+        _NavTarget(
+          name: '高德地图',
+          nativeUrl: 'amapuri://route/plan/?dlat=${dlat.toStringAsFixed(6)}'
+              '&dlon=${dlng.toStringAsFixed(6)}&dname=$nameQ'
+              '&dev=0&t=0&sourceApplication=fishing_app',
+          color: const Color(0xFF1677FF),
+          icon: Icons.navigation_rounded,
+        ),
+        _NavTarget(
+          name: '腾讯地图',
+          nativeUrl: 'qqmap://map/routeplan?type=drive&to=$destQ'
+              '&tocoord=$coord&policy=0&referer=fishingapp',
+          color: const Color(0xFF07C160),
+          icon: Icons.map_rounded,
+        ),
+        _NavTarget(
+          name: '百度地图',
+          nativeUrl: 'baidumap://map/direction?destination=latlng:$coord'
+              '|name:$destQ&coord_type=gcj02&mode=driving'
+              '&src=android.fishingapp',
+          color: const Color(0xFFE64A3B),
+          icon: Icons.directions_car_filled_rounded,
+        ),
+      ]);
+    } else if (Platform.isIOS) {
+      targets.addAll([
+        _NavTarget(
+          name: '高德地图',
+          nativeUrl: 'iosamap://path?sourceApplication=fishing_app'
+              '&dlat=${dlat.toStringAsFixed(6)}&dlon=${dlng.toStringAsFixed(6)}'
+              '&dname=$nameQ&dev=0&t=0',
+          color: const Color(0xFF1677FF),
+          icon: Icons.navigation_rounded,
+        ),
+        _NavTarget(
+          name: '腾讯地图',
+          nativeUrl: 'qqmap://map/routeplan?type=drive&to=$destQ'
+              '&tocoord=$coord&policy=0&referer=fishingapp',
+          color: const Color(0xFF07C160),
+          icon: Icons.map_rounded,
+        ),
+        _NavTarget(
+          name: '百度地图',
+          nativeUrl: 'baidumap://map/direction?destination=latlng:$coord'
+              '|name:$destQ&coord_type=gcj02&mode=driving'
+              '&src=ios.fishingapp',
+          color: const Color(0xFFE64A3B),
+          icon: Icons.directions_car_filled_rounded,
+        ),
+        // 苹果自带地图：iOS 一定存在，保证任何情况下都有 App 可用
+        _NavTarget(
+          name: '苹果地图',
+          nativeUrl: 'maps://?daddr=$destQ&dirflg=d',
+          color: const Color(0xFF3B82F6),
+          icon: Icons.explore_rounded,
+        ),
+      ]);
     }
 
-    for (final uri in candidates) {
+    // —— 1. 检测真正装了哪些 ——
+    final installed = <_NavTarget>[];
+    for (final t in targets) {
+      var ok = false;
       try {
-        if (await canLaunchUrl(uri)) {
-          final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-          if (ok) return;
-        }
+        ok = await canLaunchUrl(Uri.parse(t.nativeUrl));
       } catch (_) {
-        // 试下一个
+        ok = false;
       }
+      if (ok) installed.add(t);
     }
 
-    // 全部失败：退回多地图选择面板
-    if (context.mounted) {
-      await showNavSheet(context, lat: lat, lng: lng, name: name);
-    }
-  }
-
-  static Future<void> showNavSheet(
-    BuildContext context, {
-    required double lat,
-    required double lng,
-    String name = '目的地',
-  }) async {
-    final gcj = CoordTransform.wgs84ToGcj02(lat, lng);
-    final dlat = gcj[0], dlng = gcj[1];
-    final q = Uri.encodeComponent(name);
-
-    final options = await _buildOptions(lat, lng, dlat, dlng, q);
     if (!context.mounted) return;
 
-    final picked = await showModalBottomSheet<_MapOption>(
+    // —— 2. 一个都没装：明确提示，而不是偷偷开网页版 ——
+    if (installed.isEmpty) {
+      await _showNoMapDialog(context,
+          dlat: dlat, dlng: dlng, dest: dest, name: name);
+      return;
+    }
+
+    // —— 3. 只列出已安装的，让用户选 ——
+    final picked = await showModalBottomSheet<_NavTarget>(
       context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 14),
-              child: Text('选择地图导航',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            ),
-            ...options.map((o) => ListTile(
-                  leading: Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      color: o.color.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(9),
-                    ),
-                    child: Icon(o.icon, size: 19, color: o.color),
-                  ),
-                  title: Text(o.name),
-                  subtitle: Text(o.subtitle,
-                      style: const TextStyle(fontSize: 11.5)),
-                  trailing: const Icon(Icons.chevron_right, size: 18),
-                  onTap: () => Navigator.pop(ctx, o),
-                )),
-            const Divider(height: 1),
-            ListTile(
-              leading: Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: AppTheme.primaryLight,
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: const Icon(Icons.copy_rounded,
-                    size: 18, color: AppTheme.primary),
+              padding: EdgeInsets.fromLTRB(20, 16, 20, 4),
+              child: Row(
+                children: [
+                  Icon(Icons.navigation_rounded,
+                      size: 18, color: AppTheme.primary),
+                  SizedBox(width: 6),
+                  Text('选择地图 App 导航',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ],
               ),
-              title: const Text('复制坐标'),
-              subtitle: Text('${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}',
-                  style: const TextStyle(fontSize: 11.5)),
-              onTap: () => Navigator.pop(ctx, null),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '已检测到 ${installed.length} 个已安装地图',
+                  style: const TextStyle(
+                      fontSize: 12, color: AppTheme.textSecondary),
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            ...installed.map((t) => ListTile(
+                  leading: Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: t.color.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(t.icon, size: 20, color: t.color),
+                  ),
+                  title: Text(t.name,
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text('已安装 · 直接打开导航',
+                      style: TextStyle(fontSize: 11.5)),
+                  trailing: const Icon(Icons.chevron_right, size: 18),
+                  onTap: () => Navigator.pop(ctx, t),
+                )),
             const SizedBox(height: 6),
           ],
         ),
       ),
     );
-    if (!context.mounted) return;
 
-    if (picked == null) {
-      await Clipboard.setData(ClipboardData(
-          text: '${lat.toStringAsFixed(6)},${lng.toStringAsFixed(6)}'));
-      if (context.mounted) CenterToast.show(context, '坐标已复制');
-      return;
-    }
+    if (picked == null || !context.mounted) return;
 
-    final uri = Uri.parse(picked.url);
     try {
-      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      final ok = await launchUrl(Uri.parse(picked.nativeUrl),
+          mode: LaunchMode.externalApplication);
       if (!ok && context.mounted) {
         CenterToast.show(context, '无法打开${picked.name}');
       }
     } catch (_) {
-      if (context.mounted) {
-        CenterToast.show(context, '无法打开${picked.name}');
-      }
+      if (context.mounted) CenterToast.show(context, '无法打开${picked.name}');
     }
   }
 
-  /// 组装三家地图；用 canLaunchUrl 探测是否装了原生 App。
-  static Future<List<_MapOption>> _buildOptions(
-      double wgsLat, double wgsLng, double dlat, double dlng, String q) async {
-    final list = <_MapOption>[
-      _MapOption(
-        name: '高德地图',
-        nativeUrl: 'amapuri://route/plan/?dlat=$dlat&dlon=$dlng'
-            '&dev=0&t=2&destinationName=$q',
-        webUrl: 'https://uri.amap.com/navigation?to=$dlng,$dlat,$q'
-            '&mode=car&src=fishing_app&callnative=0',
-        color: const Color(0xFF1677FF),
-        icon: Icons.navigation_rounded,
+  /// 没检测到任何地图 App 时的提示（网页版只是用户主动选择的兜底）
+  static Future<void> _showNoMapDialog(
+    BuildContext context, {
+    required double dlat,
+    required double dlng,
+    required String dest,
+    required String name,
+  }) async {
+    final goWeb = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('未检测到地图 App'),
+        content: const Text(
+          '手机上还没有安装可导航的地图应用。\n\n'
+          '请先安装「高德地图」「腾讯地图」或「百度地图」，'
+          '再回到这里点「导航前往」，就能直接唤起 App 导航。',
+          style: TextStyle(fontSize: 13.5, height: 1.6),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('知道了'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('用网页版导航'),
+          ),
+        ],
       ),
-      _MapOption(
-        name: '腾讯地图',
-        nativeUrl: 'qqmap://map/routeplan?type=drive&to=$q'
-            '&tocoord=$dlat,$dlng&policy=0',
-        webUrl: 'https://apis.map.qq.com/uri/v1/routeplan?type=drive'
-            '&to=$q&tocoord=$dlat,$dlng&policy=0&referer=fishingapp',
-        color: const Color(0xFF07C160),
-        icon: Icons.map_rounded,
-      ),
-      _MapOption(
-        name: '百度地图',
-        nativeUrl: 'baidumap://map/direction?destination=$wgsLat,$wgsLng'
-            '&coord_type=wgs84&mode=driving',
-        webUrl: 'https://api.map.baidu.com/direction?destination=latlng:'
-            '$wgsLat,$wgsLng|name:$q&mode=driving&coord_type=wgs84'
-            '&output=html&src=fishingapp',
-        color: const Color(0xFFE64A3B),
-        icon: Icons.directions_car_filled_rounded,
-      ),
-    ];
+    );
 
-    if (Platform.isAndroid || Platform.isIOS) {
-      for (final o in list) {
-        try {
-          o.installed = await canLaunchUrl(Uri.parse(o.nativeUrl));
-        } catch (_) {
-          o.installed = false;
-        }
-      }
+    if (goWeb != true || !context.mounted) return;
+
+    // 用户明确选择网页版才打开（高德 URI API：to=经度,纬度,名称）
+    final url = 'https://uri.amap.com/navigation'
+        '?to=${dlng.toStringAsFixed(6)},${dlat.toStringAsFixed(6)},'
+        '${Uri.encodeComponent(dest)}'
+        '&mode=car&src=fishing_app&callnative=0';
+    try {
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (context.mounted) CenterToast.show(context, '无法打开网页版地图');
     }
-    return list;
+    if (context.mounted) {
+      CenterToast.show(context, '目的地：$name');
+    }
   }
+
+  /// 兼容旧调用：等价于 navigate（同样先检测再让用户选）
+  static Future<void> showNavSheet(
+    BuildContext context, {
+    required double lat,
+    required double lng,
+    String name = '目的地',
+    String address = '',
+  }) =>
+      navigate(context, lat: lat, lng: lng, name: name, address: address);
 }
