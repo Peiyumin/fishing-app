@@ -10,6 +10,7 @@ class SpotComment {
   final String? avatarUrl;
   final String content;
   final int userLevel;
+  final int vipLevel; // 会员等级（头像会员框）
   final DateTime createdAt;
 
   const SpotComment({
@@ -20,6 +21,7 @@ class SpotComment {
     this.avatarUrl,
     required this.content,
     this.userLevel = 1,
+    this.vipLevel = 0,
     required this.createdAt,
   });
 
@@ -32,6 +34,7 @@ class SpotComment {
       avatarUrl: j['user_avatar'] as String?,
       content: (j['content'] ?? '').toString(),
       userLevel: (j['user_level'] as num?)?.toInt() ?? 1,
+      vipLevel: (j['user_vip'] as num?)?.toInt() ?? 0,
       createdAt: DateTime.tryParse((j['created_at'] ?? '').toString()) ??
           DateTime.now(),
     );
