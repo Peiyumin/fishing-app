@@ -12,6 +12,7 @@ class ShopReview {
   final String content;
   final List<String> images;
   final DateTime? createdAt;
+  final int vipLevel; // 会员等级（头像会员框）
 
   const ShopReview({
     required this.id,
@@ -23,6 +24,7 @@ class ShopReview {
     this.content = '',
     this.images = const [],
     this.createdAt,
+    this.vipLevel = 0,
   });
 
   factory ShopReview.fromJson(Map<String, dynamic> json) {
@@ -32,6 +34,7 @@ class ShopReview {
       userId: (json['user_id'] ?? '').toString(),
       nickname: (json['nickname'] ?? '').toString(),
       avatar: ApiConfig.mediaUrl(json['avatar'] as String?) ?? '',
+      vipLevel: (json['user_vip'] as num?)?.toInt() ?? 0,
       rating: (json['rating'] as num?)?.toInt() ?? 5,
       content: (json['content'] ?? '').toString(),
       images: ApiConfig.mediaList(json['images']),
