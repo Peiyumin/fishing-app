@@ -230,6 +230,84 @@ class _PostCardState extends State<PostCard> {
     );
   }
 
+  /// 渔获固定标题：左侧鱼形标记 + 「今日鱼获分享」+ 渐变下划线
+  Widget _catchTitle() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                gradient: AppTheme.brandGradient,
+                borderRadius: BorderRadius.circular(7),
+              ),
+              child: const Icon(Icons.set_meal, size: 14, color: Colors.white),
+            ),
+            const SizedBox(width: 7),
+            const Text(
+              '今日鱼获分享',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                height: 1.2,
+                letterSpacing: 0.3,
+                color: AppTheme.textPrimary,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 5),
+        // 标题下面的小渐变条：让标题有「设计感」，不是一行干巴巴的字
+        Container(
+          width: 44,
+          height: 3,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(colors: [
+              AppTheme.primary,
+              AppTheme.accent,
+            ]),
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 渔获摘要：浅绿底 + 鱼种条数，一行放不下自动换行
+  Widget _catchSummaryLine() {
+    final summary = _post.catchSummary;
+    if (summary.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: AppTheme.primaryLight,
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const Icon(Icons.phishing, size: 13, color: AppTheme.primary),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              summary,
+              style: const TextStyle(
+                fontSize: 12.5,
+                height: 1.3,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.primaryDark,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // 作者行右侧的关注按钮（登录且非本人且后端可用时才显示）
   Widget _followButton() {
     if (!ApiConfig.enabled) return const SizedBox.shrink();
@@ -266,6 +344,7 @@ class _PostCardState extends State<PostCard> {
                       url: _post.avatarUrl,
                       userId: _post.userId,
                       radius: 16,
+                      vipLevel: _post.authorVip,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -286,11 +365,13 @@ class _PostCardState extends State<PostCard> {
                 ],
               ),
               const SizedBox(height: 8),
-              // 标题 + 类别标签
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (_post.category != 'post') ...[
+              // 标题：渔获统一「今日鱼获分享」，其它类别显示原标题 + 类别标签
+              if (_post.isCatch)
+                _catchTitle()
+              else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Container(
                       margin: const EdgeInsets.only(top: 2, right: 6),
                       padding: const EdgeInsets.symmetric(
@@ -305,14 +386,13 @@ class _PostCardState extends State<PostCard> {
                               fontWeight: FontWeight.w600,
                               color: _categoryColor(_post.category))),
                     ),
+                    Expanded(
+                      child: Text(_post.displayTitle,
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold)),
+                    ),
                   ],
-                  Expanded(
-                    child: Text(_post.title,
-                        style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold)),
-                  ),
-                ],
-              ),
+                ),
               if (_post.body != null && _post.body!.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Text(_post.body!,
@@ -320,33 +400,10 @@ class _PostCardState extends State<PostCard> {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: Colors.black87)),
               ],
-              // 渔获「钓到了什么」：鱼种 + 尾数
+              // 渔获内容：鱼种 + 条数（「鲫鱼 2 条 · 鲤鱼 1 条」）
               if (_post.fish.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: _post.fish.map((f) {
-                    final name = (f['name'] ?? '').toString();
-                    if (name.isEmpty) return const SizedBox.shrink();
-                    final n = (f['count'] as num?)?.toInt() ?? 1;
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: AppTheme.primaryLight,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        n > 1 ? '$name ×$n' : name,
-                        style: const TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600,
-                            color: AppTheme.primary),
-                      ),
-                    );
-                  }).toList(),
-                ),
+                _catchSummaryLine(),
               ],
               // 二手价格（出售=售价 / 求购=预算）
               if (_post.isTrade && _post.price.isNotEmpty) ...[
