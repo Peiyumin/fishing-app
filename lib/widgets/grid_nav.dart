@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../screens/catch_screen.dart';
+import '../screens/mall_screen.dart';
 import '../screens/weather_screen.dart';
 import '../screens/spots_screen.dart';
 import 'center_toast.dart';
@@ -58,6 +60,16 @@ class GridNav extends StatelessWidget {
       case 'spot':
         Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => const SpotsScreen()),
+        );
+        return;
+      case 'catch':
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const CatchScreen()),
+        );
+        return;
+      case 'shop':
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const MallScreen()),
         );
         return;
       default:
