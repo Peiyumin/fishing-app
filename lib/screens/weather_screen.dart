@@ -187,8 +187,10 @@ class _WeatherScreenState extends State<WeatherScreen> {
   }
 
   Widget _buildBody(WeatherBundle b) {
-    final sp = FishingSpecies.all[_spIdx];
     final mode = FishingMode.all[_modeIdx];
+    // 目标鱼随钓法切换：台钓 / 路亚 / 海钓 各自是不同的鱼种表
+    final species = FishingSpecies.forMode(mode.name);
+    final sp = species[_spIdx.clamp(0, species.length - 1)];
     final metrics = WaterMetrics.derive(b.hours);
     final idxOf = <DateTime, int>{
       for (var i = 0; i < b.hours.length; i++) b.hours[i].time: i
@@ -237,10 +239,14 @@ class _WeatherScreenState extends State<WeatherScreen> {
         const SizedBox(height: 2),
         _ModeRow(
           selected: _modeIdx,
-          onSelect: (i) => setState(() => _modeIdx = i),
+          onSelect: (i) => setState(() {
+            _modeIdx = i;
+            _spIdx = 0; // 换钓法后鱼种表不同，回到该钓法第一种鱼
+          }),
         ),
         _SpeciesChips(
-          selected: _spIdx,
+          species: species,
+          selected: _spIdx.clamp(0, species.length - 1),
           onSelect: (i) => setState(() => _spIdx = i),
         ),
         _TitleRow(mode: mode, sp: sp),
@@ -305,6 +311,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
     final metrics = WaterMetrics.derive(b.hours);
     final w = i >= 0 ? metrics[i] : WaterMetrics(b.curTemp, 7.0);
 
+    final at = h?.time ??
+        DateTime(day.date.year, day.date.month, day.date.day, _refHour);
     final result = FishScore.compute(
       method: mode.name,
       pressure: h?.pressure ?? b.curPressure,
@@ -312,8 +320,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
       windMs: (h?.windMs) ?? (b.curWindSpeed / 3.6),
       waterTemp: w.temp,
       dissolvedOxygen: w.oxygen,
-      season: seasonOf(day.date),
       sp: sp,
+      at: at,
     );
 
     final idxOf = <DateTime, int>{
@@ -327,10 +335,15 @@ class _WeatherScreenState extends State<WeatherScreen> {
 
     // 维度分条（内陆无潮汐 → tide 为 null，自动不展示）
     final bars = <Widget>[];
-    for (final key in ['pressure', 'wind', 'temp', 'oxygen', 'tide']) {
+    for (final key in ['pressure', 'wind', 'temp', 'oxygen', 'tide', 'time']) {
       final v = dim[key];
       if (v == null) continue;
-      bars.add(_dimBar(FishScore.dimName[key]!, v));
+      bars.add(_dimBar(
+        FishScore.dimName[key]!,
+        v,
+        // 海钓潮汐额外标注大/中/小潮，让「潮汐分」看得懂
+        suffix: key == 'tide' ? FishScore.seaTideName(at) : null,
+      ));
     }
 
     _sheet('AI 解析 · ${mode.name}·${sp.name}', [
@@ -397,7 +410,12 @@ class _WeatherScreenState extends State<WeatherScreen> {
           ],
         ),
       ),
-      const SizedBox(height: 18),
+      const SizedBox(height: 10),
+      // 目标鱼习性（说明为什么这个鱼种今天好 / 不好）
+      Text('${sp.name}：${sp.habit}',
+          style: const TextStyle(
+              color: _Pal.muted, fontSize: 10.5, height: 1.55)),
+      const SizedBox(height: 16),
       // 多维评分条
       const Text('多维评分',
           style: TextStyle(
@@ -464,7 +482,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
               color: Color(0xFFBBC9DC), fontSize: 12.5, height: 1.6)),
       const SizedBox(height: 11),
       const Text(
-          '依据：气压稳定度 · 风 · 水温适温 · 溶氧 · 钓法权重（离线多维规则引擎）',
+          '依据：气压稳定度 · 风 · 水温适温 · 溶氧 · 时段活性 · 潮汐（海钓）'
+          ' · 鱼种习性（离线多维规则引擎）',
           style: TextStyle(color: _Pal.muted, fontSize: 10)),
     ]);
   }
@@ -494,7 +513,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
   }
 
   /// 单个维度评分条
-  Widget _dimBar(String name, int score) {
+  Widget _dimBar(String name, int score, {String? suffix}) {
     final c = _scoreColor(score);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -525,6 +544,11 @@ class _WeatherScreenState extends State<WeatherScreen> {
                 style: TextStyle(
                     color: c, fontSize: 12, fontWeight: FontWeight.w700)),
           ),
+          if (suffix != null) ...[
+            const SizedBox(width: 4),
+            Text(suffix,
+                style: const TextStyle(color: _Pal.muted, fontSize: 9.5)),
+          ],
         ],
       ),
     );
@@ -554,7 +578,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
     final i = h == null ? -1 : (idxOf[h.time] ?? -1);
     final w = i >= 0 ? metrics[i] : WaterMetrics(b.curTemp, 7.0);
 
-    final list = FishingSpecies.all
+    final list = FishingSpecies.forMode(mode.name)
         .map((s) => MapEntry(
             s,
             h == null
@@ -564,7 +588,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
       ..sort((a, b2) => b2.value.compareTo(a.value));
 
     _sheet('鱼种对比 · ${mode.name}', [
-      Text('同一时段（${_refHour.toString().padLeft(2, '0')}:00）各鱼种鱼情',
+      Text('${mode.name}目标鱼 · 同一时段（${_refHour.toString().padLeft(2, '0')}:00）鱼情',
           style: const TextStyle(color: _Pal.muted, fontSize: 11.5)),
       const SizedBox(height: 14),
       ...list.map((e) {
@@ -729,8 +753,8 @@ class _NowCard extends StatelessWidget {
             windMs: bundle.curWindSpeed / 3.6,
             waterTemp: w.temp,
             dissolvedOxygen: w.oxygen,
-            season: seasonOf(DateTime.now()),
             sp: sp,
+            at: DateTime.now(),
           ).indexScore ??
             bundle.currentFishIndex)
         : Bite.score(h: h, w: w, sp: sp, mode: mode);
@@ -1044,9 +1068,15 @@ class _ModeRow extends StatelessWidget {
 // 鱼种 chips
 // ============================================================
 class _SpeciesChips extends StatelessWidget {
+  /// 当前钓法下的目标鱼（台钓 / 路亚 / 海钓 各不同）
+  final List<FishingSpecies> species;
   final int selected;
   final ValueChanged<int> onSelect;
-  const _SpeciesChips({required this.selected, required this.onSelect});
+  const _SpeciesChips({
+    required this.species,
+    required this.selected,
+    required this.onSelect,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1055,7 +1085,7 @@ class _SpeciesChips extends StatelessWidget {
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-        itemCount: FishingSpecies.all.length,
+        itemCount: species.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, i) {
           final sel = i == selected;
@@ -1073,7 +1103,7 @@ class _SpeciesChips extends StatelessWidget {
                 ),
               ),
               child: Text(
-                FishingSpecies.all[i].name,
+                species[i].name,
                 style: TextStyle(
                   color: sel ? _Pal.gold : const Color(0xFFB9C7DA),
                   fontSize: 12.5,
@@ -1244,7 +1274,7 @@ class _HourTable extends StatelessWidget {
   final int? nowHour;
   const _HourTable({required this.rows, this.nowHour});
 
-  static const int _fTime = 20;
+  static const int _fTime = 28;
   static const int _fWx = 40;
   static const int _fTemp = 30;
   static const int _fPres = 34;
@@ -1252,6 +1282,25 @@ class _HourTable extends StatelessWidget {
   static const int _fWater = 26;
   static const int _fO2 = 30;
   static const int _fScore = 34;
+
+  /// 逐时时间的人性化表述：返回（时段, 钟点），如（上午, 9点）（下午, 3点）。
+  /// 比裸数字 00/01 更易读，又不占太宽。
+  static (String, String) _timeLabel(int hour) {
+    final String period;
+    if (hour <= 5) {
+      period = '凌晨';
+    } else if (hour <= 11) {
+      period = '上午';
+    } else if (hour == 12) {
+      period = '中午';
+    } else if (hour <= 17) {
+      period = '下午';
+    } else {
+      period = '晚上';
+    }
+    final h12 = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+    return (period, '$h12点');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1346,6 +1395,7 @@ class _HourTable extends StatelessWidget {
 
     final sc = r.score;
     final scColor = _scoreColor(sc);
+    final tl = _timeLabel(h.time.hour);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
@@ -1361,11 +1411,23 @@ class _HourTable extends StatelessWidget {
         children: [
           _Td(
             flex: _fTime,
-            child: Text(h.time.hour.toString().padLeft(2, '0'),
-                style: const TextStyle(
-                    color: _Pal.txt,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600)),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(tl.$1,
+                    maxLines: 1,
+                    style: const TextStyle(
+                        color: _Pal.muted, fontSize: 8.5, height: 1.1)),
+                const SizedBox(height: 1),
+                Text(tl.$2,
+                    maxLines: 1,
+                    style: const TextStyle(
+                        color: _Pal.txt,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        height: 1.1)),
+              ],
+            ),
           ),
           _Td(
             flex: _fWx,
