@@ -9,6 +9,7 @@ import 'package:latlong2/latlong2.dart';
 import 'package:provider/provider.dart';
 
 import '../services/api_client.dart';
+import '../services/refresh_bus.dart';
 import '../services/location_service.dart';
 import '../services/spot_service.dart';
 import '../services/session_provider.dart';
@@ -201,6 +202,7 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
             ],
           ),
         );
+        RefreshBus.bumpSpots();
         if (mounted) Navigator.of(context).pop();
       }
     } catch (e) {
