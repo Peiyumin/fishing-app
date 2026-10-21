@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../services/location_service.dart';
 import '../services/post_service.dart';
+import '../services/refresh_bus.dart';
 import '../services/session_provider.dart';
 import '../services/api_config.dart';
 import '../utils/geo_names.dart';
@@ -214,6 +215,7 @@ class _PublishScreenState extends State<PublishScreen> {
         city: await GeoNames.currentCity() ?? '', // 地级市（同城 Tab 依据）
       );
       if (mounted) {
+      RefreshBus.bumpFeed();
         CenterToast.show(context, '发布成功', icon: Icons.check_circle_outline);
         Navigator.of(context).pop();
       }
