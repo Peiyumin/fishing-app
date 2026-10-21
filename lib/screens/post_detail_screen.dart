@@ -9,6 +9,7 @@ import '../services/api_config.dart';
 import '../services/follow_service.dart';
 import '../services/post_service.dart';
 import '../services/session_provider.dart';
+import '../widgets/location_label.dart';
 import '../widgets/post_video_player.dart';
 import '../widgets/user_avatar.dart';
 import 'auth_screen.dart';
@@ -102,7 +103,6 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     final area = _post.city.trim().isNotEmpty
         ? _post.city.trim()
         : (_post.locationName ?? '').trim();
-    final meta = area.isEmpty ? _post.timeAgo : '${_post.timeAgo} · $area';
 
     return Row(
       children: [
@@ -142,12 +142,31 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                 ],
               ),
               const SizedBox(height: 3),
-              Text(
-                meta,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontSize: 12, color: AppTheme.textSecondary),
+              // 「16小时前 · 城市名」；area 若是历史坐标则异步逆地编码成中文地名
+              Row(
+                children: [
+                  Text(
+                    _post.timeAgo,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 12, color: AppTheme.textSecondary),
+                  ),
+                  if (area.isNotEmpty) ...[
+                    const Text(
+                      ' · ',
+                      style: TextStyle(
+                          fontSize: 12, color: AppTheme.textSecondary),
+                    ),
+                    Flexible(
+                      child: LocationLabel(
+                        raw: area,
+                        style: const TextStyle(
+                            fontSize: 12, color: AppTheme.textSecondary),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ],
           ),
@@ -407,9 +426,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                           size: 16, color: AppTheme.textSecondary),
                       const SizedBox(width: 3),
                       Flexible(
-                        child: Text(
-                          _post.locationName!,
-                          overflow: TextOverflow.ellipsis,
+                        child: LocationLabel(
+                          raw: _post.locationName!,
                           style: const TextStyle(
                               fontSize: 13, color: AppTheme.textSecondary),
                         ),
