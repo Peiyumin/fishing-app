@@ -7,6 +7,7 @@ import '../models/post.dart';
 import '../models/user_profile.dart';
 import '../services/follow_service.dart';
 import '../services/post_service.dart';
+import '../services/refresh_bus.dart';
 import '../services/session_provider.dart';
 import '../services/api_config.dart';
 import '../widgets/post_card.dart';
@@ -26,6 +27,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
   List<Post> _myPosts = [];
   UserProfile? _me;
   bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 积分兑换 / 发布渔获后刷新资料（积分余额要跟着变）
+    RefreshBus.profileTick.addListener(_onProfileTick);
+    RefreshBus.feedTick.addListener(_onFeedTick);
+  }
+
+  @override
+  void dispose() {
+    RefreshBus.profileTick.removeListener(_onProfileTick);
+    RefreshBus.feedTick.removeListener(_onFeedTick);
+    super.dispose();
+  }
+
+  void _onProfileTick() => _loadMe();
+
+  void _onFeedTick() {
+    final sp = Provider.of<SessionProvider>(context, listen: false);
+    if (sp.isLoggedIn || !ApiConfig.enabled) _loadMyPosts();
+  }
 
   @override
   void didChangeDependencies() {
