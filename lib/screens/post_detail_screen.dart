@@ -116,6 +116,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             url: ApiConfig.mediaUrl(_post.avatarUrl),
             userId: _post.userId,
             radius: 21,
+            vipLevel: _post.authorVip,
           ),
         ),
         const SizedBox(width: 10),
@@ -325,6 +326,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             url: ApiConfig.mediaUrl(avatar),
             userId: c['user_id'] as String?,
             radius: 16,
+            vipLevel: (c['user_vip'] as num?)?.toInt() ?? 0,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -380,16 +382,93 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 标题
-                Text(
-                  _post.title,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    height: 1.35,
-                    color: AppTheme.textPrimary,
+                // 标题：渔获统一「今日鱼获分享」（与首页完全一致）
+                if (_post.isCatch) ...[
+                  Row(
+                    children: [
+                      Container(
+                        width: 26,
+                        height: 26,
+                        decoration: BoxDecoration(
+                          gradient: AppTheme.brandGradient,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.set_meal,
+                            size: 16, color: Colors.white),
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        '今日鱼获分享',
+                        style: TextStyle(
+                          fontSize: 21,
+                          fontWeight: FontWeight.w800,
+                          height: 1.25,
+                          letterSpacing: 0.3,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
+                  const SizedBox(height: 6),
+                  Container(
+                    width: 52,
+                    height: 3,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                          colors: [AppTheme.primary, AppTheme.accent]),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  if (_post.catchSummary.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryLight,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.phishing,
+                              size: 14, color: AppTheme.primary),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              _post.catchSummary,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                height: 1.35,
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.primaryDark,
+                              ),
+                            ),
+                          ),
+                          if (_post.catchTotal > 0) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              '共 ${_post.catchTotal} 条',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppTheme.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ] else
+                  Text(
+                    _post.displayTitle,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      height: 1.35,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
                 const SizedBox(height: 12),
                 // 作者：头像 + 昵称 + 等级 + 时间/地区 + 加关注
                 _authorRow(),
