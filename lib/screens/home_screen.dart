@@ -282,16 +282,6 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  /// 「钓友动态」标题：带上最近一次刷新时间，让用户知道首页会自己更新
-  String _feedTitle() {
-    final t = _lastUpdated;
-    if (t == null) return '钓友动态';
-    final diff = DateTime.now().difference(t);
-    if (diff.inSeconds < 60) return '钓友动态 · 刚刚更新';
-    if (diff.inMinutes < 60) return '钓友动态 · ${diff.inMinutes} 分钟前更新';
-    return '钓友动态 · ${diff.inHours} 小时前更新';
-  }
-
   /// 手动下拉刷新：顺带重新定位一次，保证「附近钓点」距离是新的
   Future<void> _onRefresh() async {
     await Future.wait([
@@ -462,14 +452,18 @@ class _HomeScreenState extends State<HomeScreen>
                       ),
             // 钓点横向列表（标题 + 进入钓点页）
             SectionHeader(
-              title: _myLat == null ? '附近钓点' : '附近钓点 · 由近到远',
+              title: '附近钓点',
+              // 由近到远是小字说明，不跟标题一样大（原来拼在 title 里，字号一样大很突兀）
+              subtitle: _myLat == null ? null : '由近到远',
               actionLabel: '更多',
               onAction: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const SpotsScreen()),
               ),
             ),
             SizedBox(
-              height: 116,
+              // 卡片自身 96 高（见 SpotCard.cardHeight），这里只留一点呼吸空间，
+              // 高度写死可以彻底避免「加了标签把卡片撑变形 / 被裁掉」
+              height: SpotCard.cardHeight + 6,
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -485,7 +479,10 @@ class _HomeScreenState extends State<HomeScreen>
                     .toList(),
               ),
             ),
-            SectionHeader(title: _feedTitle()),
+            SectionHeader(
+              title: '钓友动态',
+              subtitle: '实时更新',
+            ),
             // 动态信息流（实时刷新）
             _loadingPosts
                 ? const Center(child: CircularProgressIndicator())
