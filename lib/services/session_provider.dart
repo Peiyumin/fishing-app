@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/member.dart';
 import '../models/user_profile.dart';
 import 'api_client.dart';
 import 'api_config.dart';
@@ -16,16 +17,35 @@ class SessionProvider extends ChangeNotifier {
   static const _kUserId = 'session_user_id';
   static const _kNickname = 'session_nickname';
   static const _kAvatar = 'session_avatar';
+  static const _kVipLevel = 'session_vip_level';
+  static const _kVipName = 'session_vip_name';
+  static const _kVipColor = 'session_vip_color';
+  static const _kVipColor2 = 'session_vip_color2';
+  static const _kVipExpire = 'session_vip_expire';
 
   String? _token;
   String? _userId;
   String? _nickname;
   String? _avatar;
+  int _vipLevel = 0;
+  String _vipName = '';
+  Color _vipColor = MemberStyle.normalColor;
+  Color _vipColor2 = MemberStyle.normalColor2;
+  String _vipExpire = '';
 
   bool get isLoggedIn => _token != null;
   String? get userId => _userId;
   String? get nickname => _nickname;
   String? get avatar => _avatar;
+
+  /// 当前登录用户的会员样式（用于头像会员框等）
+  MemberStyle get vip => MemberStyle(
+        level: _vipLevel,
+        name: _vipName,
+        color: _vipColor,
+        color2: _vipColor2,
+        expire: _vipExpire,
+      );
 
   /// 头像的完整可访问地址（相对路径自动拼站点根，绝对地址自动修端口）
   String? get avatarUrl => ApiConfig.mediaUrl(_avatar);
@@ -37,6 +57,11 @@ class SessionProvider extends ChangeNotifier {
     _userId = prefs.getString(_kUserId);
     _nickname = prefs.getString(_kNickname);
     _avatar = prefs.getString(_kAvatar);
+    _vipLevel = prefs.getInt(_kVipLevel) ?? 0;
+    _vipName = prefs.getString(_kVipName) ?? '';
+    _vipColor = Color(prefs.getInt(_kVipColor) ?? MemberStyle.normalColor.value);
+    _vipColor2 = Color(prefs.getInt(_kVipColor2) ?? MemberStyle.normalColor2.value);
+    _vipExpire = prefs.getString(_kVipExpire) ?? '';
     ApiClient.setToken(_token);
     notifyListeners();
   }
@@ -66,6 +91,11 @@ class SessionProvider extends ChangeNotifier {
     _userId = data['id'] as String?;
     _nickname = (data['nickname'] as String?) ?? '钓友';
     _avatar = data['avatar'] as String?;
+    _vipLevel = (data['vipLevel'] as num?)?.toInt() ?? 0;
+    _vipName = (data['vipName'] as String?) ?? '';
+    _vipColor = MemberStyle.parseColor(data['vipColor'], MemberStyle.normalColor);
+    _vipColor2 = MemberStyle.parseColor(data['vipColor2'], MemberStyle.normalColor2);
+    _vipExpire = (data['vipExpire'] as String?) ?? '';
     ApiClient.setToken(_token);
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
@@ -73,6 +103,11 @@ class SessionProvider extends ChangeNotifier {
     await prefs.setString(_kUserId, _userId ?? '');
     await prefs.setString(_kNickname, _nickname ?? '');
     await prefs.setString(_kAvatar, _avatar ?? '');
+    await prefs.setInt(_kVipLevel, _vipLevel);
+    await prefs.setString(_kVipName, _vipName);
+    await prefs.setInt(_kVipColor, _vipColor.value);
+    await prefs.setInt(_kVipColor2, _vipColor2.value);
+    await prefs.setString(_kVipExpire, _vipExpire);
   }
 
   /// 修改我的资料（昵称 / 头像），成功后同步全局状态与本地缓存
@@ -84,10 +119,20 @@ class SessionProvider extends ChangeNotifier {
     final profile = UserProfile.fromJson(Map<String, dynamic>.from(data));
     _nickname = profile.nickname;
     _avatar = profile.avatar;
+    _vipLevel = profile.vip.level;
+    _vipName = profile.vip.name;
+    _vipColor = profile.vip.color;
+    _vipColor2 = profile.vip.color2;
+    _vipExpire = profile.vip.expire;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kNickname, _nickname ?? '');
     await prefs.setString(_kAvatar, _avatar ?? '');
+    await prefs.setInt(_kVipLevel, _vipLevel);
+    await prefs.setString(_kVipName, _vipName);
+    await prefs.setInt(_kVipColor, _vipColor.value);
+    await prefs.setInt(_kVipColor2, _vipColor2.value);
+    await prefs.setString(_kVipExpire, _vipExpire);
     return profile;
   }
 
@@ -106,6 +151,11 @@ class SessionProvider extends ChangeNotifier {
     _userId = null;
     _nickname = null;
     _avatar = null;
+    _vipLevel = 0;
+    _vipName = '';
+    _vipColor = MemberStyle.normalColor;
+    _vipColor2 = MemberStyle.normalColor2;
+    _vipExpire = '';
     ApiClient.setToken(null);
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
@@ -113,5 +163,10 @@ class SessionProvider extends ChangeNotifier {
     await prefs.remove(_kUserId);
     await prefs.remove(_kNickname);
     await prefs.remove(_kAvatar);
+    await prefs.remove(_kVipLevel);
+    await prefs.remove(_kVipName);
+    await prefs.remove(_kVipColor);
+    await prefs.remove(_kVipColor2);
+    await prefs.remove(_kVipExpire);
   }
 }
