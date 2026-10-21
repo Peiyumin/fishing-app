@@ -1,11 +1,9 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-
-import '../app_theme.dart';
 
 import '../models/user_profile.dart';
 import '../services/follow_service.dart';
 import '../widgets/follow_button.dart';
+import '../widgets/user_avatar.dart';
 import 'user_profile_screen.dart';
 
 /// 粉丝 / 关注 列表页
@@ -75,14 +73,11 @@ class _FollowListScreenState extends State<FollowListScreen> {
                         itemBuilder: (_, i) {
                           final u = _users[i];
                           return ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: AppTheme.primary,
-                              backgroundImage: u.avatar != null
-                                  ? CachedNetworkImageProvider(u.avatar!)
-                                  : null,
-                              child: u.avatar == null
-                                  ? const Icon(Icons.person, color: Colors.white)
-                                  : null,
+                            leading: UserAvatar(
+                              url: u.avatar,
+                              userId: u.id,
+                              radius: 20,
+                              member: u.vip,
                             ),
                             title: Text(u.nickname),
                             subtitle: Text('粉丝 ${u.followerCount}'),
