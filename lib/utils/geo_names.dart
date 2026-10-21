@@ -32,7 +32,7 @@ class GeoNames {
     return a >= -90 && a <= 90 && b >= -180 && b <= 180;
   }
 
-  /// 把任意定位字符串解析成中文地名（只保留「市+区县」两级，简洁够用）。
+  /// 把任意定位字符串解析成中文地名（格式「市·区县」，地级市不带「市」字）。
   /// - 已是地名 → 原样返回
   /// - 是坐标「lat, lng」→ 逆地编码；失败降级为坐标原文
   static Future<String> resolveName(String raw) async {
@@ -52,7 +52,7 @@ class GeoNames {
     return out;
   }
 
-  /// 坐标 → 「市+区县」短地名（发布页「获取定位」用）
+  /// 坐标 → 「市·区县」短地名（发布页「获取定位」用）
   static Future<String> nameForPosition(double lat, double lng) async {
     final key = '${lat.toStringAsFixed(3)}, ${lng.toStringAsFixed(3)}';
     if (_coordCache.containsKey(key)) return _coordCache[key]!;
@@ -63,24 +63,31 @@ class GeoNames {
     return out;
   }
 
-  /// 从 reverse 结果提取「市+区县」。
-  /// 优先用 city（地级市）；city 为空（直辖市/海外）时退回 locality（区县）。
-  /// 例：河南省许昌市禹州市 → 许昌市禹州市
+  /// 从 reverse 结果提取「市(去市字)·区县」。
+  /// 例：city=许昌市 + locality=禹州市 → 「许昌·禹州市」
+  /// 直辖市（city==locality）→ 只输出一次，不重复。
   static String _shortName(Map<String, dynamic>? r) {
     if (r == null) return '';
     final city = (r['city'] ?? '').toString().trim();
     final locality = (r['locality'] ?? '').toString().trim();
 
-    if (city.isNotEmpty) {
-      // 直辖市：city == locality，去重只留一个
-      if (locality.isEmpty || locality == city) return city;
-      // locality 已在 city 之后（如 许昌市 + 禹州市）
-      if (city.contains(locality) || locality.contains(city)) {
-        return city.length >= locality.length ? city : locality;
-      }
-      return '$city$locality';
+    // 直辖市/市辖区：city 与 locality 同名，只留一个并去掉「市」字
+    if (city.isNotEmpty && (locality.isEmpty || locality == city)) {
+      return _stripCitySuffix(city);
     }
-    return locality;
+    if (city.isEmpty) {
+      // 没有地级市（直辖市区县/海外）→ 只用区县
+      return locality;
+    }
+    return '${_stripCitySuffix(city)}·$locality';
+  }
+
+  /// 去掉地级市末尾的「市」字（许昌市 → 许昌）。
+  /// 「市辖区」「县级市」等不以「市」结尾的名称原样返回。
+  static String _stripCitySuffix(String name) {
+    if (name.length <= 1) return name;
+    if (!name.endsWith('市')) return name;
+    return name.substring(0, name.length - 1);
   }
 
   /// 当前定位的地级市名（如「武汉市」「杭州市」）。
