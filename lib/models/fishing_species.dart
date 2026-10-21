@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'weather_forecast.dart';
 
 /// ============================================================
@@ -6,8 +8,9 @@ import 'weather_forecast.dart';
 /// 数据来源说明：
 ///  - 气温、气压、风、降雨、天气现象 = Open-Meteo 实测/预报（免费、无需 Key）；
 ///  - 水温、溶氧（水氧）无免费实测接口，按水文学经验模型从气温 + 气压推导；
-///  - 鱼情指数 = 多维加权（气压稳定度 / 风速 / 水温适温 / 溶氧 / 潮汐）× 钓法权重，
-///    借鉴竞品「鱼天气」indexFishData 的自研富指数思路（分维度打分 + 归一化 + 黄金时段）。
+///  - 鱼情指数 = 多维加权（气压稳定度 / 风速 / 水温适温 / 溶氧 / 潮汐 / 时段活性）
+///    × 钓法权重，并叠加鱼种自身习性（适温区间、活跃时段、喜风浪、掠食性）；
+///  - 海钓潮汐按朔望月月相近似（大潮 / 中潮 / 小潮），内陆钓法自动剔除该维度。
 /// ============================================================
 
 /// 当前季节（用于黄金时段默认值与适温口径）
@@ -19,7 +22,7 @@ String seasonOf(DateTime d) {
   return 'winter';
 }
 
-/// 钓法：同一份天气，不同钓法的适宜度不同（权重不同）
+/// 钓法：同一份天气，不同钓法的适宜度不同（权重不同、目标鱼也不同）
 class FishingMode {
   final String name;
   const FishingMode(this.name);
@@ -31,7 +34,7 @@ class FishingMode {
   ];
 }
 
-/// 鱼种：适宜水温区间 + 习性
+/// 鱼种：适温区间 + 习性（所属钓法 / 活跃时段 / 是否喜风浪）
 class FishingSpecies {
   final String name;
 
@@ -42,8 +45,17 @@ class FishingSpecies {
   /// 习性一句话（用于鱼种对比 / 解读）
   final String habit;
 
-  /// 掠食性（路亚更吃香）
+  /// 掠食性（路亚更吃香；锋前降压反而更活跃）
   final bool predator;
+
+  /// 可钓该鱼种的钓法（台钓 / 路亚 / 海钓）
+  final List<String> modes;
+
+  /// 一天中的活跃时段（0-23 点），用于「时段活性」维度打分
+  final List<int> activeHours;
+
+  /// 喜风浪：风浪推流能提高溶氧、聚饵，这类鱼反而要有点风
+  final bool likesWave;
 
   const FishingSpecies(
     this.name,
@@ -51,16 +63,103 @@ class FishingSpecies {
     this.optHigh,
     this.habit, {
     this.predator = false,
+    required this.modes,
+    required this.activeHours,
+    this.likesWave = false,
   });
 
+  /// 全部鱼种（按钓法归类，不同钓法目标鱼完全不同）
   static const all = <FishingSpecies>[
-    FishingSpecies('鲫鱼', 10, 26, '全年可钓，喜弱风稳气压，底钓为主'),
-    FishingSpecies('翘嘴鲌', 16, 29, '中上层掠食，喜风浪与晨昏窗口', predator: true),
-    FishingSpecies('鳙鱼', 18, 31, '滤食性，高温浮钓，喜肥水'),
-    FishingSpecies('鲤鱼', 12, 27, '底栖杂食，喜稳气压与泥底'),
-    FishingSpecies('白条', 14, 30, '表层小鱼，喜明亮活跃，成群抢食'),
-    FishingSpecies('草鱼', 17, 31, '草食性，高温晴天中午活跃'),
+    // ───────────── 台钓（手竿/台钓，淡水杂食 & 底栖） ─────────────
+    FishingSpecies('鲫鱼', 10, 26, '全年可钓，喜弱风稳气压，底钓为主',
+        modes: ['台钓'], activeHours: [6, 7, 8, 9, 16, 17, 18]),
+    FishingSpecies('鲤鱼', 12, 27, '底栖杂食，喜稳气压与泥底，谨慎靠边',
+        modes: ['台钓'], activeHours: [5, 6, 7, 18, 19, 20, 21]),
+    FishingSpecies('草鱼', 17, 31, '草食性，高温晴天中午活跃，喜安静',
+        modes: ['台钓'], activeHours: [10, 11, 12, 13, 14, 15]),
+    FishingSpecies('鳊鱼', 14, 28, '中层杂食，喜缓流与微风，成群索饵',
+        modes: ['台钓'], activeHours: [7, 8, 9, 15, 16, 17]),
+    FishingSpecies('鳙鱼', 18, 31, '滤食性，高温浮钓，喜肥水与雾化饵',
+        modes: ['台钓'], activeHours: [9, 10, 11, 12, 13, 14, 15, 16]),
+    FishingSpecies('青鱼', 16, 28, '大型底栖，喜深水螺蛳底，稳气压开口',
+        modes: ['台钓'], activeHours: [6, 7, 8, 17, 18, 19]),
+    FishingSpecies('黄颡鱼', 12, 28, '夜行性底栖，弱光开口猛，喜腥饵',
+        modes: ['台钓'], activeHours: [19, 20, 21, 22, 23, 0, 1]),
+    FishingSpecies('罗非鱼', 20, 32, '喜高温，南方水域常见，口重不挑饵',
+        modes: ['台钓'], activeHours: [9, 10, 11, 12, 13, 14, 15, 16]),
+
+    // ───────────── 路亚（拟饵，掠食性鱼类） ─────────────
+    FishingSpecies('翘嘴鲌', 16, 29, '中上层掠食，喜风浪与晨昏窗口，追小鱼群',
+        predator: true,
+        modes: ['路亚'],
+        activeHours: [5, 6, 7, 18, 19, 20],
+        likesWave: true),
+    FishingSpecies('鲈鱼', 14, 27, '结构区伏击型，晨昏与阴天开口',
+        predator: true,
+        modes: ['路亚'],
+        activeHours: [6, 7, 8, 17, 18, 19]),
+    FishingSpecies('黑鱼', 18, 30, '水草区伏击，闷热雷雨前咬口最猛',
+        predator: true,
+        modes: ['路亚'],
+        activeHours: [8, 9, 10, 16, 17, 18]),
+    FishingSpecies('鳜鱼', 15, 28, '底层伏击，喜清水与乱石结构',
+        predator: true,
+        modes: ['路亚'],
+        activeHours: [6, 7, 18, 19, 20]),
+    FishingSpecies('马口鱼', 12, 24, '溪流小型掠食，喜急流清水',
+        predator: true,
+        modes: ['路亚'],
+        activeHours: [8, 9, 10, 14, 15, 16],
+        likesWave: true),
+    FishingSpecies('红尾鲌', 15, 28, '中上层成群，喜风浪推流与坝下',
+        predator: true,
+        modes: ['路亚'],
+        activeHours: [6, 7, 17, 18, 19],
+        likesWave: true),
+
+    // ───────────── 海钓（近海 / 礁石 / 船钓） ─────────────
+    FishingSpecies('黑鲷', 12, 26, '礁石区底层，喜缓流与礁缝，机警',
+        modes: ['海钓'],
+        activeHours: [5, 6, 7, 17, 18, 19, 20]),
+    FishingSpecies('石斑鱼', 18, 29, '礁洞伏击，喜暖水与清水，涨潮靠边',
+        predator: true,
+        modes: ['海钓'],
+        activeHours: [6, 7, 18, 19, 20]),
+    FishingSpecies('海鲈', 10, 24, '河口洄游，喜流口与晨昏，追饵凶猛',
+        predator: true,
+        modes: ['海钓'],
+        activeHours: [5, 6, 7, 17, 18, 19],
+        likesWave: true),
+    FishingSpecies('鲅鱼', 14, 27, '中上层高速掠食，追小鱼群，喜起流',
+        predator: true,
+        modes: ['海钓'],
+        activeHours: [5, 6, 7, 8, 16, 17, 18],
+        likesWave: true),
+    FishingSpecies('鲳鱼', 18, 29, '近海中上层，喜暖流与缓风',
+        modes: ['海钓'],
+        activeHours: [7, 8, 9, 15, 16, 17]),
+    FishingSpecies('带鱼', 12, 26, '夜间趋光，船钓/延绳为主，怕强光',
+        modes: ['海钓'],
+        activeHours: [19, 20, 21, 22, 23, 0, 1, 2]),
   ];
+
+  /// 按钓法取目标鱼（结果缓存，天气页每帧取用也不产生新列表）
+  static final Map<String, List<FishingSpecies>> _byMode = {
+    for (final m in FishingMode.all)
+      m.name: all
+          .where((s) => s.modes.contains(m.name))
+          .toList(growable: false),
+  };
+
+  static List<FishingSpecies> forMode(String mode) => _byMode[mode] ?? all;
+
+  /// 某钓法下是否存在该鱼种（切换钓法时校验选中项）
+  static bool inMode(String mode, String speciesName) =>
+      forMode(mode).any((s) => s.name == speciesName);
+
+  /// 全部鱼种名（渔获发布页「钓到了什么」用，跨钓法）
+  static List<String> get allNames =>
+      all.map((s) => s.name).toList(growable: false);
 }
 
 /// 水体指标（水温 / 溶氧）
@@ -101,34 +200,40 @@ class WaterMetrics {
 }
 
 /// ============================================================
-/// 鱼情指数引擎（多维加权，对齐竞品 indexFishData 思路）
+/// 鱼情指数引擎（多维加权 + 鱼种习性）
 ///
 /// 各维度 0-100 分，按钓法权重加权；缺失维度（内陆无潮汐）自动剔除并归一化。
 /// 输出：总指数、分级、各维度分、黄金时段、分维度建议。
 /// ============================================================
 class FishScore {
-  /// 钓法权重（维度权重之和=1）。台钓重气压/溶氧；路亚重水温；海钓重潮汐。
+  /// 钓法权重（维度权重之和=1）。
+  ///   台钓重气压稳定与溶氧（底栖鱼怕缺氧）；
+  ///   路亚重水温与时段（掠食鱼靠窗口期）；
+  ///   海钓重潮汐（起流才有鱼）。
   static const Map<String, Map<String, double>> _weights = {
     '台钓': {
-      'pressure': 0.30,
+      'pressure': 0.26,
       'wind': 0.10,
-      'temp': 0.25,
-      'oxygen': 0.25,
-      'tide': 0.10,
+      'temp': 0.24,
+      'oxygen': 0.22,
+      'tide': 0.08,
+      'time': 0.10,
     },
     '路亚': {
-      'pressure': 0.15,
-      'wind': 0.20,
-      'temp': 0.35,
-      'oxygen': 0.20,
-      'tide': 0.10,
+      'pressure': 0.13,
+      'wind': 0.17,
+      'temp': 0.30,
+      'oxygen': 0.15,
+      'tide': 0.08,
+      'time': 0.17,
     },
     '海钓': {
-      'pressure': 0.10,
-      'wind': 0.20,
-      'temp': 0.20,
-      'oxygen': 0.10,
-      'tide': 0.40,
+      'pressure': 0.08,
+      'wind': 0.16,
+      'temp': 0.17,
+      'oxygen': 0.08,
+      'tide': 0.36,
+      'time': 0.15,
     },
   };
 
@@ -139,28 +244,31 @@ class FishScore {
     'temp': '水温',
     'oxygen': '溶氧',
     'tide': '潮汐',
+    'time': '时段',
   };
 
   const FishScore._();
 
-  /// 气压维度分：稳定中高压（1005~1018）最适；缓降(锋前)短时促口 +8，陡降(变天) −18，回升 −4
-  static int? pressureScore(double? p, String trend) {
+  /// 气压维度分：稳定中高压（1005~1018）最适；缓降(锋前)短时促口，陡降(变天)大幅扣分。
+  /// 掠食性鱼类对锋前降压更敏感（+12），也更扛得住骤降（−10 而不是 −18）。
+  static int? pressureScore(double? p, String trend, {bool predator = false}) {
     if (p == null) return null;
     var s = _band(p, 1005, 1018, 985, 1035);
     if (trend == 'falling_slow') {
-      s += 8;
+      s += predator ? 12 : 8;
     } else if (trend == 'falling_fast') {
-      s -= 18;
+      s -= predator ? 10 : 18;
     } else if (trend == 'rising') {
       s -= 4;
     }
     return s.clamp(0, 100).round();
   }
 
-  /// 风维度分：1~3 级（1.6~5.4 m/s）最佳，过大过小衰减
-  static int? windScore(double? windMs) {
+  /// 风维度分：喜风浪的鱼（翘嘴/鲅鱼/马口）最佳风速更高；静水鱼（鲫鱼/鲤鱼）怕大风。
+  static int? windScore(double? windMs, {bool likesWave = false}) {
     if (windMs == null) return null;
-    return _band(windMs, 1.6, 5.4, 0, 10.8).round();
+    if (likesWave) return _band(windMs, 2.5, 6.5, 0, 12.0).round();
+    return _band(windMs, 1.0, 4.5, 0, 10.8).round();
   }
 
   /// 水温维度分：落在鱼种适温区间满分，越界按容差线性衰减
@@ -185,6 +293,50 @@ class FishScore {
     if (phase == null || phase.isEmpty) return null;
     const m = {'flowing': 95, 'turning': 80, 'slack': 60};
     return m[phase] ?? 70;
+  }
+
+  /// 时段活性分：按鱼种活跃时段打分（0 距离 100，±1h 76，±2h 54，±3h 38，其余 26）
+  /// 例如鲫鱼晨昏靠边、黄颡/带鱼夜行、草鱼夏天中午活跃 —— 同一小时不同鱼种分数不同。
+  static int timeScore(int hour, FishingSpecies sp) {
+    final h = ((hour % 24) + 24) % 24;
+    var best = 12;
+    for (final a in sp.activeHours) {
+      final raw = (h - a).abs();
+      final dist = math.min(raw, 24 - raw);
+      if (dist < best) best = dist;
+    }
+    if (best == 0) return 100;
+    if (best == 1) return 76;
+    if (best == 2) return 54;
+    if (best == 3) return 38;
+    return 26;
+  }
+
+  /// 海钓潮汐分（月相近似）。
+  ///   朔（新月）/ 望（满月）附近为大潮，潮差大、起流强 → 鱼口好；
+  ///   上/下弦附近为小潮，流缓 → 鱼口一般。
+  /// 用朔望月 29.53059 天周期从已知新月时刻推算，无需潮汐站数据。
+  static int seaTideScore(DateTime t) {
+    const synodic = 29.530588853;
+    final base = DateTime.utc(2000, 1, 6, 18, 14); // 已知新月
+    final days = t.toUtc().difference(base).inMinutes / 1440.0;
+    var phase = (days / synodic) % 1.0;
+    if (phase < 0) phase += 1.0;
+    final d = math.min(math.min(phase, 1 - phase), (phase - 0.5).abs());
+    return (100 - d / 0.25 * 54).round().clamp(40, 100);
+  }
+
+  /// 潮汐名（大潮 / 中潮 / 小潮），用于弹层展示
+  static String seaTideName(DateTime t) {
+    const synodic = 29.530588853;
+    final base = DateTime.utc(2000, 1, 6, 18, 14);
+    final days = t.toUtc().difference(base).inMinutes / 1440.0;
+    var phase = (days / synodic) % 1.0;
+    if (phase < 0) phase += 1.0;
+    final d = math.min(math.min(phase, 1 - phase), (phase - 0.5).abs());
+    if (d <= 0.06) return '大潮';
+    if (d <= 0.14) return '中潮';
+    return '小潮';
   }
 
   /// 在 [idealLow,idealHigh] 内得 100，线性衰减到 [tolLow,tolHigh] 处为 0
@@ -218,19 +370,22 @@ class FishScore {
     required double windMs,
     required double waterTemp,
     required double dissolvedOxygen,
-    required String season,
-    String? tidePhase, // 内陆传 null
     required FishingSpecies sp,
+    required DateTime at,
+    String? tidePhase, // 内陆传 null
   }) {
     final w = _weights[method] ?? _weights['台钓']!;
+    final isSea = method == '海钓';
     final dim = <String, int?>{
-      'pressure':
-          pressureScore(pressure, pressureTrend),
-      'wind': windScore(windMs),
-      'temp': waterTempScore(
-          waterTemp, sp.optLow, sp.optHigh),
+      'pressure': pressureScore(pressure, pressureTrend, predator: sp.predator),
+      'wind': windScore(windMs, likesWave: sp.likesWave),
+      'temp': waterTempScore(waterTemp, sp.optLow, sp.optHigh),
       'oxygen': oxygenScore(dissolvedOxygen),
-      'tide': tideScore(tidePhase),
+      // 海钓：按月相推大/中/小潮；内陆钓法无潮汐 → null，自动剔除并归一化
+      'tide': tidePhase != null
+          ? tideScore(tidePhase)
+          : (isSea ? seaTideScore(at) : null),
+      'time': timeScore(at.hour, sp),
     };
 
     double wsum = 0, acc = 0;
@@ -243,7 +398,13 @@ class FishScore {
     }
     final indexScore = wsum > 0 ? (acc / wsum).round() : null;
     final grade = _gradeOf(indexScore);
-    final advice = _advice(dim, windDirText: null, season: season);
+    final advice = _advice(
+      dim,
+      sp: sp,
+      method: method,
+      at: at,
+      season: seasonOf(at),
+    );
     return FishScoreResult(
       indexScore: indexScore,
       grade: grade,
@@ -261,24 +422,54 @@ class FishScore {
     return '不宜';
   }
 
-  static String _advice(Map<String, int?> dim,
-      {String? windDirText, required String season}) {
+  /// 分维度建议（挑最拖后腿的两项 + 鱼种习性提示）
+  static String _advice(
+    Map<String, int?> dim, {
+    required FishingSpecies sp,
+    required String method,
+    required DateTime at,
+    required String season,
+  }) {
     final tips = <String>[];
-    if (dim['pressure'] != null && dim['pressure']! < 60) {
-      tips.add('气压波动大，鱼口易不稳，宜钓底守稳');
+    final weak = dim.entries
+        .where((e) => e.value != null && e.value! < 60)
+        .toList()
+      ..sort((a, b) => a.value!.compareTo(b.value!));
+
+    if (weak.any((e) => e.key == 'pressure')) {
+      tips.add(sp.predator
+          ? '气压在变，掠食鱼锋前会抓一口，抓住降压前的窗口'
+          : '气压波动大，鱼口易不稳，宜钓底守稳、少换点');
     }
-    if (dim['wind'] != null && dim['wind']! < 60) {
-      tips.add('风偏大，注意安全与观漂，选避风湾');
+    if (weak.any((e) => e.key == 'wind')) {
+      tips.add(sp.likesWave
+          ? '风偏小，${sp.name}不太靠边，可主动找浪区与迎风岸'
+          : '风偏大，注意安全与观漂，优先选背风湾');
     }
-    if (dim['oxygen'] != null && dim['oxygen']! < 60) {
-      tips.add('溶氧偏低，鱼易上浮，宜钓浮或早晚口');
+    if (weak.any((e) => e.key == 'oxygen')) {
+      tips.add('溶氧偏低，鱼易上浮，宜钓浮或抓早晚口');
     }
-    if (dim['temp'] != null && dim['temp']! < 60) {
-      tips.add('水温偏离适温，鱼活性下降');
+    if (weak.any((e) => e.key == 'temp')) {
+      tips.add('水温偏离${sp.name}适温（${sp.optLow.toStringAsFixed(0)}~'
+          '${sp.optHigh.toStringAsFixed(0)}℃），活性下降，钓深或换目标鱼');
+    }
+    if (weak.any((e) => e.key == 'tide')) {
+      tips.add('潮汐偏弱，等起流再打窝，平流期口稀');
+    }
+    if (weak.any((e) => e.key == 'time')) {
+      final hh = sp.activeHours.take(3).map((h) => '$h:00').join(' / ');
+      tips.add('当前不在${sp.name}活跃窗口，建议 $hh 前后再下竿');
+    }
+    // 掠食鱼补一条用饵提示，台钓补一条打窝提示
+    if (tips.length < 2) {
+      if (sp.predator) {
+        tips.add('$method以${sp.name}为目标，优先搜结构边、陡坎与回流区');
+      } else if (method == '台钓') {
+        tips.add('${sp.name}靠窝子留鱼，少量多次补窝比一次打重窝更稳');
+      }
     }
     if (tips.isEmpty) {
-      final dir = windDirText != null ? '风向$windDirText，' : '';
-      tips.add('综合条件佳，$dir把握黄金时段出钓');
+      tips.add('综合条件佳，把握黄金时段出钓');
     }
     return '${tips.join('；')}。';
   }
@@ -317,8 +508,7 @@ class FishScore {
   }
 
   /// 公开：季节默认黄金时段（供天气页在当天数据不足时回退）
-  static List<String> defaultWindows(String season) =>
-      _defaultWindows(season);
+  static List<String> defaultWindows(String season) => _defaultWindows(season);
 }
 
 /// FishScore.compute 的结果载体
@@ -351,8 +541,8 @@ class Bite {
       windMs: h.windMs,
       waterTemp: w.temp,
       dissolvedOxygen: w.oxygen,
-      season: seasonOf(h.time),
       sp: sp,
+      at: h.time,
     );
     return r.indexScore ?? 50;
   }
@@ -371,8 +561,8 @@ class Bite {
         windMs: h.windMs,
         waterTemp: w.temp,
         dissolvedOxygen: w.oxygen,
-        season: seasonOf(h.time),
         sp: sp,
+        at: h.time,
       ).dim;
 
   /// 有口 / 爆护 / 无口（沿用用户熟悉的标签；总分已升级为更准的多维引擎）
