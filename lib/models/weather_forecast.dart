@@ -123,6 +123,17 @@ String windDirText(num? deg) {
   return dirs[idx];
 }
 
+/// 气压变化趋势（基于逐小时气压序列）：陡降/缓降/回升/平稳
+String _trendFor(List<double> pres, int i) {
+  if (i < 0 || i >= pres.length) return 'steady';
+  final next = (i + 1 < pres.length) ? pres[i + 1] : pres[i];
+  final d = next - pres[i];
+  if (d < -0.8) return 'falling_fast';
+  if (d < -0.25) return 'falling_slow';
+  if (d > 0.35) return 'rising';
+  return 'steady';
+}
+
 /// 天气现象校正
 ///
 /// 全球数值模式（ECMWF / GFS / GRAPES）在「实际并未下雨」时也常给出
@@ -173,6 +184,7 @@ class HourPoint {
   final double? uv; // 紫外线
   final int weatherCode;
   final double? cloudCover; // 云量 %（用于天气现象校正）
+  final String? pressureTrend; // 气压趋势：rising/falling_slow/falling_fast/steady
 
   const HourPoint({
     required this.time,
@@ -186,6 +198,7 @@ class HourPoint {
     this.uv,
     required this.weatherCode,
     this.cloudCover,
+    this.pressureTrend,
   });
 
   String get hhmm => '${time.hour.toString().padLeft(2, '0')}:00';
@@ -360,6 +373,11 @@ class WeatherBundle {
 
     // —— 逐小时 ——
     final hTimes = (hourly?['time'] as List?) ?? const [];
+    // 先取出气压序列，便于算逐时趋势
+    final presArr = List<double>.generate(hTimes.length, (i) {
+      final v = at(hourly, 'pressure_msl', i);
+      return v == null ? 1013.0 : v.toDouble();
+    });
     final List<HourPoint> hours = [];
     for (var i = 0; i < hTimes.length; i++) {
       final t = DateTime.tryParse(hTimes[i].toString());
@@ -376,6 +394,7 @@ class WeatherBundle {
         uv: at(hourly, 'uv_index', i)?.toDouble(),
         weatherCode: (at(hourly, 'weather_code', i) ?? 0).round(),
         cloudCover: at(hourly, 'cloud_cover', i)?.toDouble(),
+        pressureTrend: _trendFor(presArr, i),
       ));
     }
 
