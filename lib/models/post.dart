@@ -31,6 +31,7 @@ class Post {
   final int userLevel; // 作者等级（LV1–LV30，后端按经验值换算）
   final bool isFollowing; // 我是否已关注作者
   final bool isMe; // 作者是不是我自己
+  final int authorVip; // 作者会员等级（0=普通，头像会员框用）
 
   /// 渔获页「钓到了什么」：[{'name':'鲫鱼','count':2}]（其他类别为空）
   final List<Map<String, dynamic>> fish;
@@ -69,6 +70,7 @@ class Post {
     this.userLevel = 1,
     this.isFollowing = false,
     this.isMe = false,
+    this.authorVip = 0,
     this.fish = const [],
     this.locPublic = true,
   });
@@ -105,6 +107,7 @@ class Post {
       userLevel: (json['user_level'] as num?)?.toInt() ?? 1,
       isFollowing: json['is_following'] == true,
       isMe: json['is_me'] == true,
+      authorVip: (json['user_vip'] as num?)?.toInt() ?? 0,
       fish: parseFish(json['fish']),
       locPublic: json['loc_public'] == null
           ? true
@@ -139,6 +142,39 @@ class Post {
 
   /// 是否视频动态
   bool get isVideo => videoUrl != null && videoUrl!.isNotEmpty;
+
+  /// 是否渔获动态（标题固定为「今日鱼获分享」，鱼种与条数单独一行）
+  bool get isCatch => category == 'post';
+
+  /// 展示用标题：渔获统一用固定文案（后台「积分设置」里可改），其余用原标题
+  /// 老数据里渔获标题是「鲫鱼×1 · 鲤鱼×1」，这里一并兜住，保证首页/详情页一致
+  String get displayTitle => isCatch ? _catchTitle : title;
+
+  /// 渔获标题文案（与后端 catch_title_text() 保持一致）
+  static const String _catchTitle = '今日鱼获分享';
+
+  /// 渔获摘要：「鲫鱼 2 条 · 鲤鱼 1 条」（首页卡片、详情页都用它）
+  String get catchSummary {
+    if (fish.isEmpty) return '';
+    final parts = <String>[];
+    for (final f in fish) {
+      final name = (f['name'] ?? '').toString().trim();
+      if (name.isEmpty) continue;
+      final n = (f['count'] as num?)?.toInt() ?? 1;
+      parts.add('$name ${n <= 0 ? 1 : n} 条');
+    }
+    return parts.join(' · ');
+  }
+
+  /// 渔获总条数
+  int get catchTotal {
+    var total = 0;
+    for (final f in fish) {
+      final n = (f['count'] as num?)?.toInt() ?? 0;
+      total += n <= 0 ? 1 : n;
+    }
+    return total;
+  }
 
   /// 是否二手类（出售/求购）
   bool get isTrade => category == 'sell' || category == 'buy';
@@ -179,6 +215,7 @@ class Post {
     int? userLevel,
     bool? isFollowing,
     bool? isMe,
+    int? authorVip,
     List<Map<String, dynamic>>? fish,
     bool? locPublic,
   }) {
@@ -205,6 +242,7 @@ class Post {
       userLevel: userLevel ?? this.userLevel,
       isFollowing: isFollowing ?? this.isFollowing,
       isMe: isMe ?? this.isMe,
+      authorVip: authorVip ?? this.authorVip,
       fish: fish ?? this.fish,
       locPublic: locPublic ?? this.locPublic,
     );
