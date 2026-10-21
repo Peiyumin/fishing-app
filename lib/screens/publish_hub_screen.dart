@@ -5,20 +5,20 @@ import '../app_theme.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
 import 'auth_screen.dart';
+import 'publish_catch_screen.dart';
 import 'publish_screen.dart';
 import 'publish_venue_screen.dart';
 import 'publish_spot_screen.dart';
-import 'watermark_camera_screen.dart';
 
 /// 发布类别中心：点击底部「+」后弹出
-/// 9 个入口：渔获 / 拍照打卡 / 问答 / 说说 / 出售二手 / 求购二手 / 加钓场 / 加渔具店 / 标记野钓点
+/// 8 个入口：渔获 / 问答 / 说说 / 出售二手 / 求购二手 / 加钓场 / 加渔具店 / 标记野钓点
+/// 说明：原「拍照打卡」已并入渔获发布页（发布渔获时直接调打卡相机带水印）
 class PublishHubScreen extends StatelessWidget {
   const PublishHubScreen({super.key});
 
   /// 类别定义：图标 / 名称 / 副标题 / 主题色
   static const List<_HubItem> _items = [
     _HubItem('post', Icons.phishing, '发布渔获', '晒渔获晒鱼情', AppTheme.primary),
-    _HubItem('camera', Icons.photo_camera_outlined, '拍照打卡', '照片带时间天气水印', AppTheme.warning),
     _HubItem('ask', Icons.help_outline, '钓鱼问答', '有问题大家帮', AppTheme.accent),
     _HubItem('say', Icons.chat_bubble_outline, '随便说说', '点滴心情随记', AppTheme.violet),
     _HubItem('sell', Icons.sell_outlined, '出售二手', '闲置渔具变现', AppTheme.danger),
@@ -42,10 +42,10 @@ class PublishHubScreen extends StatelessWidget {
 
     Widget page;
     switch (key) {
-      case 'camera':
-        page = const WatermarkCameraScreen();
-        break;
       case 'post':
+        // 渔获走独立发布页（自动定位 + 公开开关 + 水印相机 + 鱼种）
+        page = const PublishCatchScreen();
+        break;
       case 'ask':
       case 'say':
       case 'sell':
