@@ -320,6 +320,34 @@ class _PostCardState extends State<PostCard> {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: Colors.black87)),
               ],
+              // 渔获「钓到了什么」：鱼种 + 尾数
+              if (_post.fish.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: _post.fish.map((f) {
+                    final name = (f['name'] ?? '').toString();
+                    if (name.isEmpty) return const SizedBox.shrink();
+                    final n = (f['count'] as num?)?.toInt() ?? 1;
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryLight,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        n > 1 ? '$name ×$n' : name,
+                        style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.primary),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
               // 二手价格（出售=售价 / 求购=预算）
               if (_post.isTrade && _post.price.isNotEmpty) ...[
                 const SizedBox(height: 8),
@@ -369,6 +397,20 @@ class _PostCardState extends State<PostCard> {
                                   fontSize: 13, color: AppTheme.textSecondary),
                             ),
                           ),
+                        ],
+                      ),
+                    )
+                  else if (!_post.locPublic && _post.category == 'post')
+                    const Expanded(
+                      child: Row(
+                        children: [
+                          Icon(Icons.location_off,
+                              size: 15, color: AppTheme.textSecondary),
+                          SizedBox(width: 3),
+                          Text('钓点已隐藏',
+                              style: TextStyle(
+                                  fontSize: 12.5,
+                                  color: AppTheme.textSecondary)),
                         ],
                       ),
                     ),
