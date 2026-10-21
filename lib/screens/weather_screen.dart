@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 
 import '../models/fishing_species.dart';
 import '../models/weather_forecast.dart';
-import '../services/fishing_advisor.dart';
 import '../services/location_service.dart';
 import '../services/weather_service.dart';
 import '../utils/geo_names.dart';
@@ -246,7 +245,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
         ),
         _TitleRow(mode: mode, sp: sp),
         _ActionRow(
-          onAi: () => _showAi(b, sp),
+          onAi: () => _showAi(b, sp, mode),
           onCompare: () => _showCompare(b, sp, mode, metrics, idxOf),
           onExplain: _showExplain,
         ),
@@ -299,84 +298,249 @@ class _WeatherScreenState extends State<WeatherScreen> {
     );
   }
 
-  void _showAi(WeatherBundle b, FishingSpecies sp) {
+  void _showAi(WeatherBundle b, FishingSpecies sp, FishingMode mode) {
     final day = b.days[_selected.clamp(0, b.days.length - 1)];
     final h = b.dayRefHour(day.date, _refHour);
     final i = h == null ? -1 : b.hours.indexOf(h);
     final metrics = WaterMetrics.derive(b.hours);
     final w = i >= 0 ? metrics[i] : WaterMetrics(b.curTemp, 7.0);
 
-    final advice = FishingAdvisor.build(
-      temp: h?.temp ?? b.curTemp,
-      tempMin: day.tempMin,
-      tempMax: day.tempMax,
+    final result = FishScore.compute(
+      method: mode.name,
       pressure: h?.pressure ?? b.curPressure,
-      windKmh: h?.windSpeed ?? b.curWindSpeed,
-      windDirDeg: h?.windDir ?? b.curWindDir,
-      rainProb: h?.precipProb ?? day.precipProbMax,
-      rainMm: h?.precip ?? day.precipSum,
-      uv: h?.uv,
-      weatherCode: h?.weatherCode ?? day.weatherCode,
-      hour: h?.time.hour,
+      pressureTrend: h?.pressureTrend ?? 'steady',
+      windMs: (h?.windMs) ?? (b.curWindSpeed / 3.6),
+      waterTemp: w.temp,
+      dissolvedOxygen: w.oxygen,
+      season: seasonOf(day.date),
+      sp: sp,
     );
 
-    _sheet('AI 解析 · ${sp.name}', [
+    final idxOf = <DateTime, int>{
+      for (var k = 0; k < b.hours.length; k++) b.hours[k].time: k
+    };
+    final gw = _goldenForDay(b, day.date, sp, mode, metrics, idxOf);
+
+    final dim = result.dim;
+    final score = result.indexScore ?? 0;
+    final grade = result.grade;
+
+    // 维度分条（内陆无潮汐 → tide 为 null，自动不展示）
+    final bars = <Widget>[];
+    for (final key in ['pressure', 'wind', 'temp', 'oxygen', 'tide']) {
+      final v = dim[key];
+      if (v == null) continue;
+      bars.add(_dimBar(FishScore.dimName[key]!, v));
+    }
+
+    _sheet('AI 解析 · ${mode.name}·${sp.name}', [
+      // 顶部：综合指数 + 分级 + 关键水体指标
       Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(13),
         decoration: BoxDecoration(
-          color: _Pal.cardAlt,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              _scoreColor(score).withOpacity(0.16),
+              _Pal.cardAlt,
+            ],
+          ),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: _Pal.line),
         ),
         child: Row(
           children: [
-            _kv('水温', '${w.temp.toStringAsFixed(1)}℃'),
-            _kv('溶氧', '${w.oxygen.toStringAsFixed(2)} mg/L'),
-            _kv('指数', '${advice.score}'),
-          ],
-        ),
-      ),
-      const SizedBox(height: 14),
-      Text(advice.headline,
-          style: const TextStyle(
-              color: _Pal.txt, fontSize: 13.5, height: 1.5)),
-      const SizedBox(height: 12),
-      ...advice.tips.map((t) => Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Row(
+            Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('· ',
-                    style: TextStyle(
-                        color: _Pal.gold, fontWeight: FontWeight.bold)),
-                Expanded(
-                  child: Text(t,
-                      style: const TextStyle(
-                          color: Color(0xFFBBC9DC),
-                          fontSize: 12.5,
-                          height: 1.55)),
+                const Text('综合鱼情指数',
+                    style: TextStyle(color: _Pal.muted, fontSize: 10)),
+                const SizedBox(height: 3),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text('$score',
+                        style: TextStyle(
+                            color: _scoreColor(score),
+                            fontSize: 30,
+                            height: 1,
+                            fontWeight: FontWeight.w700)),
+                    const SizedBox(width: 7),
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 4),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: _scoreColor(score).withOpacity(0.18),
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: Text(grade,
+                          style: TextStyle(
+                              color: _scoreColor(score),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700)),
+                    ),
+                  ],
                 ),
               ],
             ),
-          )),
-      const SizedBox(height: 6),
-      const Text('依据：气压 · 风 · 水温 · 溶氧 · 时段活性 · 鱼种习性（离线规则引擎）',
-          style: TextStyle(color: _Pal.muted, fontSize: 10.5)),
+            const Spacer(),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                _kvPlain('水温', '${w.temp.toStringAsFixed(1)}℃'),
+                const SizedBox(height: 8),
+                _kvPlain('溶氧', '${w.oxygen.toStringAsFixed(2)} mg/L'),
+              ],
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 18),
+      // 多维评分条
+      const Text('多维评分',
+          style: TextStyle(
+              color: _Pal.gold, fontSize: 12.5, fontWeight: FontWeight.w600)),
+      const SizedBox(height: 12),
+      ...bars,
+      const SizedBox(height: 18),
+      // 黄金时段
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: _Pal.cardAlt,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _Pal.gold.withOpacity(0.35)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.wb_sunny_outlined, size: 14, color: _Pal.gold),
+                SizedBox(width: 6),
+                Text('黄金时段',
+                    style: TextStyle(
+                        color: _Pal.gold,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600)),
+              ],
+            ),
+            const SizedBox(height: 9),
+            ...gw.map((g) => Padding(
+                  padding: const EdgeInsets.only(bottom: 5),
+                  child: Row(
+                    children: [
+                      const Text('◷ ',
+                          style: TextStyle(
+                              color: _Pal.gold, fontWeight: FontWeight.bold)),
+                      Text(g,
+                          style: const TextStyle(
+                              color: _Pal.txt,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                )),
+            const SizedBox(height: 5),
+            Text(
+              gw.length < 2
+                  ? '当天高分窗口较少，建议参考以上时段或择日作钓'
+                  : '以上为当天鱼情评分最高的连续 3 小时窗口',
+              style: const TextStyle(color: _Pal.muted, fontSize: 10),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 18),
+      // 分维度建议
+      const Text('钓况建议',
+          style: TextStyle(
+              color: _Pal.gold, fontSize: 12.5, fontWeight: FontWeight.w600)),
+      const SizedBox(height: 9),
+      Text(result.advice,
+          style: const TextStyle(
+              color: Color(0xFFBBC9DC), fontSize: 12.5, height: 1.6)),
+      const SizedBox(height: 11),
+      const Text(
+          '依据：气压稳定度 · 风 · 水温适温 · 溶氧 · 钓法权重（离线多维规则引擎）',
+          style: TextStyle(color: _Pal.muted, fontSize: 10)),
     ]);
   }
 
-  Widget _kv(String k, String v) => Expanded(
-        child: Column(
-          children: [
-            Text(k, style: const TextStyle(color: _Pal.muted, fontSize: 10)),
-            const SizedBox(height: 3),
-            Text(v,
-                style: const TextStyle(
-                    color: _Pal.txt,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600)),
-          ],
-        ),
+  /// 由当天逐时总分数推导黄金时段；当天数据不足（<20 小时）回退季节默认窗口
+  List<String> _goldenForDay(
+      WeatherBundle b,
+      DateTime day,
+      FishingSpecies sp,
+      FishingMode mode,
+      List<WaterMetrics> metrics,
+      Map<DateTime, int> idxOf) {
+    final arr = List<int>.filled(24, -1);
+    var real = 0;
+    final dayHours = b.hoursOf(day);
+    for (final h in dayHours) {
+      final k = idxOf[h.time] ?? -1;
+      final w = k >= 0 ? metrics[k] : WaterMetrics(h.temp, 7.0);
+      arr[h.time.hour] = Bite.score(h: h, w: w, sp: sp, mode: mode);
+      real++;
+    }
+    if (real < 20) return FishScore.defaultWindows(seasonOf(day));
+    for (var i = 0; i < 24; i++) {
+      if (arr[i] < 0) arr[i] = 50; // 缺测小时填中性分，避免拖垮窗口均值
+    }
+    return FishScore.goldenWindows(arr, season: seasonOf(day));
+  }
+
+  /// 单个维度评分条
+  Widget _dimBar(String name, int score) {
+    final c = _scoreColor(score);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 34,
+            child: Text(name,
+                style: const TextStyle(color: _Pal.muted, fontSize: 11)),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: score / 100,
+                minHeight: 8,
+                backgroundColor: _Pal.line,
+                valueColor: AlwaysStoppedAnimation(c),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 26,
+            child: Text('$score',
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                    color: c, fontSize: 12, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _kvPlain(String k, String v) => Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(k, style: const TextStyle(color: _Pal.muted, fontSize: 10)),
+          const SizedBox(height: 3),
+          Text(v,
+              style: const TextStyle(
+                  color: _Pal.txt,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600)),
+        ],
       );
 
   void _showCompare(
@@ -558,7 +722,17 @@ class _NowCard extends StatelessWidget {
     final w = best >= 0 ? metrics[best] : WaterMetrics(bundle.curTemp, 7.0);
     final prev = best > 0 ? bundle.hours[best - 1] : null;
     final score = h == null
-        ? bundle.currentFishIndex
+        ? (FishScore.compute(
+            method: mode.name,
+            pressure: bundle.curPressure,
+            pressureTrend: 'steady',
+            windMs: bundle.curWindSpeed / 3.6,
+            waterTemp: w.temp,
+            dissolvedOxygen: w.oxygen,
+            season: seasonOf(DateTime.now()),
+            sp: sp,
+          ).indexScore ??
+            bundle.currentFishIndex)
         : Bite.score(h: h, w: w, sp: sp, mode: mode);
 
     final pres = bundle.curPressure;
