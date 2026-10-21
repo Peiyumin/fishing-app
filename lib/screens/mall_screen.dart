@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import '../models/shop_product.dart';
+import '../models/user_profile.dart';
 import '../services/shop_service.dart';
-import '../widgets/center_toast.dart';
+import 'product_detail_screen.dart';
 
 /// 商城（测试版）
 /// 商品由后台「运营配置 → 商城管理」配置，前端只读展示。
@@ -20,6 +21,9 @@ class _MallScreenState extends State<MallScreen> {
   bool _loading = true;
   String _cat = '全部';
 
+  /// 我的积分余额（用于商城页顶部「我的积分」展示；未登录/失败时为 null）
+  UserProfile? _me;
+
   @override
   void initState() {
     super.initState();
@@ -28,10 +32,14 @@ class _MallScreenState extends State<MallScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final list = await ShopService.fetchProducts();
+    final results = await Future.wait([
+      ShopService.fetchProducts(),
+      ShopService.fetchMyPoints(),
+    ]);
     if (!mounted) return;
     setState(() {
-      _items = list;
+      _items = results[0] as List<ShopProduct>;
+      _me = results[1] as UserProfile?;
       _loading = false;
     });
   }
@@ -126,8 +134,10 @@ class _MallScreenState extends State<MallScreen> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                const Text('精选钓具好物 · 每日上新',
-                    style: TextStyle(color: Colors.white70, fontSize: 12)),
+                Text(_me == null
+                    ? '精选钓具好物 · 支持现金与积分兑换'
+                    : '我的${_me!.pointsName} ${_me!.points} · 可兑换积分商品',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12)),
               ],
             ),
           ),
@@ -201,7 +211,12 @@ class _MallScreenState extends State<MallScreen> {
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => _showDetail(p),
+        onTap: () => Navigator.of(context)
+            .push(
+              MaterialPageRoute(builder: (_) => ProductDetailScreen(product: p)),
+            )
+            // 详情页可能兑换了积分：回来刷新商品（库存/评分）与我的积分
+            .then((_) => _load()),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -247,6 +262,35 @@ class _MallScreenState extends State<MallScreen> {
                       ],
                     ],
                   ),
+                  if (p.canRedeem) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppTheme.starLight,
+                        borderRadius:
+                            BorderRadius.circular(AppTheme.radiusPill),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.stars_rounded,
+                              size: 12, color: AppTheme.star),
+                          const SizedBox(width: 3),
+                          Flexible(
+                            child: Text('${p.pointsPrice} 积分',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Color(0xFFB26A00),
+                                    fontWeight: FontWeight.w600)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -296,166 +340,6 @@ class _MallScreenState extends State<MallScreen> {
           SizedBox(height: 12),
           Text('商城正在上新，稍后再来看看',
               style: TextStyle(color: AppTheme.textSecondary)),
-        ],
-      ),
-    );
-  }
-
-  void _showDetail(ShopProduct p) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.78,
-          minChildSize: 0.45,
-          maxChildSize: 0.94,
-          expand: false,
-          builder: (_, scroll) {
-            return Container(
-              decoration: const BoxDecoration(
-                color: AppTheme.surface,
-                borderRadius: BorderRadius.vertical(
-                    top: Radius.circular(AppTheme.radiusLg)),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: ListView(
-                controller: scroll,
-                padding: EdgeInsets.zero,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      margin: const EdgeInsets.only(top: 10, bottom: 6),
-                      decoration: BoxDecoration(
-                        color: AppTheme.divider,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  AspectRatio(aspectRatio: 1.25, child: _image(p.image)),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 16, 18, 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(p.name,
-                            style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: AppTheme.textPrimary)),
-                        const SizedBox(height: 10),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text('¥${p.price}',
-                                style: const TextStyle(
-                                    color: AppTheme.danger,
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.bold)),
-                            if (p.hasDiscount) ...[
-                              const SizedBox(width: 8),
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 3),
-                                child: Text('¥${p.originalPrice}',
-                                    style: const TextStyle(
-                                        color: AppTheme.textSecondary,
-                                        fontSize: 13,
-                                        decoration:
-                                            TextDecoration.lineThrough)),
-                              ),
-                            ],
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            if (p.category.isNotEmpty)
-                              _chip(Icons.local_offer_outlined, p.category),
-                            _chip(Icons.inventory_2_outlined,
-                                p.stock == 0 ? '库存充足' : '库存 ${p.stock}'),
-                          ],
-                        ),
-                        if (p.description.isNotEmpty) ...[
-                          const SizedBox(height: 16),
-                          const Text('商品详情',
-                              style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppTheme.textPrimary)),
-                          const SizedBox(height: 6),
-                          Text(p.description,
-                              style: const TextStyle(
-                                  fontSize: 13.5,
-                                  height: 1.6,
-                                  color: AppTheme.textSecondary)),
-                        ],
-                        const SizedBox(height: 20),
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: AppTheme.primarySoft,
-                            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-                          ),
-                          child: const Row(
-                            children: [
-                              Icon(Icons.info_outline,
-                                  size: 16, color: AppTheme.primary),
-                              SizedBox(width: 8),
-                              Expanded(
-                                child: Text('测试版：商品仅作展示，暂未开放在线支付',
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        color: AppTheme.textSecondary)),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: () {
-                              Navigator.of(ctx).pop();
-                              CenterToast.show(
-                                  context, '测试版：暂未开放在线支付，敬请期待');
-                            },
-                            icon: const Icon(Icons.shopping_cart_checkout,
-                                size: 18),
-                            label: const Text('立即购买（测试版）'),
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _chip(IconData icon, String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: AppTheme.primaryLight,
-        borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 13, color: AppTheme.primary),
-          const SizedBox(width: 4),
-          Text(text,
-              style: const TextStyle(fontSize: 12, color: AppTheme.primary)),
         ],
       ),
     );
