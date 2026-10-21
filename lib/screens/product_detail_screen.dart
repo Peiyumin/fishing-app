@@ -9,6 +9,7 @@ import '../services/refresh_bus.dart';
 import '../services/shop_service.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/user_avatar.dart';
 
 /// 商品详情页（v25）
 /// 展示：主图 / 价格 / 积分兑换价 / 品牌·产地·材质·分类·库存 / 图文详情 / 商品评价
@@ -526,18 +527,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(
+          UserAvatar(
+            url: r.avatar.isNotEmpty ? r.avatar : null,
+            userId: r.userId.isNotEmpty ? r.userId : null,
             radius: 17,
-            backgroundColor: AppTheme.primaryLight,
-            backgroundImage:
-                r.avatar.isNotEmpty ? NetworkImage(r.avatar) : null,
-            child: r.avatar.isNotEmpty
-                ? null
-                : Text(r.initial,
-                    style: const TextStyle(
-                        fontSize: 13,
-                        color: AppTheme.primary,
-                        fontWeight: FontWeight.w600)),
+            vipLevel: r.vipLevel,
           ),
           const SizedBox(width: 10),
           Expanded(
