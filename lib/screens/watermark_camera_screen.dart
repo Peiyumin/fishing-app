@@ -18,9 +18,20 @@ import 'publish_screen.dart';
 
 /// 水印相机：拍照后自动叠加
 ///   日期时间 + 实时天气（天气/温湿度/风/气压/钓况）+ 定位地址
-///   支持保存到相册 / 一键带图发动态
+///   支持保存到相册 / 一键带图发动态 / 回传图片给调用页（渔获发布）
 class WatermarkCameraScreen extends StatefulWidget {
-  const WatermarkCameraScreen({super.key});
+  /// true：拍完把合成后的图片路径 pop 回调用页（渔获发布页用）
+  /// false：拍完直接跳「发动态」页（老的打卡流程）
+  final bool returnResult;
+
+  /// 顶部标题（渔获发布页里显示「渔获拍照」）
+  final String title;
+
+  const WatermarkCameraScreen({
+    super.key,
+    this.returnResult = false,
+    this.title = '拍照打卡',
+  });
 
   @override
   State<WatermarkCameraScreen> createState() => _WatermarkCameraScreenState();
@@ -171,13 +182,18 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen> {
     }
   }
 
-  /// 带图去发动态
+  /// 带图去发动态 / 回传图片给渔获发布页
   Future<void> _publish() async {
     if (_photo == null) return;
     setState(() => _working = true);
     try {
       final path = await _composite();
       if (!mounted) return;
+      if (widget.returnResult) {
+        // 渔获发布页：带着水印图返回，由发布页继续填内容
+        Navigator.of(context).pop(path);
+        return;
+      }
       await Navigator.of(context).pushReplacement(MaterialPageRoute(
         builder: (_) => PublishScreen(category: 'post', initialImage: path),
       ));
@@ -193,7 +209,7 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('拍照打卡'),
+        title: Text(widget.title),
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         flexibleSpace: null,
@@ -321,8 +337,12 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen> {
                                   height: 16,
                                   child: CircularProgressIndicator(
                                       strokeWidth: 2, color: Colors.white))
-                              : const Icon(Icons.send_rounded, size: 17),
-                          label: const Text('发动态'),
+                              : Icon(
+                                  widget.returnResult
+                                      ? Icons.check_rounded
+                                      : Icons.send_rounded,
+                                  size: 17),
+                          label: Text(widget.returnResult ? '用这张' : '发动态'),
                         ),
                       ],
                     ),
