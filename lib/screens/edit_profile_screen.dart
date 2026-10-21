@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
@@ -11,6 +10,7 @@ import '../services/api_client.dart';
 import '../services/api_config.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/user_avatar.dart';
 
 /// 编辑资料：更换头像 + 修改昵称 + 修改登录密码
 class EditProfileScreen extends StatefulWidget {
@@ -180,20 +180,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           Center(
             child: Stack(
               children: [
-                CircleAvatar(
-                  radius: 46,
-                  backgroundColor: AppTheme.primary,
-                  backgroundImage: _avatarPath != null
-                      ? FileImage(File(_avatarPath!))
-                      : (avatarUrl != null && avatarUrl.isNotEmpty
-                          ? CachedNetworkImageProvider(avatarUrl)
-                          : null) as ImageProvider?,
-                  child: _avatarPath == null &&
-                          (avatarUrl == null || avatarUrl.isEmpty)
-                      ? const Icon(Icons.person,
-                          size: 46, color: Colors.white)
-                      : null,
-                ),
+                _avatarPath != null
+                    ? CircleAvatar(
+                        radius: 46,
+                        backgroundColor: AppTheme.primary,
+                        backgroundImage: FileImage(File(_avatarPath!)),
+                      )
+                    : UserAvatar(
+                        url: avatarUrl,
+                        userId: sp.isLoggedIn ? sp.userId : null,
+                        radius: 46,
+                        member: sp.vip,
+                      ),
                 Positioned(
                   right: 0,
                   bottom: 0,
