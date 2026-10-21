@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 
-/// 统一分区标题：左侧强调竖条 + 标题 + 可选的「更多/操作」链接
+/// 统一分区标题：左侧强调竖条 + 标题 + 可选小字副标题 + 「更多/操作」链接
 /// 用于首页「实时天气 / 附近钓点 / 钓友动态」等各区块，保证视觉一致。
+///
+/// [subtitle] 是紧跟在标题后面的灰色小字（如「由近到远」「实时更新」），
+/// 比标题小 4~5 号，用来做弱化说明，不抢标题的视觉重量。
 class SectionHeader extends StatelessWidget {
   final String title;
+  final String? subtitle;
   final String? actionLabel;
   final VoidCallback? onAction;
   final EdgeInsetsGeometry padding;
@@ -13,6 +17,7 @@ class SectionHeader extends StatelessWidget {
   const SectionHeader({
     super.key,
     required this.title,
+    this.subtitle,
     this.actionLabel,
     this.onAction,
     this.padding =
@@ -43,6 +48,32 @@ class SectionHeader extends StatelessWidget {
               letterSpacing: 0.3,
             ),
           ),
+          if (subtitle != null && subtitle!.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            Container(
+              width: 2,
+              height: 2,
+              decoration: const BoxDecoration(
+                color: AppTheme.textSecondary,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                subtitle!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  height: 1.2,
+                  color: AppTheme.textSecondary,
+                  fontWeight: FontWeight.w400,
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+          ],
           const Spacer(),
           if (actionLabel != null && onAction != null)
             InkWell(
