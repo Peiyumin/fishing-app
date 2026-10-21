@@ -4,13 +4,22 @@ import 'weather_forecast.dart';
 /// 鱼种 / 钓法 / 水体指标 / 逐小时鱼情
 ///
 /// 数据来源说明：
-///  - 气温、气压、风、降雨、天气现象 = Open-Meteo 实测/预报；
-///  - 水温、溶氧（水氧）无免费实测接口，按水文学经验模型从气温序列推导
-///    （水体热惯性 → 水温滞后于气温；溶氧随水温、风浪、气压、日照变化）；
-///  - 鱼情指数 = 气象适宜度 × 鱼种适温匹配 × 溶氧 × 时段活性 × 钓法修正。
+///  - 气温、气压、风、降雨、天气现象 = Open-Meteo 实测/预报（免费、无需 Key）；
+///  - 水温、溶氧（水氧）无免费实测接口，按水文学经验模型从气温 + 气压推导；
+///  - 鱼情指数 = 多维加权（气压稳定度 / 风速 / 水温适温 / 溶氧 / 潮汐）× 钓法权重，
+///    借鉴竞品「鱼天气」indexFishData 的自研富指数思路（分维度打分 + 归一化 + 黄金时段）。
 /// ============================================================
 
-/// 钓法：同一份天气，不同钓法的适宜度不同
+/// 当前季节（用于黄金时段默认值与适温口径）
+String seasonOf(DateTime d) {
+  final m = d.month;
+  if (m >= 3 && m <= 5) return 'spring';
+  if (m >= 6 && m <= 8) return 'summer';
+  if (m >= 9 && m <= 11) return 'autumn';
+  return 'winter';
+}
+
+/// 钓法：同一份天气，不同钓法的适宜度不同（权重不同）
 class FishingMode {
   final String name;
   const FishingMode(this.name);
@@ -20,31 +29,6 @@ class FishingMode {
     FishingMode('路亚'),
     FishingMode('海钓'),
   ];
-
-  /// 钓法修正分（-12 ~ +9）
-  int adjust(HourPoint h, FishingSpecies sp) {
-    switch (name) {
-      case '路亚':
-        // 路亚主攻掠食鱼，喜风浪与阴天，暴雨/大雾影响抛投与视线
-        var a = sp.predator ? 7 : -9;
-        if (h.windSpeed > 6 && h.windSpeed < 28) a += 3;
-        if (h.precip >= 2) a -= 4;
-        if (h.weatherCode == 45 || h.weatherCode == 48) a -= 3;
-        return a;
-      case '海钓':
-        // 海钓最怕大风，风大直接压分
-        if (h.windSpeed > 20) return -12;
-        if (h.windSpeed > 12) return -5;
-        if (h.windSpeed < 6) return 2;
-        return 0;
-      default: // 台钓：喜静水、稳气压
-        var a = 0;
-        if (h.windSpeed < 12) a += 3;
-        if (h.windSpeed > 25) a -= 8;
-        if (h.precipProb > 70) a -= 3;
-        return a;
-    }
-  }
 }
 
 /// 鱼种：适宜水温区间 + 习性
@@ -91,85 +75,307 @@ class WaterMetrics {
 
   /// 由逐小时气温序列推导水温与溶氧。
   ///
-  /// 水温：对气温做指数平滑，模拟水体热惯性（变化远比气温平缓），
-  ///       再叠加日照导致的白天表层升温、夜间回落；
-  /// 溶氧：以水温对应的饱和溶氧为基准打折（自然水体通常 70%~85% 饱和），
-  ///       风浪增氧、气压升高提升溶解量、白天藻类光合作用产氧、凌晨耗氧。
+  /// 水温（内陆水库滞后模型）：以「日均气温 + 1.5℃」为基准，叠加该小时相对日均的偏离
+  ///   Tw ≈ 日均气温 + 1.5 + 0.30 ×（该小时气温 − 日均气温）
+  ///   水体热惯性使水温变化幅度远小于气温（系数 0.30），且整体比气温高约 1.5℃（蓄热）。
+  /// 溶氧：以水温对应的理论饱和溶氧乘气压修正（淡水）：
+  ///   DO ≈ (14.6 − 0.39 × Tw) × (气压 / 1013.25)
+  ///   再 clamp 到 4~12 mg/L（自然水体溶氧经验区间）。
   static List<WaterMetrics> derive(List<HourPoint> hours) {
+    if (hours.isEmpty) return const [];
+    final meanAir =
+        hours.map((h) => h.temp).reduce((a, b) => a + b) / hours.length;
     final out = <WaterMetrics>[];
-    double? wt;
     for (final h in hours) {
-      // 初值：略高于气温（水体蓄热）
-      wt = wt == null ? h.temp + 2.0 : wt * 0.82 + h.temp * 0.18;
-
-      final hr = h.time.hour;
-      final solar = (hr >= 10 && hr <= 16)
-          ? 0.8
-          : ((hr >= 20 || hr <= 5) ? -0.6 : 0.0);
-      final waterTemp = (wt + solar).clamp(-2.0, 38.0);
-
-      // 饱和溶氧经验式（淡水，1 atm）
-      final sat = 14.62 - 0.4105 * waterTemp + 0.007991 * waterTemp * waterTemp;
-      var o2 = sat * 0.76;
-      o2 += (h.windSpeed / 3.6).clamp(0.0, 8.0) * 0.055; // 风浪增氧
-      o2 += (h.pressure - 1013) * 0.012; // 气压
-      if (hr >= 9 && hr <= 17) o2 += 0.35; // 白天光合作用
-      if (hr <= 5) o2 -= 0.35; // 凌晨呼吸耗氧
-
+      final waterTemp =
+          ((meanAir + 1.5 + 0.30 * (h.temp - meanAir)).clamp(10.0, 27.0));
+      final o2 = ((14.6 - 0.39 * waterTemp) * (h.pressure / 1013.25))
+          .clamp(4.0, 12.0);
       out.add(WaterMetrics(
         double.parse(waterTemp.toStringAsFixed(1)),
-        double.parse(o2.clamp(2.0, 13.0).toStringAsFixed(2)),
+        double.parse(o2.toStringAsFixed(2)),
       ));
     }
     return out;
   }
 }
 
-/// 逐小时鱼情评分 + 有口判定
+/// ============================================================
+/// 鱼情指数引擎（多维加权，对齐竞品 indexFishData 思路）
+///
+/// 各维度 0-100 分，按钓法权重加权；缺失维度（内陆无潮汐）自动剔除并归一化。
+/// 输出：总指数、分级、各维度分、黄金时段、分维度建议。
+/// ============================================================
+class FishScore {
+  /// 钓法权重（维度权重之和=1）。台钓重气压/溶氧；路亚重水温；海钓重潮汐。
+  static const Map<String, Map<String, double>> _weights = {
+    '台钓': {
+      'pressure': 0.30,
+      'wind': 0.10,
+      'temp': 0.25,
+      'oxygen': 0.25,
+      'tide': 0.10,
+    },
+    '路亚': {
+      'pressure': 0.15,
+      'wind': 0.20,
+      'temp': 0.35,
+      'oxygen': 0.20,
+      'tide': 0.10,
+    },
+    '海钓': {
+      'pressure': 0.10,
+      'wind': 0.20,
+      'temp': 0.20,
+      'oxygen': 0.10,
+      'tide': 0.40,
+    },
+  };
+
+  /// 维度中文名（用于解析弹层）
+  static const Map<String, String> dimName = {
+    'pressure': '气压',
+    'wind': '风',
+    'temp': '水温',
+    'oxygen': '溶氧',
+    'tide': '潮汐',
+  };
+
+  const FishScore._();
+
+  /// 气压维度分：稳定中高压（1005~1018）最适；缓降(锋前)短时促口 +8，陡降(变天) −18，回升 −4
+  static int? pressureScore(double? p, String trend) {
+    if (p == null) return null;
+    var s = _band(p, 1005, 1018, 985, 1035);
+    if (trend == 'falling_slow') {
+      s += 8;
+    } else if (trend == 'falling_fast') {
+      s -= 18;
+    } else if (trend == 'rising') {
+      s -= 4;
+    }
+    return s.clamp(0, 100).round();
+  }
+
+  /// 风维度分：1~3 级（1.6~5.4 m/s）最佳，过大过小衰减
+  static int? windScore(double? windMs) {
+    if (windMs == null) return null;
+    return _band(windMs, 1.6, 5.4, 0, 10.8).round();
+  }
+
+  /// 水温维度分：落在鱼种适温区间满分，越界按容差线性衰减
+  static int? waterTempScore(double? t, double idealLow, double idealHigh,
+      [double? tolLow, double? tolHigh]) {
+    if (t == null) return null;
+    final lo = tolLow ?? (idealLow - 12);
+    final hi = tolHigh ?? (idealHigh + 8);
+    return _band(t, idealLow, idealHigh, lo, hi).round();
+  }
+
+  /// 溶氧维度分：≥6mg/L 满分；≤3mg/L 低分；中间线性
+  static int? oxygenScore(double? doMgL) {
+    if (doMgL == null) return null;
+    if (doMgL >= 6) return 100;
+    if (doMgL <= 3) return 10;
+    return (((doMgL - 3) / 3) * 90 + 10).clamp(0, 100).round();
+  }
+
+  /// 潮汐维度分：起流 > 转向 > 平流（内陆无潮汐时返回 null → 自动剔除）
+  static int? tideScore(String? phase) {
+    if (phase == null || phase.isEmpty) return null;
+    const m = {'flowing': 95, 'turning': 80, 'slack': 60};
+    return m[phase] ?? 70;
+  }
+
+  /// 在 [idealLow,idealHigh] 内得 100，线性衰减到 [tolLow,tolHigh] 处为 0
+  static double _band(double v, double idealLow, double idealHigh,
+      double tolLow, double tolHigh) {
+    if (v >= idealLow && v <= idealHigh) return 100;
+    if (v < idealLow) {
+      final span = idealLow - tolLow;
+      return span <= 0 ? 0 : (100 - ((idealLow - v) / span) * 100).clamp(0, 100);
+    }
+    final span = tolHigh - idealHigh;
+    return span <= 0 ? 0 : (100 - ((v - idealHigh) / span) * 100).clamp(0, 100);
+  }
+
+  /// 气压变化趋势（基于逐小时气压序列）
+  static String trendFor(List<double> pres, int i) {
+    if (i < 0 || i >= pres.length) return 'steady';
+    final next = (i + 1 < pres.length) ? pres[i + 1] : pres[i];
+    final d = next - pres[i];
+    if (d < -0.8) return 'falling_fast';
+    if (d < -0.25) return 'falling_slow';
+    if (d > 0.35) return 'rising';
+    return 'steady';
+  }
+
+  /// 多维加权打分结果
+  static FishScoreResult compute({
+    required String method,
+    required double pressure,
+    required String pressureTrend,
+    required double windMs,
+    required double waterTemp,
+    required double dissolvedOxygen,
+    required String season,
+    String? tidePhase, // 内陆传 null
+    required FishingSpecies sp,
+  }) {
+    final w = _weights[method] ?? _weights['台钓']!;
+    final dim = <String, int?>{
+      'pressure':
+          pressureScore(pressure, pressureTrend),
+      'wind': windScore(windMs),
+      'temp': waterTempScore(
+          waterTemp, sp.optLow, sp.optHigh),
+      'oxygen': oxygenScore(dissolvedOxygen),
+      'tide': tideScore(tidePhase),
+    };
+
+    double wsum = 0, acc = 0;
+    for (final k in w.keys) {
+      final v = dim[k];
+      if (v != null) {
+        wsum += w[k]!;
+        acc += v * w[k]!;
+      }
+    }
+    final indexScore = wsum > 0 ? (acc / wsum).round() : null;
+    final grade = _gradeOf(indexScore);
+    final advice = _advice(dim, windDirText: null, season: season);
+    return FishScoreResult(
+      indexScore: indexScore,
+      grade: grade,
+      dim: dim,
+      advice: advice,
+    );
+  }
+
+  /// 总分 → 分级（优 / 良 / 一般 / 不宜）
+  static String _gradeOf(int? s) {
+    if (s == null) return '—';
+    if (s >= 85) return '优';
+    if (s >= 70) return '良';
+    if (s >= 50) return '一般';
+    return '不宜';
+  }
+
+  static String _advice(Map<String, int?> dim,
+      {String? windDirText, required String season}) {
+    final tips = <String>[];
+    if (dim['pressure'] != null && dim['pressure']! < 60) {
+      tips.add('气压波动大，鱼口易不稳，宜钓底守稳');
+    }
+    if (dim['wind'] != null && dim['wind']! < 60) {
+      tips.add('风偏大，注意安全与观漂，选避风湾');
+    }
+    if (dim['oxygen'] != null && dim['oxygen']! < 60) {
+      tips.add('溶氧偏低，鱼易上浮，宜钓浮或早晚口');
+    }
+    if (dim['temp'] != null && dim['temp']! < 60) {
+      tips.add('水温偏离适温，鱼活性下降');
+    }
+    if (tips.isEmpty) {
+      final dir = windDirText != null ? '风向$windDirText，' : '';
+      tips.add('综合条件佳，$dir把握黄金时段出钓');
+    }
+    return '${tips.join('；')}。';
+  }
+
+  /// 由当天逐时总分数派生黄金时段（3h 滑动窗，取高分且不重叠，最多 2 段）
+  static List<String> goldenWindows(List<int> scores, {required String season}) {
+    if (scores.length != 24) return _defaultWindows(season);
+    const W = 3;
+    final wins = <Map<String, int>>[];
+    for (var i = 0; i <= 23 - W + 1; i++) {
+      var sum = 0;
+      for (var k = 0; k < W; k++) {
+        sum += scores[i + k];
+      }
+      wins.add({'start': i, 'avg': (sum / W).round()});
+    }
+    wins.sort((a, b) => b['avg']! - a['avg']!);
+    final top = <Map<String, int>>[];
+    for (final w in wins) {
+      if (w['avg']! < 78) break;
+      if (top.any((t) => (t['start']! - w['start']!).abs() < W)) continue;
+      top.add(w);
+      if (top.length >= 2) break;
+    }
+    if (top.isEmpty) return _defaultWindows(season);
+    String p(int n) => n.toString().padLeft(2, '0');
+    return top
+        .map((w) => '${p(w['start']!)}:00-${p(w['start']! + W)}:00')
+        .toList();
+  }
+
+  static List<String> _defaultWindows(String season) {
+    if (season == 'summer') return ['05:00-08:00', '17:30-20:00'];
+    if (season == 'winter') return ['07:00-10:00', '14:00-16:30'];
+    return ['06:00-09:00', '15:30-18:30'];
+  }
+
+  /// 公开：季节默认黄金时段（供天气页在当天数据不足时回退）
+  static List<String> defaultWindows(String season) =>
+      _defaultWindows(season);
+}
+
+/// FishScore.compute 的结果载体
+class FishScoreResult {
+  final int? indexScore;
+  final String grade;
+  final Map<String, int?> dim;
+  final String advice;
+  const FishScoreResult({
+    required this.indexScore,
+    required this.grade,
+    required this.dim,
+    required this.advice,
+  });
+}
+
+/// 逐小时鱼情评分 + 有口判定（对外签名保持稳定，便于天气页直接调用）
 class Bite {
-  /// 鱼情指数 0-100
+  /// 鱼情指数 0-100（用 FishScore 多维引擎）
   static int score({
     required HourPoint h,
     required WaterMetrics w,
     required FishingSpecies sp,
     required FishingMode mode,
   }) {
-    // ① 气象适宜度（气压/风/降雨/气温/极端天气）
-    final base = h.fishIndex;
-
-    // ② 鱼种适温匹配度：落在适温区间内满分，越界线性扣分
-    double fit = 100;
-    if (w.temp < sp.optLow) fit -= (sp.optLow - w.temp) * 7;
-    if (w.temp > sp.optHigh) fit -= (w.temp - sp.optHigh) * 7;
-    fit = fit.clamp(0, 100);
-
-    // ③ 溶氧匹配度：3.5mg/L 以下几乎不开口，8mg/L 以上满分
-    final o2 = ((w.oxygen - 3.5) / 4.5 * 100).clamp(0, 100);
-
-    double s = base * 0.45 + fit * 0.38 + o2 * 0.17;
-
-    // ④ 时段活性：晨昏高峰、正午低谷、深夜回落
-    final hr = h.time.hour;
-    if (hr >= 5 && hr <= 8) {
-      s += 5;
-    } else if (hr >= 16 && hr <= 19) {
-      s += 4;
-    } else if (hr >= 11 && hr <= 14) {
-      s -= 5;
-    } else if (hr >= 22 || hr <= 3) {
-      s -= 3;
-    }
-
-    // ⑤ 掠食鱼在风浪天更活跃
-    if (sp.predator && h.windSpeed > 8) s += 4;
-
-    // ⑥ 钓法修正
-    s += mode.adjust(h, sp);
-
-    return s.clamp(0, 100).round();
+    final r = FishScore.compute(
+      method: mode.name,
+      pressure: h.pressure,
+      pressureTrend: h.pressureTrend ?? 'steady',
+      windMs: h.windMs,
+      waterTemp: w.temp,
+      dissolvedOxygen: w.oxygen,
+      season: seasonOf(h.time),
+      sp: sp,
+    );
+    return r.indexScore ?? 50;
   }
 
-  /// 有口 / 爆护 / 无口
+  /// 各维度分（供 AI 解析弹层展示）
+  static Map<String, int?> dimensionScores({
+    required HourPoint h,
+    required WaterMetrics w,
+    required FishingSpecies sp,
+    required FishingMode mode,
+  }) =>
+      FishScore.compute(
+        method: mode.name,
+        pressure: h.pressure,
+        pressureTrend: h.pressureTrend ?? 'steady',
+        windMs: h.windMs,
+        waterTemp: w.temp,
+        dissolvedOxygen: w.oxygen,
+        season: seasonOf(h.time),
+        sp: sp,
+      ).dim;
+
+  /// 有口 / 爆护 / 无口（沿用用户熟悉的标签；总分已升级为更准的多维引擎）
   static String label(int score) {
     if (score >= 78) return '爆护';
     if (score >= 45) return '有口';
