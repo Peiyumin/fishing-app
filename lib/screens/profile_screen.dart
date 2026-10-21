@@ -236,6 +236,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         _countTile('发布', _me!.postCount, null),
                       ],
                     ),
+                    const SizedBox(height: 14),
+                    // 积分余额（名称由后台「积分设置」控制，发布渔获自动增加）
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.16),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.stars_rounded,
+                              color: Color(0xFFFFD65C), size: 18),
+                          const SizedBox(width: 6),
+                          Text(_me!.pointsName,
+                              style: const TextStyle(
+                                  color: Colors.white70, fontSize: 13)),
+                          const SizedBox(width: 8),
+                          Text('${_me!.points}',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
                   ],
                 ],
               ),
