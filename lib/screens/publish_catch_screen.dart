@@ -9,6 +9,7 @@ import '../models/fishing_species.dart';
 import '../services/api_config.dart';
 import '../services/location_service.dart';
 import '../services/post_service.dart';
+import '../services/refresh_bus.dart';
 import '../services/session_provider.dart';
 import '../utils/geo_names.dart';
 import '../widgets/center_toast.dart';
@@ -347,6 +348,7 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
         markWatermark: true,
       );
       if (mounted) {
+      RefreshBus.bumpFeed();
         CenterToast.show(context, '发布成功', icon: Icons.check_circle_outline);
         Navigator.of(context).pop(true);
       }
