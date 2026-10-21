@@ -125,6 +125,10 @@ class PostService {
       commentCount: (row['comment_count'] as num?)?.toInt() ?? 0,
       viewCount: (row['view_count'] as num?)?.toInt() ?? 0,
       city: (row['city'] as String?) ?? '',
+      fish: Post.parseFish(row['fish']),
+      locPublic: row['loc_public'] == null
+          ? true
+          : ((row['loc_public'] as num?)?.toInt() ?? 1) != 0,
     );
   }
 
@@ -203,6 +207,9 @@ class PostService {
   /// 图片与视频二选一（后端同样限制不能混传）
   /// category: post 渔获 / ask 问答 / say 说说 / sell 出售 / buy 求购
   /// price: 仅 sell/buy 使用（售价 / 预算）
+  /// fish: 渔获页「钓到了什么」[{'name':'鲫鱼','count':2}]
+  /// locPublic: 钓点位置是否公开（false 时后端对其他人隐藏位置与坐标）
+  /// markWatermark: 图片上传时让后端叠加水印（渔获照片走水印相机时通常已有前端水印）
   static Future<void> publish({
     required String title,
     String? body,
@@ -214,6 +221,9 @@ class PostService {
     double? lat,
     double? lng,
     String city = '', // 地级市（App 定位反查后传入，同城 Tab 依据）
+    List<Map<String, dynamic>> fish = const [],
+    bool locPublic = true,
+    bool markWatermark = false,
   }) async {
     if (_demo) {
       _demoPosts.insert(
@@ -231,6 +241,8 @@ class PostService {
           locationName: locationName,
           lat: lat,
           lng: lng,
+          fish: fish,
+          locPublic: locPublic,
           createdAt: DateTime.now(),
         ),
       );
@@ -250,8 +262,9 @@ class PostService {
       };
       videoUrl = await ApiClient.uploadFile(videoFile, contentType: contentType);
     }
-    final images =
-        imageFiles.isEmpty ? <String>[] : await ApiClient.uploadImages(imageFiles);
+    final images = imageFiles.isEmpty
+        ? <String>[]
+        : await ApiClient.uploadImages(imageFiles, watermark: markWatermark);
     await ApiClient.post('/posts', {
       'title': title,
       'content': body,
@@ -263,6 +276,8 @@ class PostService {
       'city': city,
       'lat': lat,
       'lng': lng,
+      'fish': fish,
+      'locPublic': locPublic,
     });
   }
 
