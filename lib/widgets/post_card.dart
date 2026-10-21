@@ -10,6 +10,7 @@ import '../services/session_provider.dart';
 import '../screens/post_detail_screen.dart';
 import '../screens/user_profile_screen.dart';
 import '../widgets/follow_button.dart';
+import '../widgets/location_label.dart';
 import '../widgets/post_video_player.dart';
 import '../widgets/user_avatar.dart';
 import 'center_toast.dart';
@@ -362,10 +363,11 @@ class _PostCardState extends State<PostCard> {
                           const Icon(Icons.location_on,
                               size: 16, color: AppTheme.textSecondary),
                           Flexible(
-                            child: Text(_post.locationName!,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    fontSize: 13, color: AppTheme.textSecondary)),
+                            child: LocationLabel(
+                              raw: _post.locationName!,
+                              style: const TextStyle(
+                                  fontSize: 13, color: AppTheme.textSecondary),
+                            ),
                           ),
                         ],
                       ),
