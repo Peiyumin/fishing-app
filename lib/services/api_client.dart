@@ -63,7 +63,11 @@ class ApiClient {
 
   /// 上传图片（multipart/form-data），返回服务器图片路径列表（绝对 URL）。
   /// 字段名用 file[]：PHP 对同名普通字段只保留一个，带 [] 才会聚合成数组。
-  static Future<List<String>> uploadImages(List<String> filePaths) async {
+  /// [watermark] = true 时带 ?wm=1，后端按后台水印配置自动叠加水印（头像上传不走这里）。
+  static Future<List<String>> uploadImages(
+    List<String> filePaths, {
+    bool watermark = false,
+  }) async {
     final boundary = 'dart-fishing-${DateTime.now().millisecondsSinceEpoch}';
     final bb = BytesBuilder();
     for (final path in filePaths) {
@@ -78,7 +82,10 @@ class ApiClient {
     }
     bb.add(utf8.encode('--$boundary--\r\n'));
 
-    final req = await _http.postUrl(Uri.parse(_buildUrl('/upload')));
+    final req = await _http.postUrl(Uri.parse(_buildUrl(
+      '/upload',
+      watermark ? {'wm': '1'} : null,
+    )));
     req.headers.set('Content-Type', 'multipart/form-data; boundary=$boundary');
     if (_token != null) req.headers.set('Authorization', 'Bearer $_token');
     req.add(bb.takeBytes());
