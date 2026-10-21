@@ -6,6 +6,7 @@ import 'package:latlong2/latlong2.dart';
 import 'package:provider/provider.dart';
 
 import '../services/location_service.dart';
+import '../services/refresh_bus.dart';
 import '../services/spot_service.dart';
 import '../services/session_provider.dart';
 import '../services/api_config.dart';
@@ -124,6 +125,7 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
         address: _geoAddress?.bestAddress ?? '',
       );
       if (mounted) {
+      RefreshBus.bumpFeed();
         CenterToast.show(context, '标记成功！所有钓友都能在卫星地图上看到');
         Navigator.of(context).pop();
       }
