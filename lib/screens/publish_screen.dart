@@ -160,11 +160,24 @@ class _PublishScreenState extends State<PublishScreen> {
       setState(() {
         _lat = pos.latitude;
         _lng = pos.longitude;
-        _locationName = '${pos.latitude.toStringAsFixed(3)}, '
-            '${pos.longitude.toStringAsFixed(3)}';
       });
+      // 逆地编码成中文地名（先显示坐标，拿到城市名后替换）
+      final name = await GeoNames.nameForPosition(pos.latitude, pos.longitude);
+      if (!mounted) return;
+      setState(() => _locationName = name);
     } on LocationException catch (e) {
       LocationPrompt.showError(context, e);
+    } catch (_) {
+      // 逆地编码失败：退回坐标，至少位置信息不丢
+      if (!mounted) return;
+      final pos = await LocationService.determinePosition();
+      if (!mounted) return;
+      setState(() {
+        _lat = pos.latitude;
+        _lng = pos.longitude;
+        _locationName =
+            '${pos.latitude.toStringAsFixed(3)}, ${pos.longitude.toStringAsFixed(3)}';
+      });
     }
   }
 
