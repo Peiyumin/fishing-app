@@ -9,9 +9,11 @@ import '../models/post.dart';
 import '../services/geo_place.dart';
 import '../services/location_service.dart';
 import '../services/post_service.dart';
+import '../services/refresh_bus.dart';
 import '../services/session_provider.dart';
 import '../services/spot_service.dart';
 import '../services/weather_service.dart';
+import '../utils/coord_transform.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/grid_nav.dart';
 import '../widgets/location_prompt.dart';
@@ -32,7 +34,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with WidgetsBindingObserver {
   FishingWeather? _weather;
   List<FishingSpot> _spots = [];
   List<Post> _posts = [];
@@ -43,6 +46,20 @@ class _HomeScreenState extends State<HomeScreen> {
   GeoPlace? _place;
   bool _locatingPlace = false;
 
+  /// 自身定位坐标（用于「附近钓点」按距离由近到远排序）
+  double? _myLat;
+  double? _myLng;
+
+  /// 首页自动刷新定时器：每 3 分钟拉一次最新动态 / 天气 / 钓点
+  Timer? _autoTimer;
+  static const Duration _autoInterval = Duration(minutes: 3);
+
+  /// App 是否在前台（后台时不自动刷新，省流量也避免无谓请求）
+  bool _resumed = true;
+
+  /// 上一次自动刷新的时间（展示在「钓友动态」标题右侧）
+  DateTime? _lastUpdated;
+
   /// 首帧渲染完成的信号：定位/权限请求都要等它，
   /// 否则 iOS 会因为在首帧之前弹系统权限框而直接丢掉弹框
   /// （表现：iOS 从不提示定位权限、打开 App 不会自动定位）。
@@ -51,6 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_firstFrame.isCompleted) _firstFrame.complete();
     });
@@ -58,8 +76,51 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadWeather();
     _loadSpots();
     _loadFeed();
+    // 发布成功（渔获 / 动态 / 钓点）后即时刷新首页，不用手动下拉
+    RefreshBus.feedTick.addListener(_onFeedTick);
+    RefreshBus.spotTick.addListener(_onSpotTick);
+    _startAutoRefresh();
     // 首帧渲染完成后再真正定位一次，保证打开 App 就自动获取当前位置
     WidgetsBinding.instance.addPostFrameCallback((_) => _autoLocate());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    RefreshBus.feedTick.removeListener(_onFeedTick);
+    RefreshBus.spotTick.removeListener(_onSpotTick);
+    _autoTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _resumed = state == AppLifecycleState.resumed;
+    // 回到前台立刻补一次刷新（可能已经离开很久）
+    if (_resumed && _lastUpdated != null) {
+      _silentRefresh();
+    }
+  }
+
+  void _onFeedTick() => _loadFeed(silent: true);
+
+  void _onSpotTick() => _loadSpots();
+
+  /// 每 3 分钟自动刷新一次（后台时跳过）
+  void _startAutoRefresh() {
+    _autoTimer?.cancel();
+    _autoTimer = Timer.periodic(_autoInterval, (_) => _silentRefresh());
+  }
+
+  /// 静默刷新：不弹错误提示，失败就等下一次
+  Future<void> _silentRefresh() async {
+    if (!mounted || !_resumed) return;
+    await Future.wait([
+      _loadFeed(silent: true),
+      _loadWeather(silent: true),
+      _loadSpots(),
+    ]);
+    if (mounted) setState(() => _lastUpdated = DateTime.now());
   }
 
   /// 打开 App 自动定位（每次进首页都刷新一次地名，不需要手动点）
@@ -120,7 +181,7 @@ class _HomeScreenState extends State<HomeScreen> {
   //
   // 策略：先读本地缓存「秒显」上次天气（断网/弱网也能看），
   // 再在后台拉最新值覆盖。这样每次打开 App 不会白屏转圈。
-  Future<void> _loadWeather() async {
+  Future<void> _loadWeather({bool silent = false}) async {
     // ① 缓存秒显（仅当当前还没有数据时，避免覆盖刚拉到的真实值）
     if (_weather == null) {
       final cached = await WeatherService.readCachedCurrent();
@@ -141,9 +202,18 @@ class _HomeScreenState extends State<HomeScreen> {
       final pos = await LocationService.determinePosition();
       lat = pos.latitude;
       lng = pos.longitude;
+      // 记下自身坐标：「附近钓点」据此按距离由近到远排序
+      if (mounted) {
+        setState(() {
+          _myLat = lat;
+          _myLng = lng;
+        });
+        // 拿到定位后重排一次钓点（首次进入时钓点可能已先于定位返回）
+        unawaited(_loadSpots());
+      }
     } on LocationException catch (e) {
       // 首次打开 App：权限被拒时引导用户授权（其他原因静默用默认坐标）
-      if (e.type == LocationErrorType.permissionDenied && mounted) {
+      if (!silent && e.type == LocationErrorType.permissionDenied && mounted) {
         LocationPrompt.showError(context, e);
       }
     } catch (_) {
@@ -162,25 +232,49 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _loadingWeather = false);
-        // 已有缓存时不打扰用户；完全没有数据时才提示
-        if (_weather == null) {
+        // 已有缓存 / 自动刷新时不打扰用户；完全没有数据时才提示
+        if (_weather == null && !silent) {
           CenterToast.show(context, '天气暂不可用，请检查网络');
         }
       }
     }
   }
 
+  /// 附近钓点：按「距我距离」由近到远排序（未定位成功时保持后台排序）
   Future<void> _loadSpots() async {
     final spots = await SpotService.fetchSpots();
-    if (mounted) setState(() => _spots = spots);
+    if (mounted) setState(() => _spots = _sortedByDistance(spots));
   }
 
-  Future<void> _loadFeed() async {
+  List<FishingSpot> _sortedByDistance(List<FishingSpot> list) {
+    final lat = _myLat;
+    final lng = _myLng;
+    if (lat == null || lng == null || list.length < 2) return list;
+    final copy = List<FishingSpot>.from(list);
+    copy.sort((a, b) => CoordTransform.distanceMeters(lat, lng, a.lat, a.lng)
+        .compareTo(CoordTransform.distanceMeters(lat, lng, b.lat, b.lng)));
+    return copy;
+  }
+
+  /// 某个钓点距我的距离（米）；未定位时返回 null
+  double? _distanceOf(FishingSpot s) {
+    final lat = _myLat;
+    final lng = _myLng;
+    if (lat == null || lng == null) return null;
+    return CoordTransform.distanceMeters(lat, lng, s.lat, s.lng);
+  }
+
+  Future<void> _loadFeed({bool silent = false}) async {
     try {
       final posts = await PostService.fetchFeed(limit: 20);
-      if (mounted) setState(() => _posts = posts);
-    } catch (e) {
       if (mounted) {
+        setState(() {
+          _posts = posts;
+          _lastUpdated = DateTime.now();
+        });
+      }
+    } catch (e) {
+      if (mounted && !silent) {
         CenterToast.show(context, '动态加载失败：$e');
       }
     } finally {
@@ -188,8 +282,25 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// 「钓友动态」标题：带上最近一次刷新时间，让用户知道首页会自己更新
+  String _feedTitle() {
+    final t = _lastUpdated;
+    if (t == null) return '钓友动态';
+    final diff = DateTime.now().difference(t);
+    if (diff.inSeconds < 60) return '钓友动态 · 刚刚更新';
+    if (diff.inMinutes < 60) return '钓友动态 · ${diff.inMinutes} 分钟前更新';
+    return '钓友动态 · ${diff.inHours} 小时前更新';
+  }
+
+  /// 手动下拉刷新：顺带重新定位一次，保证「附近钓点」距离是新的
   Future<void> _onRefresh() async {
-    await Future.wait([_loadFeed(), _loadWeather(), _loadSpots()]);
+    await Future.wait([
+      _loadFeed(),
+      _loadWeather(),
+      _loadPlace(refresh: true),
+    ]);
+    await _loadSpots();
+    if (mounted) setState(() => _lastUpdated = DateTime.now());
   }
 
   @override
@@ -351,20 +462,21 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
             // 钓点横向列表（标题 + 进入钓点页）
             SectionHeader(
-              title: '附近钓点',
+              title: _myLat == null ? '附近钓点' : '附近钓点 · 由近到远',
               actionLabel: '更多',
               onAction: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const SpotsScreen()),
               ),
             ),
             SizedBox(
-              height: 100,
+              height: 116,
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 children: _spots
                     .map((s) => SpotCard(
                           spot: s,
+                          distanceMeters: _distanceOf(s),
                           onTap: () => Navigator.of(context).push(
                             MaterialPageRoute(
                                 builder: (_) => SpotDetailScreen(spot: s)),
@@ -373,7 +485,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     .toList(),
               ),
             ),
-            const SectionHeader(title: '钓友动态'),
+            SectionHeader(title: _feedTitle()),
             // 动态信息流（实时刷新）
             _loadingPosts
                 ? const Center(child: CircularProgressIndicator())
