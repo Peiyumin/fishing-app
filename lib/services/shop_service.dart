@@ -239,4 +239,20 @@ class ShopService {
     }) as Map;
     return Map<String, dynamic>.from(data);
   }
+
+  /// 我的订单（积分兑换 / 现金登记）
+  /// 老后端没有该接口时返回空列表，页面显示「暂无订单」而不是报错
+  static Future<List<Map<String, dynamic>>> fetchMyOrders() async {
+    if (_demo || ApiClient.token == null) return const [];
+    try {
+      final data = await ApiClient.get('/shop/orders');
+      if (data is List) {
+        return data
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+    } catch (_) {}
+    return const [];
+  }
 }
