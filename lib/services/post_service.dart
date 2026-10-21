@@ -125,6 +125,7 @@ class PostService {
       commentCount: (row['comment_count'] as num?)?.toInt() ?? 0,
       viewCount: (row['view_count'] as num?)?.toInt() ?? 0,
       city: (row['city'] as String?) ?? '',
+      authorVip: (row['user_vip'] as num?)?.toInt() ?? 0,
       fish: Post.parseFish(row['fish']),
       locPublic: row['loc_public'] == null
           ? true
