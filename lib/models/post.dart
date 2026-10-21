@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:intl/intl.dart';
 
 /// 动态/渔获发布 数据模型
@@ -30,6 +32,12 @@ class Post {
   final bool isFollowing; // 我是否已关注作者
   final bool isMe; // 作者是不是我自己
 
+  /// 渔获页「钓到了什么」：[{'name':'鲫鱼','count':2}]（其他类别为空）
+  final List<Map<String, dynamic>> fish;
+
+  /// 钓点位置是否公开（false 时其他人看不到具体钓点）
+  final bool locPublic;
+
   static const Map<String, String> categoryLabels = {
     'post': '渔获',
     'ask': '问答',
@@ -61,6 +69,8 @@ class Post {
     this.userLevel = 1,
     this.isFollowing = false,
     this.isMe = false,
+    this.fish = const [],
+    this.locPublic = true,
   });
 
   /// 把 Supabase 返回的 JSON 转成 Post
@@ -95,7 +105,36 @@ class Post {
       userLevel: (json['user_level'] as num?)?.toInt() ?? 1,
       isFollowing: json['is_following'] == true,
       isMe: json['is_me'] == true,
+      fish: parseFish(json['fish']),
+      locPublic: json['loc_public'] == null
+          ? true
+          : (json['loc_public'] is bool
+              ? json['loc_public'] as bool
+              : (json['loc_public'] as num?)?.toInt() != 0),
     );
+  }
+
+  /// 鱼种字段：后端存 JSON 字符串（也兼容已解析的数组）
+  static List<Map<String, dynamic>> parseFish(dynamic raw) {
+    if (raw == null) return const [];
+    if (raw is List) {
+      return raw
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+    }
+    if (raw is String && raw.trim().isNotEmpty) {
+      try {
+        final v = jsonDecode(raw);
+        if (v is List) {
+          return v
+              .whereType<Map>()
+              .map((m) => Map<String, dynamic>.from(m))
+              .toList();
+        }
+      } catch (_) {}
+    }
+    return const [];
   }
 
   /// 是否视频动态
@@ -140,6 +179,8 @@ class Post {
     int? userLevel,
     bool? isFollowing,
     bool? isMe,
+    List<Map<String, dynamic>>? fish,
+    bool? locPublic,
   }) {
     return Post(
       id: id ?? this.id,
@@ -164,6 +205,8 @@ class Post {
       userLevel: userLevel ?? this.userLevel,
       isFollowing: isFollowing ?? this.isFollowing,
       isMe: isMe ?? this.isMe,
+      fish: fish ?? this.fish,
+      locPublic: locPublic ?? this.locPublic,
     );
   }
 }
