@@ -16,6 +16,73 @@ class GeoNames {
   static String? _cachedCity;
   static String? _cachedAddress;
 
+  /// 「纬度, 经度」字符串 → 中文地名的进程内缓存（历史动态里存的是坐标，避免重复请求）
+  static final Map<String, String> _coordCache = {};
+
+  /// 判断一个定位字符串是否为坐标（如「34.141, 113.461」）
+  static bool isCoordinate(String? s) {
+    if (s == null) return false;
+    final t = s.trim();
+    if (t.isEmpty) return false;
+    final parts = t.split(RegExp(r'[,，\s]+'));
+    if (parts.length != 2) return false;
+    final a = double.tryParse(parts[0]);
+    final b = double.tryParse(parts[1]);
+    if (a == null || b == null) return false;
+    return a >= -90 && a <= 90 && b >= -180 && b <= 180;
+  }
+
+  /// 把任意定位字符串解析成中文地名（只保留「市+区县」两级，简洁够用）。
+  /// - 已是地名 → 原样返回
+  /// - 是坐标「lat, lng」→ 逆地编码；失败降级为坐标原文
+  static Future<String> resolveName(String raw) async {
+    final t = raw.trim();
+    if (!isCoordinate(t)) return t;
+
+    if (_coordCache.containsKey(t)) return _coordCache[t]!;
+
+    final parts = t.split(RegExp(r'[,，\s]+'));
+    final lat = double.parse(parts[0]);
+    final lng = double.parse(parts[1]);
+    final r = await reverse(lat, lng);
+
+    final name = _shortName(r);
+    final out = (name.isEmpty) ? t : name;
+    if (name.isNotEmpty) _coordCache[t] = out;
+    return out;
+  }
+
+  /// 坐标 → 「市+区县」短地名（发布页「获取定位」用）
+  static Future<String> nameForPosition(double lat, double lng) async {
+    final key = '${lat.toStringAsFixed(3)}, ${lng.toStringAsFixed(3)}';
+    if (_coordCache.containsKey(key)) return _coordCache[key]!;
+    final r = await reverse(lat, lng);
+    final name = _shortName(r);
+    final out = name.isEmpty ? key : name;
+    _coordCache[key] = out;
+    return out;
+  }
+
+  /// 从 reverse 结果提取「市+区县」。
+  /// 优先用 city（地级市）；city 为空（直辖市/海外）时退回 locality（区县）。
+  /// 例：河南省许昌市禹州市 → 许昌市禹州市
+  static String _shortName(Map<String, dynamic>? r) {
+    if (r == null) return '';
+    final city = (r['city'] ?? '').toString().trim();
+    final locality = (r['locality'] ?? '').toString().trim();
+
+    if (city.isNotEmpty) {
+      // 直辖市：city == locality，去重只留一个
+      if (locality.isEmpty || locality == city) return city;
+      // locality 已在 city 之后（如 许昌市 + 禹州市）
+      if (city.contains(locality) || locality.contains(city)) {
+        return city.length >= locality.length ? city : locality;
+      }
+      return '$city$locality';
+    }
+    return locality;
+  }
+
   /// 当前定位的地级市名（如「武汉市」「杭州市」）。
   /// 同城 Tab 依据；成功后进程内缓存，避免反复请求。
   static Future<String?> currentCity() async {
@@ -90,7 +157,11 @@ class GeoNames {
       // 兜底：直接用 locality（区县级）
       if (display.isEmpty) display = (json['locality'] ?? '').toString();
 
-      return {'city': city, 'display': display};
+      return {
+        'city': city,
+        'display': display,
+        'locality': (json['locality'] ?? '').toString(),
+      };
     } catch (_) {
       return null;
     }
@@ -100,5 +171,6 @@ class GeoNames {
   static void clearCache() {
     _cachedCity = null;
     _cachedAddress = null;
+    _coordCache.clear();
   }
 }
