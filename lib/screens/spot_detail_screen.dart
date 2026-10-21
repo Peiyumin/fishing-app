@@ -477,6 +477,7 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
             url: ApiConfig.mediaUrl(c.avatarUrl),
             userId: c.userId,
             radius: 16,
+            vipLevel: c.vipLevel,
           ),
           const SizedBox(width: 10),
           Expanded(
