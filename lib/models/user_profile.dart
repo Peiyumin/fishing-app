@@ -11,6 +11,8 @@ class UserProfile {
   final int postCount;
   final bool isFollowing; // 当前登录用户是否已关注 TA
   final bool isMe; // 是否是当前登录用户本人
+  final int points; // 积分余额（发布渔获等行为获得，后台可配置名称）
+  final String pointsName; // 积分在 App 内的名称（如：积分 / 鱼币）
 
   const UserProfile({
     required this.id,
@@ -21,6 +23,8 @@ class UserProfile {
     this.postCount = 0,
     this.isFollowing = false,
     this.isMe = false,
+    this.points = 0,
+    this.pointsName = '积分',
   });
 
   factory UserProfile.fromJson(Map<String, dynamic> json) {
@@ -33,6 +37,10 @@ class UserProfile {
       postCount: (json['postCount'] as num?)?.toInt() ?? 0,
       isFollowing: (json['isFollowing'] as bool?) ?? false,
       isMe: (json['isMe'] as bool?) ?? false,
+      points: (json['points'] as num?)?.toInt() ?? 0,
+      pointsName: (json['pointsName'] as String?)?.isNotEmpty == true
+          ? json['pointsName'] as String
+          : '积分',
     );
   }
 
@@ -44,6 +52,8 @@ class UserProfile {
     int? postCount,
     bool? isFollowing,
     bool? isMe,
+    int? points,
+    String? pointsName,
   }) {
     return UserProfile(
       id: id,
@@ -54,6 +64,8 @@ class UserProfile {
       postCount: postCount ?? this.postCount,
       isFollowing: isFollowing ?? this.isFollowing,
       isMe: isMe ?? this.isMe,
+      points: points ?? this.points,
+      pointsName: pointsName ?? this.pointsName,
     );
   }
 }
