@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
@@ -9,6 +8,7 @@ import '../services/follow_service.dart';
 import '../services/post_service.dart';
 import '../widgets/follow_button.dart';
 import '../widgets/post_card.dart';
+import '../widgets/user_avatar.dart';
 import 'follow_list_screen.dart';
 
 /// 他人（或自己）的用户资料页：头像 + 关注/粉丝/发布 + 关注按钮 + TA 的动态
@@ -118,15 +118,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         children: [
           Row(
             children: [
-              CircleAvatar(
+              UserAvatar(
+                url: p?.avatar,
+                userId: p?.id,
                 radius: 34,
-                backgroundColor: Colors.white,
-                backgroundImage:
-                    (p?.avatar != null) ? CachedNetworkImageProvider(p!.avatar!) : null,
-                child: (p?.avatar == null)
-                    ? const Icon(Icons.person,
-                        size: 38, color: AppTheme.primary)
-                    : null,
+                vipLevel: p?.vip.level,
               ),
               const SizedBox(width: 16),
               Expanded(
