@@ -70,7 +70,7 @@ class FishingAdvisor {
 
     // —— 气压 ——
     if (pressure >= 1015 && pressure <= 1025) {
-      tips.add('气压 ${pressure.toStringAsFixed(0)}hPa 偏高且稳定，水体溶氧足，鱼活性好，适合作钓。');
+      tips.add('气压 ${pressure.toStringAsFixed(0)}hPa 偏高且稳定，水体水氧足，鱼活性好，适合作钓。');
       reasons.add('气压稳');
     } else if (pressure < 1000) {
       tips.add('气压偏低（${pressure.toStringAsFixed(0)}hPa），鱼易上浮、吃口轻，建议钓深水、放慢节奏，或改天再战。');
@@ -87,7 +87,7 @@ class FishingAdvisor {
       tips.add('风力很小（${windMs.toStringAsFixed(1)}m/s），水面平静，注意隐蔽、轻手轻脚，避免惊鱼。');
     } else if (windMs <= 4) {
       final d = dirTxt.isEmpty ? '' : '，$dirTxt风';
-      tips.add('微风 ${windMs.toStringAsFixed(1)}m/s$d，下风口溶氧高、食物聚集，优先钓迎风岸。');
+      tips.add('微风 ${windMs.toStringAsFixed(1)}m/s$d，下风口水氧高、食物聚集，优先钓迎风岸。');
       reasons.add('微风');
     } else if (windMs <= 6) {
       tips.add('风力较大（${windMs.toStringAsFixed(1)}m/s），选避风湾子、加重铅坠，注意安全。');
@@ -148,7 +148,7 @@ class FishingAdvisor {
     }
 
     // —— 通用钓位建议 ——
-    tips.add('钓位优先选水草边、洄湾、进出水口，这些地方溶氧与食物更充足。');
+    tips.add('钓位优先选水草边、洄湾、进出水口，这些地方水氧与食物更充足。');
 
     // —— 头条 ——
     final reasonTxt = reasons.isEmpty ? '' : '（${reasons.take(2).join('、')}）';
