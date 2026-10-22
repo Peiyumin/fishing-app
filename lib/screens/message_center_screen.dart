@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import '../models/message.dart';
+import '../services/message_poller.dart';
 import '../services/message_service.dart';
 import '../widgets/center_toast.dart';
 import 'chat_screen.dart';
@@ -24,6 +25,18 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
   void initState() {
     super.initState();
     _load();
+    // 全局轮询未读数变化时，实时刷新本页红点（跨页面生效）
+    MessagePoller.instance.unread.addListener(_onUnread);
+  }
+
+  @override
+  void dispose() {
+    MessagePoller.instance.unread.removeListener(_onUnread);
+    super.dispose();
+  }
+
+  void _onUnread() {
+    if (mounted) _refreshSummary();
   }
 
   Future<void> _load() async {
@@ -40,6 +53,15 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
       setState(() => _loading = false);
       CenterToast.show(context, e.toString().replaceAll('Exception: ', ''));
     }
+  }
+
+  /// 仅刷新汇总（不显示 loading 条），供轮询驱动调用
+  Future<void> _refreshSummary() async {
+    try {
+      final s = await MessageService.summary();
+      if (!mounted) return;
+      setState(() => _summary = s);
+    } catch (_) {}
   }
 
   Future<void> _markAllRead() async {
@@ -273,6 +295,38 @@ class _NoticeListScreenState extends State<NoticeListScreen> {
   void initState() {
     super.initState();
     _load();
+    // 轮询未读数变化时，实时刷新本类通知列表（停留期间也能看到新评论/点赞）
+    MessagePoller.instance.unread.addListener(_onUnread);
+  }
+
+  @override
+  void dispose() {
+    MessagePoller.instance.unread.removeListener(_onUnread);
+    super.dispose();
+  }
+
+  void _onUnread() {
+    if (mounted) _refresh();
+  }
+
+  /// 重新拉第一页；仅在内容确有变化时更新，避免无谓刷新导致列表跳动
+  Future<void> _refresh() async {
+    try {
+      final list = await MessageService.notices(type: widget.type, page: 1);
+      if (!mounted) return;
+      final changed = _items.length != list.length ||
+          (_items.isNotEmpty &&
+              list.isNotEmpty &&
+              _items.first.id != list.first.id);
+      if (changed) {
+        setState(() {
+          _items
+            ..clear()
+            ..addAll(list);
+          _page = 1;
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _load({bool more = false}) async {
