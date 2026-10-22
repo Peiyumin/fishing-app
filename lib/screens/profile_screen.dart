@@ -15,7 +15,6 @@ import '../services/refresh_bus.dart';
 import '../services/session_provider.dart';
 import '../services/shop_service.dart';
 import '../widgets/center_toast.dart';
-import '../widgets/post_card.dart';
 import '../widgets/user_avatar.dart';
 import 'auth_screen.dart';
 import 'edit_profile_screen.dart';
@@ -24,7 +23,7 @@ import 'mall_screen.dart';
 import 'spots_screen.dart';
 import 'wallet_screen.dart';
 import 'weather_screen.dart';
-import 'publish_catch_screen.dart';
+import 'my_posts_screen.dart';
 
 /// 我的页
 ///
@@ -42,7 +41,6 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   List<Post> _myPosts = [];
   UserProfile? _me;
-  bool _loading = false;
 
   ProfilePageConfig _cfg = ProfilePageConfig.defaults;
   List<BadgeItem> _myBadges = [];
@@ -117,66 +115,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _loadMyPosts() async {
-    setState(() => _loading = true);
     try {
       if (!ApiConfig.enabled) {
         if (mounted) setState(() => _myPosts = PostService.demoPosts);
         return;
       }
-      // 直接按当前用户查询自己的全部未删除发布（带 is_me），避免用全局
-      // 信息流过滤导致「我的发布」内容不全 / 丢失
+      // 直接按当前用户查询自己的全部未删除发布（带 is_me），仅用于「作品」
+      // 统计项的兜底；「我的」页本身不再直接展示发布列表
       final posts = await PostService.fetchMyPosts();
       if (mounted) {
         setState(() => _myPosts = posts);
       }
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  /// 删除自己发布的动态（PostCard 回调）
-  Future<void> _deleteMyPost(Post post) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('删除动态'),
-        content: const Text('确定删除这条动态吗？删除后他人与自己的列表都不再显示，且无法恢复。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('删除', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      await PostService.deletePost(post.id);
-      if (!mounted) return;
-      setState(() => _myPosts.removeWhere((p) => p.id == post.id));
-      RefreshBus.bumpFeed();
-      CenterToast.show(context, '已删除');
-    } catch (e) {
-      if (mounted) CenterToast.show(context, '删除失败：$e');
-    }
-  }
-
-  /// 编辑自己发布的动态（渔获可编辑；其他类别暂不支持编辑，提示即可）
-  Future<void> _editMyPost(Post post) async {
-    if (post.category != 'post') {
-      CenterToast.show(context, '该类型动态暂不支持编辑');
-      return;
-    }
-    final updated = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => PublishCatchScreen(existing: post)),
-    );
-    if (updated == true && mounted) {
-      RefreshBus.bumpFeed();
-      _loadMyPosts();
+    } catch (_) {
+      // 统计兜底数据加载失败不影响主流程
     }
   }
 
@@ -189,13 +140,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // ============================================================
   void _runAction(String action) {
     switch (action) {
-      case 'myPosts':
-        if (_scroll.hasClients) {
-          _scroll.animateTo(_scroll.position.maxScrollExtent,
-              duration: const Duration(milliseconds: 320),
-              curve: Curves.easeOut);
-        }
-        return;
       case 'orders':
         _showOrdersSheet();
         return;
@@ -292,6 +236,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
     _loadMe();
     _loadMyPosts();
+  }
+
+  void _openMyPosts() {
+    final sp = Provider.of<SessionProvider>(context, listen: false);
+    if (!sp.isLoggedIn) {
+      _goLogin();
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const MyPostsScreen()),
+    );
   }
 
   void _goLogin() {
@@ -616,7 +571,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final likeCount = _me?.likeCount ??
         _myPosts.fold<int>(0, (a, p) => a + p.likeCount);
     final items = <(String, String, VoidCallback?)>[
-      ('作品', '${_me?.postCount ?? _myPosts.length}', null),
+      ('作品', '${_me?.postCount ?? _myPosts.length}', () => _openMyPosts()),
       ('喜欢', '$likeCount', null),
       ('关注', '${_me?.followingCount ?? 0}', () => _openFollowList(false)),
       ('粉丝', '${_me?.followerCount ?? 0}', () => _openFollowList(true)),
@@ -1043,7 +998,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final sp = Provider.of<SessionProvider>(context);
-    final isDemo = !ApiConfig.enabled;
 
     if (!sp.isLoggedIn && ApiConfig.enabled) {
       return Scaffold(
@@ -1114,59 +1068,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _servicesCard(),
             _smartBar(),
             _cardsRow(),
-            // 我的发布
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 18, 14, 4),
-              child: Row(
-                children: [
-                  const Text('我的发布',
-                      style: TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.w700)),
-                  const SizedBox(width: 6),
-                  Text('${_myPosts.length} 条',
-                      style: const TextStyle(
-                          fontSize: 11.5, color: AppTheme.textSecondary)),
-                  if (isDemo) ...[
-                    const SizedBox(width: 8),
-                    const Text('（演示数据）',
-                        style: TextStyle(
-                            fontSize: 11, color: AppTheme.textSecondary)),
-                  ],
-                ],
-              ),
-            ),
-            if (_loading)
-              const Padding(
-                padding: EdgeInsets.all(20),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else if (_myPosts.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 28),
-                child: Center(
-                  child: Column(
-                    children: [
-                      const Icon(Icons.phishing,
-                          size: 40, color: AppTheme.primaryBorder),
-                      const SizedBox(height: 8),
-                      const Text('还没有发布，去首页点「+」发布吧',
-                          style: TextStyle(
-                              fontSize: 12.5, color: AppTheme.textSecondary)),
-                      const SizedBox(height: 12),
-                      OutlinedButton(
-                        onPressed: () => _runAction('myPosts'),
-                        child: const Text('去发布'),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else
-              ..._myPosts.map((p) => PostCard(
-                    post: p,
-                    onEdit: _editMyPost,
-                    onDelete: _deleteMyPost,
-                  )),
           ],
         ),
       ),
