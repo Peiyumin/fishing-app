@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_theme.dart';
 import '../models/fishing_spot.dart';
@@ -17,11 +18,13 @@ import '../utils/coord_transform.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/grid_nav.dart';
 import '../widgets/location_prompt.dart';
+import '../widgets/msg_bell.dart';
 import '../widgets/post_card.dart';
 import '../widgets/section_header.dart';
 import '../widgets/spot_card.dart';
 import '../widgets/weather_card.dart';
 import 'search_screen.dart';
+import 'signin_screen.dart';
 import 'weather_screen.dart';
 import 'spots_screen.dart';
 import 'spot_detail_screen.dart';
@@ -82,6 +85,28 @@ class _HomeScreenState extends State<HomeScreen>
     _startAutoRefresh();
     // 首帧渲染完成后再真正定位一次，保证打开 App 就自动获取当前位置
     WidgetsBinding.instance.addPostFrameCallback((_) => _autoLocate());
+    // 登录后自动弹出每日签到窗口（后台可关；同一自然日只弹一次）
+    _autoPopupSignin();
+  }
+
+  /// 每日签到自动弹窗：用本地日期做闸门，避免同一天重复打扰；
+  /// 未登录或签到已关闭时静默跳过。
+  Future<void> _autoPopupSignin() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final today = _todayKey();
+      if (prefs.getString('signin_popup_date') == today) return;
+      if (!mounted) return;
+      final shown = await showSigninDialog(context);
+      if (shown) await prefs.setString('signin_popup_date', today);
+    } catch (_) {
+      // 弹窗失败不影响首页
+    }
+  }
+
+  static String _todayKey() {
+    final n = DateTime.now();
+    return '${n.year}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}';
   }
 
   @override
@@ -369,6 +394,11 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ),
                 ),
+              ),
+              // —— 消息铃铛：靠右浮层（带未读红点）——
+              const Align(
+                alignment: Alignment.centerRight,
+                child: MsgBellButton(),
               ),
             ],
           ),
