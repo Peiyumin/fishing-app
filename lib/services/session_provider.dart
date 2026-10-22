@@ -17,6 +17,7 @@ class SessionProvider extends ChangeNotifier {
   static const _kUserId = 'session_user_id';
   static const _kNickname = 'session_nickname';
   static const _kAvatar = 'session_avatar';
+  static const _kBio = 'session_bio';
   static const _kVipLevel = 'session_vip_level';
   static const _kVipName = 'session_vip_name';
   static const _kVipColor = 'session_vip_color';
@@ -27,6 +28,7 @@ class SessionProvider extends ChangeNotifier {
   String? _userId;
   String? _nickname;
   String? _avatar;
+  String? _bio;
   int _vipLevel = 0;
   String _vipName = '';
   Color _vipColor = MemberStyle.normalColor;
@@ -37,6 +39,7 @@ class SessionProvider extends ChangeNotifier {
   String? get userId => _userId;
   String? get nickname => _nickname;
   String? get avatar => _avatar;
+  String? get bio => _bio;
 
   /// 当前登录用户的会员样式（用于头像会员框等）
   MemberStyle get vip => MemberStyle(
@@ -57,6 +60,7 @@ class SessionProvider extends ChangeNotifier {
     _userId = prefs.getString(_kUserId);
     _nickname = prefs.getString(_kNickname);
     _avatar = prefs.getString(_kAvatar);
+    _bio = prefs.getString(_kBio);
     _vipLevel = prefs.getInt(_kVipLevel) ?? 0;
     _vipName = prefs.getString(_kVipName) ?? '';
     _vipColor = Color(prefs.getInt(_kVipColor) ?? MemberStyle.normalColor.value);
@@ -91,6 +95,7 @@ class SessionProvider extends ChangeNotifier {
     _userId = data['id'] as String?;
     _nickname = (data['nickname'] as String?) ?? '钓友';
     _avatar = data['avatar'] as String?;
+    if (data['bio'] != null) _bio = data['bio'] as String?;
     _vipLevel = (data['vipLevel'] as num?)?.toInt() ?? 0;
     _vipName = (data['vipName'] as String?) ?? '';
     _vipColor = MemberStyle.parseColor(data['vipColor'], MemberStyle.normalColor);
@@ -103,6 +108,7 @@ class SessionProvider extends ChangeNotifier {
     await prefs.setString(_kUserId, _userId ?? '');
     await prefs.setString(_kNickname, _nickname ?? '');
     await prefs.setString(_kAvatar, _avatar ?? '');
+    await prefs.setString(_kBio, _bio ?? '');
     await prefs.setInt(_kVipLevel, _vipLevel);
     await prefs.setString(_kVipName, _vipName);
     await prefs.setInt(_kVipColor, _vipColor.value);
@@ -110,15 +116,18 @@ class SessionProvider extends ChangeNotifier {
     await prefs.setString(_kVipExpire, _vipExpire);
   }
 
-  /// 修改我的资料（昵称 / 头像），成功后同步全局状态与本地缓存
-  Future<UserProfile> updateProfile({String? nickname, String? avatar}) async {
+  /// 修改我的资料（昵称 / 头像 / 个性签名），成功后同步全局状态与本地缓存
+  Future<UserProfile> updateProfile(
+      {String? nickname, String? avatar, String? bio}) async {
     final data = await ApiClient.post('/users/me/profile', {
       if (nickname != null) 'nickname': nickname,
       if (avatar != null) 'avatar': avatar,
+      if (bio != null) 'bio': bio,
     }) as Map;
     final profile = UserProfile.fromJson(Map<String, dynamic>.from(data));
     _nickname = profile.nickname;
     _avatar = profile.avatar;
+    _bio = profile.bio;
     _vipLevel = profile.vip.level;
     _vipName = profile.vip.name;
     _vipColor = profile.vip.color;
@@ -128,6 +137,7 @@ class SessionProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kNickname, _nickname ?? '');
     await prefs.setString(_kAvatar, _avatar ?? '');
+    await prefs.setString(_kBio, _bio ?? '');
     await prefs.setInt(_kVipLevel, _vipLevel);
     await prefs.setString(_kVipName, _vipName);
     await prefs.setInt(_kVipColor, _vipColor.value);
@@ -151,6 +161,7 @@ class SessionProvider extends ChangeNotifier {
     _userId = null;
     _nickname = null;
     _avatar = null;
+    _bio = null;
     _vipLevel = 0;
     _vipName = '';
     _vipColor = MemberStyle.normalColor;
@@ -163,6 +174,7 @@ class SessionProvider extends ChangeNotifier {
     await prefs.remove(_kUserId);
     await prefs.remove(_kNickname);
     await prefs.remove(_kAvatar);
+    await prefs.remove(_kBio);
     await prefs.remove(_kVipLevel);
     await prefs.remove(_kVipName);
     await prefs.remove(_kVipColor);
