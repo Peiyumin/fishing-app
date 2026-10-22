@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -13,6 +15,7 @@ import 'screens/startup/splash_screen.dart';
 import 'screens/startup/startup_ad_screen.dart';
 import 'screens/wallet_screen.dart';
 import 'services/app_service.dart';
+import 'services/message_poller.dart';
 import 'services/session_provider.dart';
 import 'screens/home_screen.dart';
 import 'screens/discover_screen.dart';
@@ -21,6 +24,9 @@ import 'screens/profile_screen.dart';
 import 'screens/publish_hub_screen.dart';
 import 'widgets/update_dialog.dart';
 
+/// 全局导航 key：用于「新消息」顶部弹条在任意页面悬浮展示
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 void main() async {
   // Flutter 绑定初始化（必须在 async main 开头调用）
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,6 +34,12 @@ void main() async {
   // 恢复本地登录态：只要用户没点「退出登录」，重开 App 保持在线
   final session = SessionProvider();
   await session.restore();
+
+  // 全局消息轮询：随登录态自动启停，App 生命周期内持续轮询未读
+  MessagePoller.instance.attach(session);
+  MessagePoller.instance.onNewMessage = (delta, _) {
+    _showNewMessageBanner(delta);
+  };
 
   runApp(
     // 用 Provider 在全局共享登录态
@@ -38,12 +50,104 @@ void main() async {
   );
 }
 
-class MyApp extends StatelessWidget {
+/// 新消息顶部弹条：未读增加时悬浮提示，点击进消息中心（营造「实时收到」的体感）
+void _showNewMessageBanner(int delta) {
+  final ctx = navigatorKey.currentContext;
+  if (ctx == null) return;
+  final overlay = Overlay.of(ctx);
+  if (overlay == null) return;
+  var removed = false;
+  late OverlayEntry entry;
+  void dismiss() {
+    if (!removed) {
+      removed = true;
+      entry.remove();
+    }
+  }
+
+  entry = OverlayEntry(
+    builder: (_) => Positioned(
+      top: MediaQuery.of(ctx).padding.top + 10,
+      left: 12,
+      right: 12,
+      child: Material(
+        color: Colors.transparent,
+        child: GestureDetector(
+          onTap: () {
+            dismiss();
+            Navigator.of(ctx).pushNamed('/message-center');
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [AppTheme.primary, AppTheme.primaryDark],
+              ),
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: const [
+                BoxShadow(
+                    color: Colors.black26, blurRadius: 8, offset: Offset(0, 3)),
+              ],
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.notifications_active,
+                    color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '收到 $delta 条新消息（评论 / 点赞等）',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ),
+                const Icon(Icons.chevron_right,
+                    color: Colors.white70, size: 16),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  overlay.insert(entry);
+  Timer(const Duration(seconds: 3), dismiss);
+}
+
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    // 监听 App 前后台切换：回到前台立即查一次未读
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      MessagePoller.instance.refreshNow();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: '垂钓圈',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
