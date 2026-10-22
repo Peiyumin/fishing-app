@@ -1901,11 +1901,13 @@ class _AiBitePanelState extends State<_AiBitePanel> {
         _res = r;
         _loading = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
+      // 透传后端文案（如 429 限流提示），失败也有明确原因
+      final msg = e.toString().replaceFirst('Exception: ', '').trim();
       setState(() {
         _loading = false;
-        _err = 'AI 服务暂时不可用，请稍后再试';
+        _err = msg.isNotEmpty ? msg : 'AI 服务暂时不可用，请稍后再试';
       });
     }
   }
