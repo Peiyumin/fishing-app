@@ -126,6 +126,7 @@ class PostService {
       viewCount: (row['view_count'] as num?)?.toInt() ?? 0,
       city: (row['city'] as String?) ?? '',
       authorVip: (row['user_vip'] as num?)?.toInt() ?? 0,
+      isMe: (row['is_me'] as bool?) ?? false,
       fish: Post.parseFish(row['fish']),
       locPublic: row['loc_public'] == null
           ? true
@@ -309,5 +310,48 @@ class PostService {
     if (_demo) return [];
     final data = await ApiClient.get('/posts/$postId/comments') as List;
     return List<Map<String, dynamic>>.from(data);
+  }
+
+  /// 我的发布列表（按当前登录用户查询自己的全部未删除动态）
+  /// 用 Post.fromJson 解析，带上 is_me 标记，确保「我的发布」页完整且可编辑/删除
+  static Future<List<Post>> fetchMyPosts() async {
+    if (_demo) return List<Post>.from(_demoPosts);
+    try {
+      final data = await ApiClient.get('/posts/mine') as List;
+      return data.map((row) => Post.fromJson(row as Map<String, dynamic>)).toList();
+    } catch (_) {
+      // 后端不可达：回落到演示数据，保证 App 始终可用
+      return List<Post>.from(_demoPosts);
+    }
+  }
+
+  /// 删除自己发布的动态（仅作者，后端二次校验）
+  static Future<void> deletePost(String postId) async {
+    if (_demo) {
+      _demoPosts.removeWhere((p) => p.id == postId);
+      return;
+    }
+    if (ApiClient.token == null) throw Exception('请先登录');
+    await ApiClient.post('/posts/$postId/delete', {});
+  }
+
+  /// 编辑自己发布的动态（仅作者，后端二次校验）
+  /// [images] 为「最终要保留的图片 URL 列表」（已存在的网络图 + 本次新上传的图）
+  /// 视频字段由后端保留原值，不在此更新
+  static Future<void> updatePost(
+    String postId, {
+    required String? content,
+    required List<String> images,
+    bool locPublic = true,
+    List<Map<String, dynamic>> fish = const [],
+  }) async {
+    if (_demo) return;
+    if (ApiClient.token == null) throw Exception('请先登录');
+    await ApiClient.post('/posts/$postId/update', {
+      'content': content,
+      'images': images,
+      'locPublic': locPublic,
+      'fish': fish,
+    });
   }
 }
