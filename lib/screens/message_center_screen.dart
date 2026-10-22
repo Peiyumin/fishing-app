@@ -60,16 +60,20 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
-        title: const Text('消息', style: TextStyle(fontWeight: FontWeight.w700)),
+        title: const Text('消息',
+            style: TextStyle(fontWeight: FontWeight.w700, color: Colors.white)),
         centerTitle: true,
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
+        ),
         actions: [
           TextButton(
             onPressed: _markAllRead,
-            child: Text(
+            child: const Text(
               '全部已读',
               style: TextStyle(
                   fontSize: 12.5,
-                  color: AppTheme.primary,
+                  color: Colors.white,
                   fontWeight: FontWeight.w600),
             ),
           ),
@@ -102,7 +106,11 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
     final unread = _summary.chat;
     return Container(
       decoration: BoxDecoration(
-        color: AppTheme.textPrimary,
+        gradient: const LinearGradient(
+          colors: [AppTheme.primary, AppTheme.primaryDark],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       ),
       child: ListTile(
@@ -117,15 +125,12 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            color: AppTheme.primary,
+            color: Colors.white,
             borderRadius: BorderRadius.circular(12),
           ),
           alignment: Alignment.center,
-          child: const Text('兑',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800)),
+          child: const Icon(Icons.forum_outlined,
+              color: AppTheme.primary, size: 22),
         ),
         title: Row(
           children: [
@@ -223,7 +228,7 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
           width: 42,
           height: 42,
           decoration: BoxDecoration(
-            color: AppTheme.textPrimary,
+            color: AppTheme.primaryLight,
             borderRadius: BorderRadius.circular(11),
           ),
           alignment: Alignment.center,
