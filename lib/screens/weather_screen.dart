@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/fishing_species.dart';
+import '../models/fish.dart';
 import '../models/weather_forecast.dart';
 import '../services/location_service.dart';
 import '../services/weather_service.dart';
+import '../services/fish_service.dart';
 import '../services/tide_service.dart';
 import '../utils/geo_names.dart';
 import '../widgets/location_prompt.dart';
@@ -319,23 +321,31 @@ class _WeatherScreenState extends State<WeatherScreen> {
   void _showAi(WeatherBundle b, FishingSpecies sp, FishingMode mode) {
     _refHour = DateTime.now().hour; // 始终以当前小时为分析基准，保证实时
     final day = b.days[_selected.clamp(0, b.days.length - 1)];
-    final h = b.dayRefHour(day.date, _refHour);
+    final h = b.dayRefHour(day.date, _refHour) ??
+        (b.hours.isEmpty ? null : b.hours.first);
     final i = h == null ? -1 : b.hours.indexOf(h);
     final metrics = WaterMetrics.derive(b.hours);
     final w = i >= 0 ? metrics[i] : WaterMetrics(b.curTemp, 7.0);
 
     final at = h?.time ??
         DateTime(day.date.year, day.date.month, day.date.day, _refHour);
-    final result = FishScore.compute(
-      method: mode.name,
-      pressure: h?.pressure ?? b.curPressure,
-      pressureTrend: h?.pressureTrend ?? 'steady',
-      windMs: (h?.windMs) ?? (b.curWindSpeed / 3.6),
-      waterTemp: w.temp,
-      dissolvedOxygen: w.oxygen,
-      sp: sp,
-      at: at,
-    );
+    // 判断走与逐时表完全相同的引擎：同一小时 → 同一个分，
+    // 弹层里的解释就是这条分数的「为什么」。
+    final result = h == null
+        ? FishScore.computeRaw(
+            method: mode.name,
+            airTemp: b.curTemp,
+            pressure: b.curPressure,
+            windMs: b.curWindSpeed / 3.6,
+            waterTemp: w.temp,
+            dissolvedOxygen: w.oxygen,
+            weatherCode: b.curCode,
+            precipProb: b.curPrecipProb,
+            hour: _refHour,
+            dayRange: b.today.tempRange,
+            sp: sp,
+          )
+        : FishScore.compute(method: mode.name, h: h, w: w, sp: sp);
 
     final idxOf = <DateTime, int>{
       for (var k = 0; k < b.hours.length; k++) b.hours[k].time: k
@@ -346,9 +356,64 @@ class _WeatherScreenState extends State<WeatherScreen> {
     final score = result.indexScore ?? 0;
     final grade = result.grade;
 
+    // —— AI 大模型判断入参：当前小时实况 + 当天逐时 + 鱼种习性 + 本地引擎结论 ——
+    final aiHours = b
+        .hoursOf(day.date)
+        .map((x) => {
+              'h': x.time.hour,
+              't': double.parse(x.temp.toStringAsFixed(1)),
+              'p': double.parse(x.pressure.toStringAsFixed(1)),
+            })
+        .toList();
+    final aiNow = <String, dynamic>{
+      'hour': _refHour,
+      'airTemp': double.parse((h?.temp ?? b.curTemp).toStringAsFixed(1)),
+      'pressure': double.parse((h?.pressure ?? b.curPressure).toStringAsFixed(1)),
+      'pressureTrendCn': FishScore.trendCn(h?.pressureTrend),
+      'humidity': h?.humidity ?? b.curHumidity,
+      'windMs': double.parse(
+          ((h?.windMs) ?? (b.curWindSpeed / 3.6)).toStringAsFixed(1)),
+      'weatherCn': Wmo.text(h?.weatherCode ?? b.curCode),
+      'precipProb': h?.precipProb ?? b.curPrecipProb,
+      'waterTemp': double.parse(w.temp.toStringAsFixed(1)),
+      'oxygen': double.parse(w.oxygen.toStringAsFixed(2)),
+    };
+    if (mode.name == '海钓') {
+      aiNow['tideCn'] = TideService.at(_lat, _lng, at).display;
+    }
+    final aiPayload = <String, dynamic>{
+      'method': mode.name,
+      'season': seasonOf(day.date),
+      'now': aiNow,
+      'hours': aiHours,
+      'species': {
+        'name': sp.name,
+        'habit': sp.habit,
+        'optLow': sp.optLow,
+        'optHigh': sp.optHigh,
+        'minDo': sp.minDo,
+        'likesWave': sp.likesWave,
+      },
+      'local': {
+        'score': score,
+        'grade': grade,
+        'positives': result.positives,
+        'negatives': result.negatives,
+      },
+    };
+
     // 维度分条（内陆无潮汐 → tide 为 null，自动不展示）
     final bars = <Widget>[];
-    for (final key in ['pressure', 'wind', 'temp', 'oxygen', 'tide', 'time']) {
+    for (final key in [
+      'pressure',
+      'temp',
+      'oxygen',
+      'wind',
+      'weather',
+      'stable',
+      'tide',
+      'time'
+    ]) {
       final v = dim[key];
       if (v == null) continue;
       bars.add(_dimBar(
@@ -431,7 +496,44 @@ class _WeatherScreenState extends State<WeatherScreen> {
       Text('${sp.name}：${sp.habit}',
           style: const TextStyle(
               color: _Pal.muted, fontSize: 10.5, height: 1.55)),
-      const SizedBox(height: 16),
+      const SizedBox(height: 12),
+      // AI 大模型判断（点击后由后端大模型综合逐时天气 + 鱼种习性得出结论）
+      _AiBitePanel(payload: aiPayload, speciesName: sp.name),
+      const SizedBox(height: 14),
+      // AI 判断依据：逐条列出「支撑开口 / 压制开口」的具体数据
+      if (result.negatives.isNotEmpty) ...[
+        Row(
+          children: [
+            const Icon(Icons.trending_down, size: 13, color: _Pal.amber),
+            const SizedBox(width: 5),
+            Text('压制开口（${result.negatives.length} 项）',
+                style: const TextStyle(
+                    color: _Pal.amber,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600)),
+          ],
+        ),
+        const SizedBox(height: 7),
+        ...result.negatives.take(4).map((t) => _aiFactor(t, false)),
+        const SizedBox(height: 10),
+      ],
+      if (result.positives.isNotEmpty) ...[
+        Row(
+          children: [
+            const Icon(Icons.trending_up, size: 13, color: _Pal.green),
+            const SizedBox(width: 5),
+            Text('支撑开口（${result.positives.length} 项）',
+                style: const TextStyle(
+                    color: _Pal.green,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600)),
+          ],
+        ),
+        const SizedBox(height: 7),
+        ...result.positives.take(4).map((t) => _aiFactor(t, true)),
+        const SizedBox(height: 6),
+      ],
+      const SizedBox(height: 6),
       // 多维评分条
       const Text('多维评分',
           style: TextStyle(
@@ -498,10 +600,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
               color: Color(0xFFBBC9DC), fontSize: 12.5, height: 1.6)),
       const SizedBox(height: 11),
       Text(
-          '${mode.name == '海钓'
-                  ? '依据：气压稳定度 · 风 · 水温适温 · 潮汐 · 时段活性（海钓）'
-                  : '依据：气压稳定度 · 风 · 水温适温 · 水氧 · 时段活性 · 潮汐（海钓）'}'
-          ' · 鱼种习性（离线多维规则引擎）',
+          '依据：气压与 3 小时变压 · 水温适温 · 水氧需求 · 风 · 天气现象 · 昼夜温差'
+          '${mode.name == '海钓' ? ' · 潮汐' : ''} · ${sp.name}活跃时段'
+          '（双模型气象数据 + 多维规则引擎；也可点上方让 AI 大模型再判一次）',
           style: const TextStyle(color: _Pal.muted, fontSize: 10)),
     ]);
   }
@@ -572,6 +673,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
     );
   }
 
+  /// AI 解析里的一条判断依据（带具体数值）
   Widget _kvPlain(String k, String v) => Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -663,22 +765,33 @@ class _WeatherScreenState extends State<WeatherScreen> {
   void _showExplain() {
     _sheet('指标解读', [
       _explainItem('指数（鱼情）',
-          '综合「气象适宜度 × 鱼种适温 × 水氧 × 时段活性 × 钓法」得出的 0~100 分。'
-          '78 分以上为爆护，45 分以上为有口，低于 45 分基本无口。'),
+          '综合「气压 × 水温适温 × 水氧 × 风 × 天气 × 温差 × 时段活性 × 钓法」'
+          '得出的 0~100 分，并按目标鱼种的习性单独加权。\n'
+          '90 分以上为爆护，80~89 分为有口，80 分以下为口弱（25 分以下基本停口）。'),
+      _explainItem('为什么不是简单平均',
+          '各维度先加权平均，再做「短板惩罚」：任何一项低于 62 分都会额外扣分，'
+          '因为水氧极差、气压骤降这类致命问题，会被其它高分项平均掉。\n'
+          '另外雷暴、严重缺氧、水温远离适温会直接压低总分上限。'),
       _explainItem('气温 / 气压',
-          '来自 Open-Meteo 实测与预报。气压下方的箭头是逐小时升降：'
-          '↑ 上升（鱼活性转好），↓ 下降（鱼易上浮、吃口变轻）。'),
+          '气温气压为 ECMWF/GFS 与我国 CMA-GRAPES 两套模式的等权平均，'
+          '比单一模式更接近国内天气软件（单模式夜间可差 3℃ 以上）。\n'
+          '气压箭头是 3 小时变压：缓降多为锋前促口，急降多为变天停口，'
+          '骤升（冷锋过境）鱼需要时间适应。'),
       _explainItem('风',
-          '数字为风速 km/h，下方标签是风力等级与风向。微风（1~3 级）最利于作钓，'
-          '大风会压口且影响抛投。'),
+          '数字为风速 km/h，下方标签是风力等级与风向。2~4 级最利于作钓（推流增氧聚饵），'
+          '无风闷、6 级以上压口。喜风浪的鱼（翘嘴/鲅鱼/马口）反而要有点风。'),
       _explainItem('水温',
-          '无免费实测接口，按「水体热惯性」从气温序列推算：水温变化远比气温平缓，'
-          '白天表层略升、夜间回落。不同鱼种适温区间不同。'),
+          '无免费实测接口，按「水体热惯性」从气温序列推算：取前后约 30 小时的气温加权均值，'
+          '水温日摆幅限制在 ±2.4℃ —— 真实水体一天只变化 1~3℃。\n'
+          '不同鱼种适温区间不同，偏离区间每 1℃ 扣 8.5 分。'),
       _explainItem('水氧',
-          '同样按水文学经验模型估算：水温越低饱和水氧越高，风浪增氧、气压升高提升溶解量，'
-          '白天藻类光合作用产氧、凌晨耗氧。低于 4mg/L 鱼基本不开口。'),
-      _explainItem('有口 / 爆护 / 无口',
-          '把上面所有因子折算成一句结论，直接告诉你这一小时值不值得下竿。'),
+          '按该水温下的饱和溶氧 × 饱和比（风浪增氧、气压升高增氧、夜间藻类耗氧）估算。\n'
+          '评分按目标鱼种的最低需求折算：鲫鱼 4.2mg/L 即可，鳜鱼/马口要 6mg/L 以上，'
+          '不足需求的 70% 时基本浮头停口。'),
+      _explainItem('口弱 / 有口 / 爆护',
+          '80 分以下口弱：能钓，但别指望连竿，主攻早晚窗口；'
+          '80~89 有口：正常鱼情，选对钓位能上鱼；'
+          '90 分以上爆护：气压、水温、水氧、天气、时段同时到位，属于少数窗口。'),
     ]);
   }
 
@@ -772,17 +885,20 @@ class _NowCard extends StatelessWidget {
     // 海钓：用当前定位 + 时间估算潮汐（潮高 / 涨退），替换水氧指标
     final tide = isSea ? TideService.at(lat, lng, h?.time ?? now) : null;
     final score = h == null
-        ? (FishScore.compute(
+        ? (FishScore.computeRaw(
             method: mode.name,
+            airTemp: bundle.curTemp,
             pressure: bundle.curPressure,
-            pressureTrend: 'steady',
             windMs: bundle.curWindSpeed / 3.6,
             waterTemp: w.temp,
             dissolvedOxygen: w.oxygen,
+            weatherCode: bundle.curCode,
+            precipProb: bundle.curPrecipProb,
+            hour: now.hour,
+            dayRange: bundle.today.tempRange,
             sp: sp,
-            at: DateTime.now(),
           ).indexScore ??
-            bundle.currentFishIndex)
+            50)
         : Bite.score(h: h, w: w, sp: sp, mode: mode);
 
     final pres = bundle.curPressure;
@@ -1686,11 +1802,31 @@ class _Td extends StatelessWidget {
 // 工具
 // ============================================================
 Color _scoreColor(int s) {
-  if (s >= 78) return _Pal.green;
-  if (s >= 60) return _Pal.lime;
+  if (s >= 90) return _Pal.green;
+  if (s >= 80) return _Pal.lime;
   if (s >= 45) return _Pal.amber;
   return _Pal.muted;
 }
+
+/// AI 因素条目（本地引擎与 AI 大模型面板共用）
+Widget _aiFactor(String text, bool good) => Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(good ? '✓ ' : '! ',
+              style: TextStyle(
+                  color: good ? _Pal.green : _Pal.amber,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700)),
+          Expanded(
+            child: Text(text,
+                style: const TextStyle(
+                    color: Color(0xFFBBC9DC), fontSize: 11.5, height: 1.5)),
+          ),
+        ],
+      ),
+    );
 
 Widget _trendText(double d, {double fontSize = 9}) {
   final up = d >= 0;
@@ -1733,4 +1869,264 @@ class _StarPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+/// AI 大模型鱼口判断面板：点击后由后端大模型综合「逐时天气 + 鱼种习性」得出结论。
+/// 后端未配置 AI / 网络异常时给出提示，页面下方的本地规则引擎结果不受影响。
+class _AiBitePanel extends StatefulWidget {
+  final Map<String, dynamic> payload;
+  final String speciesName;
+
+  const _AiBitePanel({required this.payload, required this.speciesName});
+
+  @override
+  State<_AiBitePanel> createState() => _AiBitePanelState();
+}
+
+class _AiBitePanelState extends State<_AiBitePanel> {
+  bool _loading = false;
+  AiBite? _res;
+  String _err = '';
+
+  Future<void> _run() async {
+    if (_loading) return;
+    setState(() {
+      _loading = true;
+      _err = '';
+    });
+    try {
+      final r = await FishService.biteAi(widget.payload);
+      if (!mounted) return;
+      setState(() {
+        _res = r;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _err = 'AI 服务暂时不可用，请稍后再试';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final r = _res;
+    // —— 未请求：可点击的入口 ——
+    if (r == null && !_loading) {
+      return InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: _run,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [
+              _Pal.accent.withOpacity(0.14),
+              _Pal.cardAlt,
+            ]),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _Pal.accent.withOpacity(0.45)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.auto_awesome, size: 18, color: _Pal.accent),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('AI 大模型判断',
+                        style: TextStyle(
+                            color: _Pal.accent,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 3),
+                    Text('让大模型综合当天逐时天气与${widget.speciesName}习性，'
+                        '判断当前是否开口',
+                        style: const TextStyle(
+                            color: _Pal.muted, fontSize: 10, height: 1.4)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, size: 18, color: _Pal.muted),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // —— 请求中 ——
+    if (_loading) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: _Pal.cardAlt,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _Pal.line),
+        ),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: _Pal.accent),
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text('AI 正在分析逐时天气与鱼种习性…',
+                  style: TextStyle(color: _Pal.muted, fontSize: 11.5)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // —— 失败（后端未配置 / 网络异常）：提示并保留本地引擎结果 ——
+    if (!r!.ok) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: _Pal.cardAlt,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _Pal.line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.info_outline, size: 14, color: _Pal.amber),
+                const SizedBox(width: 6),
+                const Text('AI 大模型暂不可用',
+                    style: TextStyle(
+                        color: _Pal.amber,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(_err.isNotEmpty ? _err : r.msg,
+                style: const TextStyle(
+                    color: _Pal.muted, fontSize: 10.5, height: 1.5)),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: GestureDetector(
+                onTap: _run,
+                child: const Text('重试',
+                    style: TextStyle(
+                        color: _Pal.accent,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // —— 成功：分数 + 结论 + 因素 + 建议 ——
+    final s = r.score ?? 0;
+    final c = _scoreColor(s);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [
+          c.withOpacity(0.13),
+          _Pal.cardAlt,
+        ]),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: c.withOpacity(0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome, size: 15, color: _Pal.accent),
+              const SizedBox(width: 6),
+              const Text('AI 大模型判断',
+                  style: TextStyle(
+                      color: _Pal.accent,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700)),
+              const Spacer(),
+              if (r.score != null) ...[
+                Text('$s',
+                    style: TextStyle(
+                        color: c,
+                        fontSize: 20,
+                        height: 1,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(width: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: c.withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  child: Text(r.grade,
+                      style: TextStyle(
+                          color: c,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700)),
+                ),
+              ],
+            ],
+          ),
+          if (r.summary.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(r.summary,
+                style: const TextStyle(
+                    color: _Pal.txt, fontSize: 12.5, height: 1.5)),
+          ],
+          if (r.negatives.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Icon(Icons.trending_down, size: 13, color: _Pal.amber),
+                const SizedBox(width: 5),
+                Text('压制开口（${r.negatives.length} 项）',
+                    style: TextStyle(
+                        color: _Pal.amber,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600)),
+              ],
+            ),
+            const SizedBox(height: 7),
+            ...r.negatives.take(4).map((t) => _aiFactor(t, false)),
+          ],
+          if (r.positives.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Icon(Icons.trending_up, size: 13, color: _Pal.green),
+                const SizedBox(width: 5),
+                Text('支撑开口（${r.positives.length} 项）',
+                    style: TextStyle(
+                        color: _Pal.green,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600)),
+              ],
+            ),
+            const SizedBox(height: 7),
+            ...r.positives.take(4).map((t) => _aiFactor(t, true)),
+          ],
+          if (r.advice.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(r.advice,
+                style: const TextStyle(
+                    color: Color(0xFFBBC9DC), fontSize: 12, height: 1.55)),
+          ],
+          const SizedBox(height: 8),
+          Text(
+              '由大模型${r.model.isNotEmpty ? '（${r.model}）' : ''}综合逐时天气与鱼种习性生成，仅供参考',
+              style: const TextStyle(color: _Pal.muted, fontSize: 9.5)),
+        ],
+      ),
+    );
+  }
 }
