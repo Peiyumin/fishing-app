@@ -22,6 +22,7 @@ class EditProfileScreen extends StatefulWidget {
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
   final _nickCtrl = TextEditingController();
+  final _bioCtrl = TextEditingController();
   final _oldPwdCtrl = TextEditingController();
   final _newPwdCtrl = TextEditingController();
   final _newPwd2Ctrl = TextEditingController();
@@ -37,11 +38,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     super.initState();
     _nickCtrl.text =
         Provider.of<SessionProvider>(context, listen: false).nickname ?? '';
+    _bioCtrl.text =
+        Provider.of<SessionProvider>(context, listen: false).bio ?? '';
   }
 
   @override
   void dispose() {
     _nickCtrl.dispose();
+    _bioCtrl.dispose();
     _oldPwdCtrl.dispose();
     _newPwdCtrl.dispose();
     _newPwd2Ctrl.dispose();
@@ -92,12 +96,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _save() async {
     final sp = Provider.of<SessionProvider>(context, listen: false);
     final nick = _nickCtrl.text.trim();
+    final bio = _bioCtrl.text.trim();
     if (nick.isEmpty) {
       _toast('昵称不能为空');
       return;
     }
     if (nick.length > 20) {
       _toast('昵称最多 20 个字');
+      return;
+    }
+    if (bio.length > 50) {
+      _toast('个性签名最多 50 个字');
       return;
     }
     setState(() => _saving = true);
@@ -107,7 +116,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         avatarUrl = await ApiClient.uploadFile(_avatarPath!,
             contentType: 'image/jpeg');
       }
-      await sp.updateProfile(nickname: nick, avatar: avatarUrl);
+      await sp.updateProfile(nickname: nick, avatar: avatarUrl, bio: bio);
       if (mounted) {
         _toast('资料已保存');
         Navigator.of(context).pop();
@@ -223,6 +232,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               hintText: '最多 20 个字',
               border: OutlineInputBorder(),
               prefixIcon: Icon(Icons.person_outline),
+            ),
+          ),
+          const SizedBox(height: 12),
+          // 个性签名
+          TextField(
+            controller: _bioCtrl,
+            maxLength: 50,
+            maxLines: 2,
+            decoration: const InputDecoration(
+              labelText: '个性签名',
+              hintText: '一句话介绍自己，最多 50 个字',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.edit_note),
             ),
           ),
           const SizedBox(height: 12),
