@@ -153,3 +153,44 @@ class FishRecognize {
     );
   }
 }
+
+/// AI 大模型鱼口判断结果（/fish/bite-ai）
+class AiBite {
+  final bool ok;
+  final String msg;
+  final int? score;
+  final String grade;
+  final String summary;
+  final List<String> positives;
+  final List<String> negatives;
+  final String advice;
+  final String model;
+
+  const AiBite({
+    this.ok = false,
+    this.msg = '',
+    this.score,
+    this.grade = '',
+    this.summary = '',
+    this.positives = const [],
+    this.negatives = const [],
+    this.advice = '',
+    this.model = '',
+  });
+
+  factory AiBite.fromJson(Map<String, dynamic> j) => AiBite(
+        ok: (j['ok'] as bool?) ?? false,
+        msg: (j['msg'] ?? '').toString(),
+        score: (j['score'] as num?)?.round(),
+        grade: (j['grade'] ?? '').toString(),
+        summary: (j['summary'] ?? '').toString(),
+        positives: ((j['positives'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        negatives: ((j['negatives'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        advice: (j['advice'] ?? '').toString(),
+        model: (j['model'] ?? '').toString(),
+      );
+}
