@@ -22,6 +22,7 @@ import 'edit_profile_screen.dart';
 import 'follow_list_screen.dart';
 import 'mall_screen.dart';
 import 'spots_screen.dart';
+import 'wallet_screen.dart';
 import 'weather_screen.dart';
 
 /// 我的页
@@ -170,7 +171,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _showBadgesSheet();
         return;
       case 'vip':
-        _showMemberSheet();
+        Navigator.of(context).pushNamed('/member-center');
+        return;
+      case 'wallet':
+        // 钱包需要登录态校验，异步打开（不阻塞当前帧）
+        WalletEntry.open(context);
+        return;
+      case 'fish':
+        Navigator.of(context).pushNamed('/fish-guide');
+        return;
+      case 'nearby':
+        Navigator.of(context).pushNamed('/nearby-anglers');
+        return;
+      case 'messages':
+        Navigator.of(context).pushNamed('/message-center');
+        return;
+      case 'signin':
+        Navigator.of(context).pushNamed('/signin');
         return;
       case 'following':
         _openFollowList(false);
