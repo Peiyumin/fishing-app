@@ -242,7 +242,7 @@ class FishScore {
     'pressure': '气压',
     'wind': '风',
     'temp': '水温',
-    'oxygen': '溶氧',
+    'oxygen': '水氧',
     'tide': '潮汐',
     'time': '时段',
   };
@@ -447,7 +447,7 @@ class FishScore {
           : '风偏大，注意安全与观漂，优先选背风湾');
     }
     if (weak.any((e) => e.key == 'oxygen')) {
-      tips.add('溶氧偏低，鱼易上浮，宜钓浮或抓早晚口');
+      tips.add('水氧偏低，鱼易上浮，宜钓浮或抓早晚口');
     }
     if (weak.any((e) => e.key == 'temp')) {
       tips.add('水温偏离${sp.name}适温（${sp.optLow.toStringAsFixed(0)}~'
