@@ -24,6 +24,7 @@ import 'mall_screen.dart';
 import 'spots_screen.dart';
 import 'wallet_screen.dart';
 import 'weather_screen.dart';
+import 'publish_catch_screen.dart';
 
 /// 我的页
 ///
@@ -122,13 +123,60 @@ class _ProfileScreenState extends State<ProfileScreen> {
         if (mounted) setState(() => _myPosts = PostService.demoPosts);
         return;
       }
-      final posts = await PostService.fetchFeed(limit: 50);
-      final uid = Provider.of<SessionProvider>(context, listen: false).userId;
+      // 直接按当前用户查询自己的全部未删除发布（带 is_me），避免用全局
+      // 信息流过滤导致「我的发布」内容不全 / 丢失
+      final posts = await PostService.fetchMyPosts();
       if (mounted) {
-        setState(() => _myPosts = posts.where((p) => p.userId == uid).toList());
+        setState(() => _myPosts = posts);
       }
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// 删除自己发布的动态（PostCard 回调）
+  Future<void> _deleteMyPost(Post post) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('删除动态'),
+        content: const Text('确定删除这条动态吗？删除后他人与自己的列表都不再显示，且无法恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await PostService.deletePost(post.id);
+      if (!mounted) return;
+      setState(() => _myPosts.removeWhere((p) => p.id == post.id));
+      RefreshBus.bumpFeed();
+      CenterToast.show(context, '已删除');
+    } catch (e) {
+      if (mounted) CenterToast.show(context, '删除失败：$e');
+    }
+  }
+
+  /// 编辑自己发布的动态（渔获可编辑；其他类别暂不支持编辑，提示即可）
+  Future<void> _editMyPost(Post post) async {
+    if (post.category != 'post') {
+      CenterToast.show(context, '该类型动态暂不支持编辑');
+      return;
+    }
+    final updated = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => PublishCatchScreen(existing: post)),
+    );
+    if (updated == true && mounted) {
+      RefreshBus.bumpFeed();
+      _loadMyPosts();
     }
   }
 
@@ -1185,7 +1233,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               )
             else
-              ..._myPosts.map((p) => PostCard(post: p)),
+              ..._myPosts.map((p) => PostCard(
+                    post: p,
+                    onEdit: _editMyPost,
+                    onDelete: _deleteMyPost,
+                  )),
           ],
         ),
       ),
