@@ -7,6 +7,7 @@ import '../models/fishing_species.dart';
 import '../models/weather_forecast.dart';
 import '../services/location_service.dart';
 import '../services/weather_service.dart';
+import '../services/tide_service.dart';
 import '../utils/geo_names.dart';
 import '../widgets/location_prompt.dart';
 
@@ -48,6 +49,10 @@ class _WeatherScreenState extends State<WeatherScreen> {
   int _spIdx = 0; // 鱼种
   int _refHour = DateTime.now().hour;
 
+  /// 当前定位坐标（定位失败用杭州默认），供海钓潮汐估算使用
+  double _lat = 30.2741;
+  double _lng = 120.1551;
+
   @override
   void initState() {
     super.initState();
@@ -88,6 +93,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
     } catch (_) {
       // 用默认坐标
     }
+    _lat = lat;
+    _lng = lng;
     try {
       final b = await WeatherService.fetchForecast(lat, lng);
       if (mounted) {
@@ -225,6 +232,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
           metrics: metrics,
           sp: sp,
           mode: mode,
+          lat: _lat,
+          lng: _lng,
         ),
         const SizedBox(height: 10),
         _DateStrip(
@@ -258,6 +267,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
         _HourTable(
           rows: rows,
           nowHour: dayIdx == 0 ? DateTime.now().hour : null,
+          mode: mode,
+          lat: _lat,
+          lng: _lng,
         ),
       ],
     );
@@ -305,6 +317,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
   }
 
   void _showAi(WeatherBundle b, FishingSpecies sp, FishingMode mode) {
+    _refHour = DateTime.now().hour; // 始终以当前小时为分析基准，保证实时
     final day = b.days[_selected.clamp(0, b.days.length - 1)];
     final h = b.dayRefHour(day.date, _refHour);
     final i = h == null ? -1 : b.hours.indexOf(h);
@@ -404,7 +417,10 @@ class _WeatherScreenState extends State<WeatherScreen> {
               children: [
                 _kvPlain('水温', '${w.temp.toStringAsFixed(1)}℃'),
                 const SizedBox(height: 8),
-                _kvPlain('溶氧', '${w.oxygen.toStringAsFixed(2)} mg/L'),
+                if (mode.name == '海钓')
+                  _kvPlain('潮汐记录', TideService.at(_lat, _lng, at).display)
+                else
+                  _kvPlain('水氧', '${w.oxygen.toStringAsFixed(2)} mg/L'),
               ],
             ),
           ],
@@ -481,10 +497,12 @@ class _WeatherScreenState extends State<WeatherScreen> {
           style: const TextStyle(
               color: Color(0xFFBBC9DC), fontSize: 12.5, height: 1.6)),
       const SizedBox(height: 11),
-      const Text(
-          '依据：气压稳定度 · 风 · 水温适温 · 溶氧 · 时段活性 · 潮汐（海钓）'
+      Text(
+          '${mode.name == '海钓'
+                  ? '依据：气压稳定度 · 风 · 水温适温 · 潮汐 · 时段活性（海钓）'
+                  : '依据：气压稳定度 · 风 · 水温适温 · 水氧 · 时段活性 · 潮汐（海钓）'}'
           ' · 鱼种习性（离线多维规则引擎）',
-          style: TextStyle(color: _Pal.muted, fontSize: 10)),
+          style: const TextStyle(color: _Pal.muted, fontSize: 10)),
     ]);
   }
 
@@ -573,6 +591,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
       FishingMode mode,
       List<WaterMetrics> metrics,
       Map<DateTime, int> idxOf) {
+    _refHour = DateTime.now().hour; // 始终以当前小时为对比基准，保证实时
     final day = b.days[_selected.clamp(0, b.days.length - 1)];
     final h = b.dayRefHour(day.date, _refHour);
     final i = h == null ? -1 : (idxOf[h.time] ?? -1);
@@ -644,7 +663,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
   void _showExplain() {
     _sheet('指标解读', [
       _explainItem('指数（鱼情）',
-          '综合「气象适宜度 × 鱼种适温 × 溶氧 × 时段活性 × 钓法」得出的 0~100 分。'
+          '综合「气象适宜度 × 鱼种适温 × 水氧 × 时段活性 × 钓法」得出的 0~100 分。'
           '78 分以上为爆护，45 分以上为有口，低于 45 分基本无口。'),
       _explainItem('气温 / 气压',
           '来自 Open-Meteo 实测与预报。气压下方的箭头是逐小时升降：'
@@ -655,8 +674,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
       _explainItem('水温',
           '无免费实测接口，按「水体热惯性」从气温序列推算：水温变化远比气温平缓，'
           '白天表层略升、夜间回落。不同鱼种适温区间不同。'),
-      _explainItem('水氧（溶氧）',
-          '同样按水文学经验模型估算：水温越低饱和溶氧越高，风浪增氧、气压升高提升溶解量，'
+      _explainItem('水氧',
+          '同样按水文学经验模型估算：水温越低饱和水氧越高，风浪增氧、气压升高提升溶解量，'
           '白天藻类光合作用产氧、凌晨耗氧。低于 4mg/L 鱼基本不开口。'),
       _explainItem('有口 / 爆护 / 无口',
           '把上面所有因子折算成一句结论，直接告诉你这一小时值不值得下竿。'),
@@ -722,16 +741,20 @@ class _NowCard extends StatelessWidget {
   final List<WaterMetrics> metrics;
   final FishingSpecies sp;
   final FishingMode mode;
+  final double lat;
+  final double lng;
   const _NowCard({
     required this.bundle,
     required this.metrics,
     required this.sp,
     required this.mode,
+    required this.lat,
+    required this.lng,
   });
 
   @override
   Widget build(BuildContext context) {
-    // 取与当前时刻最近的一小时，作为水温/溶氧与评分的依据
+    // 取与当前时刻最近的一小时，作为水温/水氧与评分的依据
     int best = -1;
     var bestDiff = 1 << 30;
     final now = DateTime.now();
@@ -745,6 +768,9 @@ class _NowCard extends StatelessWidget {
     final h = best >= 0 ? bundle.hours[best] : null;
     final w = best >= 0 ? metrics[best] : WaterMetrics(bundle.curTemp, 7.0);
     final prev = best > 0 ? bundle.hours[best - 1] : null;
+    final isSea = mode.name == '海钓';
+    // 海钓：用当前定位 + 时间估算潮汐（潮高 / 涨退），替换水氧指标
+    final tide = isSea ? TideService.at(lat, lng, h?.time ?? now) : null;
     final score = h == null
         ? (FishScore.compute(
             method: mode.name,
@@ -844,7 +870,10 @@ class _NowCard extends StatelessWidget {
                 value: '${windDirText(bundle.curWindDir)} ${_beaufort(wind)}级',
               ),
               _Stat(label: '水温', value: '${w.temp.toStringAsFixed(1)}℃'),
-              _Stat(label: '溶氧', value: w.oxygen.toStringAsFixed(2)),
+              if (isSea)
+                _Stat(label: '潮汐记录', value: tide!.display)
+              else
+                _Stat(label: '水氧', value: w.oxygen.toStringAsFixed(2)),
             ],
           ),
         ],
@@ -1272,7 +1301,16 @@ class _HourRow {
 class _HourTable extends StatelessWidget {
   final List<_HourRow> rows;
   final int? nowHour;
-  const _HourTable({required this.rows, this.nowHour});
+  final FishingMode mode;
+  final double lat;
+  final double lng;
+  const _HourTable({
+    required this.rows,
+    this.nowHour,
+    required this.mode,
+    required this.lat,
+    required this.lng,
+  });
 
   static const int _fTime = 28;
   static const int _fWx = 40;
@@ -1318,16 +1356,17 @@ class _HourTable extends StatelessWidget {
           Container(
             color: _Pal.head,
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-            child: const Row(
+            child: Row(
               children: [
-                _Th('时间', _fTime),
-                _Th('天气', _fWx),
-                _Th2('气温', '°C', _fTemp),
-                _Th2('气压', 'hPa', _fPres),
-                _Th2('风', 'km/h', _fWind),
-                _Th2('水温', '°C', _fWater),
-                _Th2('水氧', 'mg/L', _fO2),
-                _Th2('指数', '鱼情', _fScore),
+                const _Th('时间', _fTime),
+                const _Th('天气', _fWx),
+                const _Th2('气温', '°C', _fTemp),
+                const _Th2('气压', 'hPa', _fPres),
+                const _Th2('风', 'km/h', _fWind),
+                const _Th2('水温', '°C', _fWater),
+                _Th2(mode.name == '海钓' ? '潮汐记录' : '水氧',
+                    mode.name == '海钓' ? '潮位' : 'mg/L', _fO2),
+                const _Th2('指数', '鱼情', _fScore),
               ],
             ),
           ),
@@ -1376,7 +1415,7 @@ class _HourTable extends StatelessWidget {
       );
     }
 
-    // 溶氧升降
+    // 水氧升降
     Widget o2Trend;
     if (r.prevW == null) {
       o2Trend = const Text('—',
@@ -1510,18 +1549,20 @@ class _HourTable extends StatelessWidget {
           ),
           _Td(
             flex: _fO2,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(r.w.oxygen.toStringAsFixed(2),
-                    maxLines: 1,
-                    softWrap: false,
-                    overflow: TextOverflow.clip,
-                    style: const TextStyle(color: _Pal.txt, fontSize: 11)),
-                const SizedBox(height: 1),
-                o2Trend,
-              ],
-            ),
+            child: mode.name == '海钓'
+                ? _tideCell(r.h.time)
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(r.w.oxygen.toStringAsFixed(2),
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.clip,
+                          style: const TextStyle(color: _Pal.txt, fontSize: 11)),
+                      const SizedBox(height: 1),
+                      o2Trend,
+                    ],
+                  ),
           ),
           _Td(
             flex: _fScore,
@@ -1553,6 +1594,30 @@ class _HourTable extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  /// 海钓模式下的「潮汐记录」单元格：潮高 + 涨/退/平潮
+  Widget _tideCell(DateTime t) {
+    final tide = TideService.at(lat, lng, t);
+    final color = tide.state == '涨潮'
+        ? _Pal.rise
+        : (tide.state == '退潮' ? _Pal.fall : _Pal.muted);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('${tide.heightM >= 0 ? '+' : ''}${tide.heightM.toStringAsFixed(1)}m',
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.clip,
+            style: const TextStyle(color: _Pal.txt, fontSize: 11)),
+        const SizedBox(height: 1),
+        Text(tide.state,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.clip,
+            style: TextStyle(color: color, fontSize: 8.5, fontWeight: FontWeight.w600)),
+      ],
     );
   }
 
