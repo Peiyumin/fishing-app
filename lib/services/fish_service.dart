@@ -38,4 +38,11 @@ class FishService {
     final data = await ApiClient.post('/fish/recognize', {'image': imageUrl}) as Map;
     return FishRecognize.fromJson(data.cast<String, dynamic>());
   }
+
+  /// AI 大模型鱼口判断：把逐时天气 + 鱼种习性交给大模型。
+  /// 后端未配置 AI 时 ok=false（App 回退本地规则引擎）；网络异常抛错由调用方兜底。
+  static Future<AiBite> biteAi(Map<String, dynamic> payload) async {
+    final data = await ApiClient.post('/fish/bite-ai', payload) as Map;
+    return AiBite.fromJson(data.cast<String, dynamic>());
+  }
 }
