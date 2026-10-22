@@ -14,6 +14,8 @@ import '../widgets/post_video_player.dart';
 import '../widgets/user_avatar.dart';
 import 'auth_screen.dart';
 import 'user_profile_screen.dart';
+import 'publish_catch_screen.dart';
+import '../services/refresh_bus.dart';
 import '../widgets/center_toast.dart';
 
 /// 动态详情：大图 + 正文 + 评论区 + 发表评论
@@ -71,6 +73,50 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       if (mounted) CenterToast.show(context, '操作失败：$e');
     } finally {
       if (mounted) setState(() => _followBusy = false);
+    }
+  }
+
+  /// 编辑自己的动态：进入发布页（预填），返回 true 表示已保存，回列表刷新
+  Future<void> _edit() async {
+    final updated = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => PublishCatchScreen(existing: _post),
+      ),
+    );
+    if (updated == true && mounted) {
+      RefreshBus.bumpFeed();
+      Navigator.of(context).pop(true);
+    }
+  }
+
+  /// 删除自己的动态（后端二次校验作者身份）
+  Future<void> _delete() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('删除动态'),
+        content: const Text('确定删除这条动态吗？删除后他人与自己的列表都不再显示，且无法恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await PostService.deletePost(_post.id);
+      if (!mounted) return;
+      RefreshBus.bumpFeed();
+      CenterToast.show(context, '已删除');
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) CenterToast.show(context, '删除失败：$e');
     }
   }
 
@@ -372,6 +418,20 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
         flexibleSpace: Container(
           decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
         ),
+        actions: [
+          if (_post.isMe) ...[
+            IconButton(
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: '编辑',
+              onPressed: _edit,
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: '删除',
+              onPressed: _delete,
+            ),
+          ],
+        ],
       ),
       body: ListView(
         children: [
