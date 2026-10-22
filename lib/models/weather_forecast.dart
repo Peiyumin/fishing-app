@@ -1,6 +1,6 @@
-import 'package:flutter/material.dart';
+import 'dart:math' as math;
 
-import '../app_theme.dart';
+import 'package:flutter/material.dart';
 
 /// ============================================================
 /// 天气预报数据模型（对接 Open-Meteo 免费接口，无需 API Key）
@@ -123,15 +123,27 @@ String windDirText(num? deg) {
   return dirs[idx];
 }
 
-/// 气压变化趋势（基于逐小时气压序列）：陡降/缓降/回升/平稳
+/// 气压变化趋势（基于逐小时气压序列的 3 小时变压）：陡降/缓降/急升/回升/平稳
+///
+/// 为什么用 3 小时而不是相邻小时：气象上「3 小时变压」才是判断天气系统过境的
+/// 标准量，相邻小时差 0.3~0.5hPa 属于正常日变化，用它判「回升」会天天判涨。
 String _trendFor(List<double> pres, int i) {
   if (i < 0 || i >= pres.length) return 'steady';
-  final next = (i + 1 < pres.length) ? pres[i + 1] : pres[i];
-  final d = next - pres[i];
-  if (d < -0.8) return 'falling_fast';
-  if (d < -0.25) return 'falling_slow';
-  if (d > 0.35) return 'rising';
+  final j = math.max(0, i - 3);
+  final d = pres[i] - pres[j];
+  if (i - j < 2) return 'steady'; // 序列开头不足 3 小时，不判趋势
+  if (d <= -3.0) return 'falling_fast';
+  if (d <= -1.0) return 'falling_slow';
+  if (d >= 2.0) return 'rising_fast';
+  if (d >= 0.8) return 'rising';
   return 'steady';
+}
+
+/// 3 小时变压（hPa，正=上升）
+double _delta3h(List<double> pres, int i) {
+  if (i <= 0 || i >= pres.length) return 0;
+  final j = math.max(0, i - 3);
+  return pres[i] - pres[j];
 }
 
 /// 天气现象校正
@@ -184,7 +196,13 @@ class HourPoint {
   final double? uv; // 紫外线
   final int weatherCode;
   final double? cloudCover; // 云量 %（用于天气现象校正）
-  final String? pressureTrend; // 气压趋势：rising/falling_slow/falling_fast/steady
+  final String? pressureTrend; // 气压趋势：rising/rising_fast/falling_slow/falling_fast/steady
+
+  /// 3 小时变压（hPa，正=上升）—— 判断锋前缓降 / 变天急降的关键量
+  final double? pressureDelta3h;
+
+  /// 当天昼夜温差（℃）—— 温差越大，水温波动越大、鱼越难适应
+  final double? dayRange;
 
   const HourPoint({
     required this.time,
@@ -199,14 +217,14 @@ class HourPoint {
     required this.weatherCode,
     this.cloudCover,
     this.pressureTrend,
+    this.pressureDelta3h,
+    this.dayRange,
   });
 
   String get hhmm => '${time.hour.toString().padLeft(2, '0')}:00';
 
   /// 风速 km/h → m/s（图片用 m/s）
   double get windMs => windSpeed / 3.6;
-
-  int get fishIndex => FishIndex.hourly(this);
 }
 
 /// 一天的天气汇总
@@ -239,8 +257,6 @@ class DaySummary {
 
   /// 昼夜温差
   double get tempRange => tempMax - tempMin;
-
-  int get fishIndex => FishIndex.daily(this);
 
   DaySummary copyWith({
     int? weatherCode,
@@ -345,21 +361,47 @@ class WeatherBundle {
     return dayHours.first;
   }
 
-  /// 当日垂钓指数（用当前实况算）
-  int get currentFishIndex => FishIndex.score(
-        pressure: curPressure,
-        windKmh: curWindSpeed,
-        precipProb: curPrecipProb,
-        temp: curTemp,
-        code: curCode,
-      );
+  /// 第二模型（CMA）逐时序列 → {时间: [气温, 气压]}
+  static Map<DateTime, List<double>> _seriesOf(Map<String, dynamic>? j) {
+    final out = <DateTime, List<double>>{};
+    final h = j?['hourly'];
+    if (h is! Map) return out;
+    final times = (h['time'] as List?) ?? const [];
+    final tKey = h.containsKey('temperature_2m_cma_grapes_global')
+        ? 'temperature_2m_cma_grapes_global'
+        : 'temperature_2m';
+    final pKey = h.containsKey('pressure_msl_cma_grapes_global')
+        ? 'pressure_msl_cma_grapes_global'
+        : 'pressure_msl';
+    final ts = h[tKey], ps = h[pKey];
+    if (ts is! List || ps is! List) return out;
+    for (var i = 0; i < times.length && i < ts.length && i < ps.length; i++) {
+      final t = DateTime.tryParse(times[i].toString());
+      final a = ts[i], b = ps[i];
+      if (t == null || a is! num || b is! num) continue;
+      out[t] = [a.toDouble(), b.toDouble()];
+    }
+    return out;
+  }
 
   /// 解析 Open-Meteo /v1/forecast 响应
+  ///
+  /// [ensembleJson]：第二次请求得到的 CMA（中国气象局 GRAPES）逐时序列。
+  /// 单靠 ECMWF/GFS 时，夜间气温与国内软件能差 3℃ 以上（实测同一时刻
+  /// 2026-10-23 03:45 杭州：GFS 16.8℃ / ECMWF 15.4℃ / CMA 13.7℃），
+  /// 所以这里把两套模型等权平均，明显减小单模型系统偏差。
   factory WeatherBundle.fromOpenMeteo(
-      double lat, double lng, Map<String, dynamic> json) {
+    double lat,
+    double lng,
+    Map<String, dynamic> json, {
+    Map<String, dynamic>? ensembleJson,
+  }) {
     final cur = json['current'] as Map<String, dynamic>?;
     final hourly = json['hourly'] as Map<String, dynamic>?;
     final daily = json['daily'] as Map<String, dynamic>?;
+
+    // 第二模型（CMA）逐时序列：时间 → [气温, 气压]
+    final ens = _seriesOf(ensembleJson);
 
     // 取数组字段（越界/缺失返回 null）
     num? at(Map<String, dynamic>? m, String key, int i) {
@@ -378,15 +420,38 @@ class WeatherBundle {
       final v = at(hourly, 'pressure_msl', i);
       return v == null ? 1013.0 : v.toDouble();
     });
+    // 当天最高 / 最低气温（用于「温差」维度）
+    final dayMax = <String, double>{};
+    final dayMin = <String, double>{};
+    for (var i = 0; i < hTimes.length; i++) {
+      final t = DateTime.tryParse(hTimes[i].toString());
+      final v = at(hourly, 'temperature_2m', i);
+      if (t == null || v == null) continue;
+      final k = '${t.year}-${t.month}-${t.day}';
+      final d = v.toDouble();
+      final hi = dayMax[k], lo = dayMin[k];
+      dayMax[k] = hi == null || d > hi ? d : hi;
+      dayMin[k] = lo == null || d < lo ? d : lo;
+    }
+
     final List<HourPoint> hours = [];
     for (var i = 0; i < hTimes.length; i++) {
       final t = DateTime.tryParse(hTimes[i].toString());
       if (t == null) continue;
+      var temp = (at(hourly, 'temperature_2m', i) ?? 0).toDouble();
+      var pres = (at(hourly, 'pressure_msl', i) ?? 0).toDouble();
+      final e = ens[t];
+      if (e != null) {
+        temp = (temp + e[0]) / 2;
+        pres = (pres + e[1]) / 2;
+      }
+      final k = '${t.year}-${t.month}-${t.day}';
+      final hi = dayMax[k], lo = dayMin[k];
       hours.add(HourPoint(
         time: t,
-        temp: (at(hourly, 'temperature_2m', i) ?? 0).toDouble(),
+        temp: temp,
         humidity: (at(hourly, 'relative_humidity_2m', i) ?? 0).round(),
-        pressure: (at(hourly, 'pressure_msl', i) ?? 0).toDouble(),
+        pressure: pres,
         precipProb: (at(hourly, 'precipitation_probability', i) ?? 0).round(),
         precip: (at(hourly, 'precipitation', i) ?? 0).toDouble(),
         windSpeed: (at(hourly, 'wind_speed_10m', i) ?? 0).toDouble(),
@@ -395,6 +460,8 @@ class WeatherBundle {
         weatherCode: (at(hourly, 'weather_code', i) ?? 0).round(),
         cloudCover: at(hourly, 'cloud_cover', i)?.toDouble(),
         pressureTrend: _trendFor(presArr, i),
+        pressureDelta3h: _delta3h(presArr, i),
+        dayRange: (hi != null && lo != null) ? hi - lo : null,
       ));
     }
 
@@ -478,10 +545,13 @@ class WeatherBundle {
     final curPrecipV = (cur?['precipitation'] as num?)?.toDouble() ?? 0;
     final curPrecipProbV =
         (cur?['precipitation_probability'] as num?)?.round() ?? 0;
+    // 当前实况：统一取「逐时集合」里最接近现在的那一小时。
+    // 这样首页卡 / 天气页顶部 / AI 弹层三处的气温气压完全一致，
+    // 也是用户能对照逐时表核对的同一个数。
     var curCodeV = (cur?['weather_code'] as num?)?.round() ?? 0;
+    HourPoint? nearest;
     if (hours.isNotEmpty) {
       final nowH = DateTime.now();
-      var nearest = hours.first;
       var bestMin = 1 << 30;
       for (final h in hours) {
         final diff = h.time.difference(nowH).inMinutes.abs();
@@ -490,19 +560,28 @@ class WeatherBundle {
           nearest = h;
         }
       }
-      curCodeV = WeatherCodeFix.adjust(
-        code: curCodeV,
-        precipMm: curPrecipV,
-        cloudCover: nearest.cloudCover,
-      );
+      if (nearest != null) {
+        curCodeV = WeatherCodeFix.adjust(
+          code: curCodeV,
+          precipMm: curPrecipV,
+          cloudCover: nearest.cloudCover,
+        );
+      }
     }
+
+    final curTempV = nearest?.temp ??
+        (cur?['temperature_2m'] as num?)?.toDouble() ??
+        0;
+    final curPresV = nearest?.pressure ??
+        (cur?['pressure_msl'] as num?)?.toDouble() ??
+        0;
 
     return WeatherBundle(
       lat: lat,
       lng: lng,
-      curTemp: (cur?['temperature_2m'] as num?)?.toDouble() ?? 0,
+      curTemp: curTempV,
       curHumidity: (cur?['relative_humidity_2m'] as num?)?.round() ?? 0,
-      curPressure: (cur?['pressure_msl'] as num?)?.toDouble() ?? 0,
+      curPressure: curPresV,
       curWindSpeed: (cur?['wind_speed_10m'] as num?)?.toDouble() ?? 0,
       curWindDir: (cur?['wind_direction_10m'] as num?)?.round() ?? 0,
       curPrecip: curPrecipV,
@@ -511,100 +590,5 @@ class WeatherBundle {
       hours: hours,
       days: days,
     );
-  }
-}
-
-/// 垂钓指数算法（0-100）：
-/// 综合气压稳定性、风速、降雨概率、气温、极端天气，给出适宜度打分。
-class FishIndex {
-  static int score({
-    required double pressure,
-    required double windKmh,
-    required int precipProb,
-    required double temp,
-    required int code,
-  }) {
-    double s = 100;
-
-    // 气压：1005-1020 hPa 最稳，偏离扣分
-    if (pressure < 1000) {
-      s -= (1000 - pressure).clamp(0, 30) * 2.2;
-    } else if (pressure < 1005) {
-      s -= (1005 - pressure) * 1.2;
-    } else if (pressure > 1022) {
-      s -= (pressure - 1022).clamp(0, 20) * 1.0;
-    }
-
-    // 风速：<12km/h 极佳，越大越扣
-    if (windKmh > 40) {
-      s -= 35;
-    } else if (windKmh > 25) {
-      s -= 22;
-    } else if (windKmh > 15) {
-      s -= 10;
-    } else if (windKmh > 12) {
-      s -= 4;
-    }
-
-    // 降雨概率
-    if (precipProb >= 80) {
-      s -= 25;
-    } else if (precipProb >= 50) {
-      s -= 14;
-    } else if (precipProb >= 30) {
-      s -= 6;
-    }
-
-    // 气温：15-26℃ 最适
-    if (temp < 5) {
-      s -= 22;
-    } else if (temp < 12) {
-      s -= 10;
-    } else if (temp > 33) {
-      s -= 18;
-    } else if (temp > 28) {
-      s -= 8;
-    }
-
-    // 极端天气一票否决
-    if (code >= 95) {
-      s -= 60; // 雷暴
-    } else if (code == 65 || code == 82 || code == 67) {
-      s -= 30; // 大雨/暴雨/强冻雨
-    }
-
-    return s.clamp(0, 100).round();
-  }
-
-  static int hourly(HourPoint h) => score(
-        pressure: h.pressure,
-        windKmh: h.windSpeed,
-        precipProb: h.precipProb,
-        temp: h.temp,
-        code: h.weatherCode,
-      );
-
-  static int daily(DaySummary d) => score(
-        pressure: 1013, // 日报无逐时气压，取中性值，主要看风雨温
-        windKmh: d.windSpeedMax,
-        precipProb: d.precipProbMax,
-        temp: (d.tempMax + d.tempMin) / 2,
-        code: d.weatherCode,
-      );
-
-  /// 分数 → 文案
-  static String label(int score) {
-    if (score >= 80) return '极佳';
-    if (score >= 60) return '良好';
-    if (score >= 40) return '一般';
-    return '不宜';
-  }
-
-  /// 分数 → 颜色
-  static Color color(int score) {
-    if (score >= 80) return AppTheme.primary; // 绿
-    if (score >= 60) return AppTheme.accent; // 蓝
-    if (score >= 40) return AppTheme.star; // 橙
-    return AppTheme.danger; // 红
   }
 }
