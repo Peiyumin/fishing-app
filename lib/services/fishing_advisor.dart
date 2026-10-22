@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../app_theme.dart';
+import '../models/fishing_species.dart';
 import '../models/weather_forecast.dart';
 
 /// 一条 AI 垂钓建议（由天气多因子规则推导，离线可用、不依赖任何大模型服务）
@@ -47,20 +49,38 @@ class FishingAdvisor {
     int weatherCode = 0,
     int? hour,
   }) {
-    final score = FishIndex.score(
+    // 与天气页同一套多维引擎：气温→估算水温、水氧按饱和溶氧折算，
+    // 目标鱼默认鲫鱼（台钓最常见）。这样首页指数与天气页不会互相打脸。
+    final h = hour ?? DateTime.now().hour;
+    final windMs = windKmh / 3.6;
+    final waterTemp = (temp * 0.8 + 4).clamp(2.0, 32.0);
+    final doSat = 14.652 -
+        0.41022 * waterTemp +
+        0.007991 * waterTemp * waterTemp -
+        0.000077774 * waterTemp * waterTemp * waterTemp;
+    final res = FishScore.computeRaw(
+      method: '台钓',
+      airTemp: temp,
       pressure: pressure,
-      windKmh: windKmh,
+      windMs: windMs,
+      waterTemp: waterTemp,
+      dissolvedOxygen: (doSat * 0.78).clamp(2.0, 14.0),
+      weatherCode: weatherCode,
       precipProb: rainProb ?? 0,
-      temp: temp,
-      code: weatherCode,
+      hour: h,
+      dayRange: (tempMin != null && tempMax != null) ? tempMax - tempMin : null,
+      sp: FishingSpecies.all.first,
     );
-    final level = FishIndex.label(score);
-    final color = FishIndex.color(score);
+    final score = res.indexScore ?? 50;
+    final level = FishScore.gradeOf(score);
+    final color = score >= 90
+        ? AppTheme.primary
+        : (score >= 80
+            ? AppTheme.primaryLight
+            : (score >= 45 ? AppTheme.accent : AppTheme.danger));
 
     final tips = <String>[];
     final reasons = <String>[];
-
-    final windMs = windKmh / 3.6;
 
     // —— 雷暴一票否决，优先提示安全 ——
     if (weatherCode >= 95) {
@@ -68,14 +88,14 @@ class FishingAdvisor {
       reasons.add('雷暴');
     }
 
-    // —— 气压 ——
-    if (pressure >= 1015 && pressure <= 1025) {
-      tips.add('气压 ${pressure.toStringAsFixed(0)}hPa 偏高且稳定，水体水氧足，鱼活性好，适合作钓。');
+    // —— 气压（海平面气压：1013~1022 才是舒适区）——
+    if (pressure >= 1013 && pressure <= 1022) {
+      tips.add('气压 ${pressure.toStringAsFixed(0)}hPa 稳在舒适区，水体携氧足，鱼活性好。');
       reasons.add('气压稳');
     } else if (pressure < 1000) {
       tips.add('气压偏低（${pressure.toStringAsFixed(0)}hPa），鱼易上浮、吃口轻，建议钓深水、放慢节奏，或改天再战。');
       reasons.add('气压低');
-    } else if (pressure < 1005) {
+    } else if (pressure < 1013) {
       tips.add('气压略低（${pressure.toStringAsFixed(0)}hPa），鱼口可能变轻，建议小钩细线、用活饵诱鱼。');
     } else if (pressure > 1025) {
       tips.add('气压偏高（${pressure.toStringAsFixed(0)}hPa），鱼口可能偏轻，宜钓深、钓远。');
@@ -155,14 +175,14 @@ class FishingAdvisor {
     final String headline;
     if (weatherCode >= 95) {
       headline = '雷暴天气，安全第一，建议暂停出钓。';
+    } else if (score >= 90) {
+      headline = '鱼情爆护级$reasonTxt，抓住窗口赶紧下竿！';
     } else if (score >= 80) {
-      headline = '鱼情极佳$reasonTxt，带上装备去爆护吧！';
-    } else if (score >= 60) {
-      headline = '鱼情良好$reasonTxt，注意选对钓位与钓法。';
-    } else if (score >= 40) {
-      headline = '鱼情一般$reasonTxt，建议放低预期、主攻早晚。';
+      headline = '有口$reasonTxt，选对钓位与钓法能连竿。';
+    } else if (score >= 45) {
+      headline = '鱼口偏弱$reasonTxt，建议放低预期、主攻早晚窗口。';
     } else {
-      headline = '鱼情不佳$reasonTxt，建议改期或选择更合适的时段。';
+      headline = '开口很差$reasonTxt，建议改期或换目标鱼。';
     }
 
     return FishingAdvice(
