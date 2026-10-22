@@ -544,7 +544,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     const SizedBox(width: 4),
                     Flexible(
                       child: Text(
-                        'ID：${uid.isEmpty ? '—' : uid}',
+                        _me != null && _me!.userNo > 0
+                            ? '我的ID：${_me!.userNo}'
+                            : 'ID：${uid.isEmpty ? '—' : uid}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
