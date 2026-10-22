@@ -444,79 +444,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  /// 会员中心：当前等级 + 等级说明
-  void _showMemberSheet() {
-    final vip = _me?.vip ?? MemberStyle.normal;
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppTheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (_) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.workspace_premium,
-                      color: vip.color, size: 20),
-                  const SizedBox(width: 6),
-                  Text(
-                    vip.isVip ? '${vip.levelLabel} ${vip.name}' : '开通会员',
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                vip.isVip
-                    ? (vip.expire.isEmpty ? '有效期：永久' : '有效期至 ${vip.expire}')
-                    : '会员可享受专属头像框与更多权益，可在后台为账号开通。',
-                style: const TextStyle(
-                    fontSize: 12.5, color: AppTheme.textSecondary),
-              ),
-              const SizedBox(height: 16),
-              const Text('会员等级',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: List.generate(6, (i) {
-                  final s = MemberStyle.fromLevel(i + 1);
-                  final on = vip.level == i + 1;
-                  return Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(colors: [s.color, s.color2]),
-                      borderRadius: BorderRadius.circular(20),
-                      border: on
-                          ? Border.all(color: AppTheme.textPrimary, width: 1.4)
-                          : null,
-                    ),
-                    child: Text(
-                      'Lv${i + 1} ${s.name}',
-                      style: const TextStyle(
-                          fontSize: 11.5,
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600),
-                    ),
-                  );
-                }),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   // ============================================================
   // 组件
   // ============================================================
@@ -748,7 +675,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-        onTap: _showMemberSheet,
+        onTap: () => _runAction('vip'),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14),
           child: Row(
