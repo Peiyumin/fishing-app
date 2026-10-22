@@ -1,11 +1,14 @@
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
 import '../models/fishing_species.dart';
+import '../models/post.dart';
+import '../services/api_client.dart';
 import '../services/api_config.dart';
 import '../services/location_service.dart';
 import '../services/post_service.dart';
@@ -23,7 +26,10 @@ import 'watermark_camera_screen.dart';
 ///  - 钓到了什么：多鱼种 + 尾数
 ///  - 配色沿用 App 品牌绿（不用参考图的金色）
 class PublishCatchScreen extends StatefulWidget {
-  const PublishCatchScreen({super.key});
+  /// 传入则为「编辑模式」，预填该动态内容；不传为「发布模式」
+  final Post? existing;
+
+  const PublishCatchScreen({super.key, this.existing});
 
   @override
   State<PublishCatchScreen> createState() => _PublishCatchScreenState();
@@ -33,7 +39,9 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
   final _storyCtrl = TextEditingController();
 
   final List<String> _images = [];
+  final List<String> _existingImages = []; // 编辑模式下已有的网络图片
   String? _video;
+  bool _editMode = false;
 
   String? _placeLabel; // 「许昌·禹州市」
   String? _placeDetail; // 「河南省许昌市禹州市…」
@@ -52,8 +60,28 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
   @override
   void initState() {
     super.initState();
-    // 首帧后再拿定位：iOS 在首帧前弹权限框会被系统丢掉
-    WidgetsBinding.instance.addPostFrameCallback((_) => _locate());
+    final ex = widget.existing;
+    if (ex != null) {
+      // 编辑模式：预填内容，不再自动定位（保留原发布位置）
+      _editMode = true;
+      _storyCtrl.text = ex.body ?? '';
+      _existingImages.addAll(ex.imageUrls);
+      _locPublic = ex.locPublic;
+      for (final f in ex.fish) {
+        final name = (f['name'] ?? '').toString().trim();
+        if (name.isEmpty) continue;
+        final c = _CatchItem(name);
+        c.count = (f['count'] as num?)?.toInt() ?? 1;
+        _catches.add(c);
+      }
+      _lat = ex.lat;
+      _lng = ex.lng;
+      _placeLabel = ex.locationName;
+      _locating = false;
+    } else {
+      // 首帧后再拿定位：iOS 在首帧前弹权限框会被系统丢掉
+      WidgetsBinding.instance.addPostFrameCallback((_) => _locate());
+    }
   }
 
   @override
@@ -181,17 +209,19 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
                 _pickGallery();
               },
             ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.videocam_outlined,
-                  color: AppTheme.star),
-              title: const Text('选择视频'),
-              subtitle: const Text('单个 ≤60MB，与照片二选一'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickVideo();
-              },
-            ),
+            if (!_editMode) ...[
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.videocam_outlined,
+                    color: AppTheme.star),
+                title: const Text('选择视频'),
+                subtitle: const Text('单个 ≤60MB，与照片二选一'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickVideo();
+                },
+              ),
+            ],
           ],
         ),
       ),
@@ -320,7 +350,7 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
       return;
     }
     final story = _storyCtrl.text.trim();
-    if (_images.isEmpty && _video == null) {
+    if (!_editMode && _images.isEmpty && _video == null) {
       CenterToast.show(context, '至少添加一张渔获照片或视频');
       return;
     }
@@ -330,30 +360,54 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
     }
     setState(() => _submitting = true);
     try {
-      await PostService.publish(
-        title: _autoTitle,
-        body: story.isEmpty ? null : story,
-        imageFiles: _video == null ? _images : const [],
-        videoFile: _video,
-        category: 'post',
-        locationName: _locPublic ? _placeLabel : null,
-        lat: _locPublic ? _lat : null,
-        lng: _locPublic ? _lng : null,
-        locPublic: _locPublic,
-        fish: _catches
-            .map((c) => {'name': c.species, 'count': c.count})
-            .toList(growable: false),
-        city: await GeoNames.currentCity() ?? '',
-        // 渔获照片上传时让后端叠加品牌水印（位置/大小/透明图由后台「图片水印」控制）
-        markWatermark: true,
-      );
-      if (mounted) {
-      RefreshBus.bumpFeed();
-        CenterToast.show(context, '发布成功', icon: Icons.check_circle_outline);
-        Navigator.of(context).pop(true);
+      if (_editMode) {
+        // 编辑：本地新图上传后，与已有网络图合并；视频字段由后端保留原值
+        final uploaded = _images.isEmpty
+            ? <String>[]
+            : await ApiClient.uploadImages(_images, watermark: true);
+        final images = [..._existingImages, ...uploaded];
+        await PostService.updatePost(
+          widget.existing!.id,
+          content: story.isEmpty ? null : story,
+          images: images,
+          locPublic: _locPublic,
+          fish: _catches
+              .map((c) => {'name': c.species, 'count': c.count})
+              .toList(growable: false),
+        );
+        if (mounted) {
+          RefreshBus.bumpFeed();
+          CenterToast.show(context, '已保存', icon: Icons.check_circle_outline);
+          Navigator.of(context).pop(true);
+        }
+      } else {
+        await PostService.publish(
+          title: _autoTitle,
+          body: story.isEmpty ? null : story,
+          imageFiles: _video == null ? _images : const [],
+          videoFile: _video,
+          category: 'post',
+          locationName: _locPublic ? _placeLabel : null,
+          lat: _locPublic ? _lat : null,
+          lng: _locPublic ? _lng : null,
+          locPublic: _locPublic,
+          fish: _catches
+              .map((c) => {'name': c.species, 'count': c.count})
+              .toList(growable: false),
+          city: await GeoNames.currentCity() ?? '',
+          // 渔获照片上传时让后端叠加品牌水印（位置/大小/透明图由后台「图片水印」控制）
+          markWatermark: true,
+        );
+        if (mounted) {
+          RefreshBus.bumpFeed();
+          CenterToast.show(context, '发布成功', icon: Icons.check_circle_outline);
+          Navigator.of(context).pop(true);
+        }
       }
     } catch (e) {
-      if (mounted) CenterToast.show(context, '发布失败：$e');
+      if (mounted) {
+        CenterToast.show(context, _editMode ? '保存失败：$e' : '发布失败：$e');
+      }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -389,7 +443,7 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('发布渔获'),
+        title: Text(_editMode ? '编辑渔获' : '发布渔获'),
         actions: [
           TextButton(
             onPressed: _showPrivacy,
@@ -584,7 +638,8 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
 
   /// 渔获照片 / 视频
   Widget _mediaCard() {
-    final count = _video != null ? 1 : _images.length;
+    final total = _images.length + _existingImages.length;
+    final count = _video != null ? 1 : total;
     return _card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -628,7 +683,7 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
                 ),
               ],
             )
-          else if (_images.isEmpty)
+          else if (total == 0)
             InkWell(
               onTap: _openMediaSheet,
               borderRadius: BorderRadius.circular(12),
@@ -667,6 +722,54 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
               mainAxisSpacing: 8,
               crossAxisSpacing: 8,
               children: [
+                ..._existingImages.asMap().entries.map((e) {
+                  final url = e.value;
+                  return Stack(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: CachedNetworkImage(
+                          imageUrl: url,
+                          width: double.infinity,
+                          height: double.infinity,
+                          fit: BoxFit.cover,
+                          fadeInDuration: const Duration(milliseconds: 180),
+                          placeholder: (_, __) => Container(
+                            color: AppTheme.primarySoft,
+                            alignment: Alignment.center,
+                            child: const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 1.6,
+                                  color: AppTheme.primaryBorder),
+                            ),
+                          ),
+                          errorWidget: (_, __, ___) => Container(
+                            color: AppTheme.primarySoft,
+                            alignment: Alignment.center,
+                            child: const Icon(Icons.broken_image_outlined,
+                                size: 20, color: AppTheme.textSecondary),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        right: 0,
+                        top: 0,
+                        child: GestureDetector(
+                          onTap: () =>
+                              setState(() => _existingImages.remove(url)),
+                          child: const CircleAvatar(
+                            radius: 11,
+                            backgroundColor: Colors.black54,
+                            child: Icon(Icons.close,
+                                size: 14, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                }),
                 ..._images.asMap().entries.map((e) {
                   final p = e.value;
                   return Stack(
@@ -694,7 +797,7 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
                     ],
                   );
                 }),
-                if (_images.length < _maxMedia)
+                if (total < _maxMedia)
                   InkWell(
                     onTap: _openMediaSheet,
                     child: Container(
@@ -718,7 +821,9 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
               ],
             ),
           const SizedBox(height: 8),
-          const Text('照片最多 5 张；视频只能 1 个（≤60MB），二者不能混发',
+          Text(_video != null
+              ? '视频只能 1 个（≤60MB）'
+              : '照片最多 5 张；视频只能 1 个（≤60MB），二者不能混发',
               style:
                   TextStyle(fontSize: 10.5, color: AppTheme.textSecondary)),
         ],
