@@ -72,6 +72,20 @@ class ProfilePageConfig {
   final List<ProfileCardItem> cards;
   final String memberBarText;
 
+  /// v27 新增的核心入口 action。
+  ///
+  /// 后台若还是 v26 及更早保存的旧配置（只有「我的渔获/徽章/关注/收藏/帮助/设置」），
+  /// 这些 action 一个都不会出现。识别到这种情况就整组回落到新版默认，
+  /// 否则鱼种图鉴、钱包、附近钓友、每日签到、消息中心、会员中心等入口会被旧配置盖掉。
+  static const List<String> coreV27Actions = [
+    'fish',
+    'wallet',
+    'nearby',
+    'signin',
+    'messages',
+    'vip',
+  ];
+
   const ProfilePageConfig({
     required this.menus,
     required this.servicesTitle,
@@ -108,7 +122,7 @@ class ProfilePageConfig {
   );
 
   factory ProfilePageConfig.fromJson(Map<String, dynamic> json) {
-    List<ProfileItem> items(dynamic raw) {
+    List<ProfileItem> parseItems(dynamic raw) {
       if (raw is! List) return const [];
       return raw
           .whereType<Map>()
@@ -117,14 +131,24 @@ class ProfilePageConfig {
           .toList();
     }
 
+    // 「我的服务」宫格：后台旧配置可能缺 v27 新入口。
+    // 命中不足 3 个核心 action 视为旧版配置，整组用新版默认，保证新功能入口可见。
+    final parsedServices = parseItems(json['services']);
+    var services = parsedServices;
+    if (parsedServices.isEmpty) {
+      services = defaults.services;
+    } else {
+      final present = parsedServices.map((e) => e.action).toSet();
+      final hit = coreV27Actions.where(present.contains).length;
+      if (hit < 3) services = defaults.services;
+    }
+
     return ProfilePageConfig(
-      menus: items(json['menus']).isEmpty
+      menus: parseItems(json['menus']).isEmpty
           ? defaults.menus
-          : items(json['menus']),
+          : parseItems(json['menus']),
       servicesTitle: (json['servicesTitle'] ?? defaults.servicesTitle).toString(),
-      services: items(json['services']).isEmpty
-          ? defaults.services
-          : items(json['services']),
+      services: services,
       smartBar: json['smartBar'] is Map
           ? SmartBarConfig.fromJson(
               Map<String, dynamic>.from(json['smartBar'] as Map))
