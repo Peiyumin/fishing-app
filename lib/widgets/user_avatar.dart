@@ -9,8 +9,8 @@ import 'package:provider/provider.dart';
 /// 统一的圆形头像（带会员等级框）
 ///
 /// 三件事保证「头像不会莫名其妙不显示」：
-///  1. 自己是当前登录用户时，直接读全局登录态里的头像 —— 编辑资料后立刻刷新，
-///     不再受信息流里那条动态的旧头像快照影响；
+///  1. 自己是当前登录用户时，直接读全局登录态里的头像与会员等级 —— 编辑资料、
+///     购买会员后立即同步，不再受信息流 / 评论里那条动态的旧头像与旧会员框影响；
 ///  2. 图片加载中显示底色，加载失败退回人像占位，不会留下一个空白圆圈；
 ///  3. 头像只有几十像素，统一按 3 倍像素解码，省内存也更快。
 ///
@@ -48,10 +48,9 @@ class UserAvatar extends StatelessWidget {
           userId!.isNotEmpty &&
           session.userId == userId) {
         src = session.avatarUrl ?? url;
-        // 自己且未显式指定会员样式时，套用登录态里的会员等级
-        if (member == null && (vipLevel == null || vipLevel == 0)) {
-          effectiveMember = session.vip;
-        }
+        // 自己的会员框一律以登录态为准：编辑资料 / 购买会员后立即同步，
+        // 不再受信息流 / 评论里那条动态的旧等级快照影响（忽略传入的 vipLevel）
+        effectiveMember = session.vip;
       }
     } catch (_) {
       // 没有 Provider 的场景（预览/测试）直接用传入地址
