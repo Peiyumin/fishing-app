@@ -6,6 +6,7 @@ import '../services/api_config.dart';
 /// 对应后端 /users/me 与 /users/:id 返回结构
 class UserProfile {
   final String id;
+  final int userNo; // 数字用户 ID（后台按号查人，替代 UUID 英文串）
   final String nickname;
   final String? avatar;
   final String bio; // 个人签名
@@ -24,6 +25,7 @@ class UserProfile {
 
   const UserProfile({
     required this.id,
+    this.userNo = 0,
     required this.nickname,
     this.avatar,
     this.bio = '',
@@ -44,6 +46,7 @@ class UserProfile {
   factory UserProfile.fromJson(Map<String, dynamic> json) {
     return UserProfile(
       id: json['id'] as String,
+      userNo: (json['userNo'] as num?)?.toInt() ?? 0,
       nickname: (json['nickname'] as String?) ?? '钓友',
       avatar: ApiConfig.mediaUrl(json['avatar'] as String?),
       bio: (json['bio'] ?? '').toString(),
@@ -70,6 +73,8 @@ class UserProfile {
   }
 
   UserProfile copyWith({
+    String? id,
+    int? userNo,
     String? nickname,
     String? avatar,
     String? bio,
@@ -87,7 +92,8 @@ class UserProfile {
     List<BadgeItem>? badges,
   }) {
     return UserProfile(
-      id: id,
+      id: id ?? this.id,
+      userNo: userNo ?? this.userNo,
       nickname: nickname ?? this.nickname,
       avatar: avatar ?? this.avatar,
       bio: bio ?? this.bio,
