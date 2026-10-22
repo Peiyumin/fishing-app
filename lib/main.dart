@@ -3,9 +3,15 @@ import 'package:provider/provider.dart';
 
 import 'app_theme.dart';
 import 'models/app_bootstrap.dart';
+import 'screens/fish_guide_screen.dart';
+import 'screens/member_center_screen.dart';
+import 'screens/message_center_screen.dart';
+import 'screens/nearby_anglers_screen.dart';
+import 'screens/signin_screen.dart';
 import 'screens/startup/preview_pager_screen.dart';
 import 'screens/startup/splash_screen.dart';
 import 'screens/startup/startup_ad_screen.dart';
+import 'screens/wallet_screen.dart';
 import 'services/app_service.dart';
 import 'services/session_provider.dart';
 import 'screens/home_screen.dart';
@@ -44,6 +50,15 @@ class MyApp extends StatelessWidget {
       // 首帧还没画出来时，系统窗口底色用品牌绿，避免冷启动闪一下白屏
       color: AppTheme.primary,
       home: const StartupGate(),
+      routes: {
+        '/message-center': (_) => const MessageCenterScreen(),
+        '/signin': (_) => const SigninScreen(),
+        '/wallet': (_) => const WalletScreen(),
+        '/member-center': (_) => const MemberCenterScreen(),
+        '/member-orders': (_) => const MemberOrdersScreen(),
+        '/fish-guide': (_) => const FishGuideScreen(),
+        '/nearby-anglers': (_) => const NearbyAnglersScreen(),
+      },
     );
   }
 }
