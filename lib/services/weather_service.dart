@@ -17,6 +17,18 @@ class WeatherService {
   static const String _curCacheKey = 'wx_current_v1';
   static const String _fcCacheKey = 'wx_forecast_v1';
 
+  /// 缓存有效期（分钟）：超过则视为过期，强制重新拉取，避免显示过时实况。
+  /// 这是「实时天气」的关键 —— 否则 App 重新打开会一直显示几小时前的旧天气。
+  static const int _cacheTtlMinutes = 20;
+
+  /// 缓存是否仍在有效期内（20 分钟内）。无效 / 缺时间戳一律视为过期。
+  static bool _isFresh(Map<String, dynamic> m) {
+    final ts = m['ts'];
+    if (ts is! int) return false;
+    final ageMs = DateTime.now().millisecondsSinceEpoch - ts;
+    return ageMs <= _cacheTtlMinutes * 60 * 1000;
+  }
+
   /// 测试专用：非空时替代真实的网络拉取，避免测试环境联网超时。
   /// 生产代码默认 null。
   static Future<WeatherBundle> Function(double lat, double lng)?
@@ -56,6 +68,7 @@ class WeatherService {
       final raw = sp.getString(_curCacheKey);
       if (raw == null || raw.isEmpty) return null;
       final m = jsonDecode(raw) as Map<String, dynamic>;
+      if (!_isFresh(m)) return null; // 过期缓存不返回，触发重新拉取
       final cur = m['current'];
       if (cur is! Map) return null;
       return FishingWeather.fromOpenMeteo(Map<String, dynamic>.from(cur));
@@ -71,6 +84,7 @@ class WeatherService {
       final raw = sp.getString(_fcCacheKey);
       if (raw == null || raw.isEmpty) return null;
       final m = jsonDecode(raw) as Map<String, dynamic>;
+      if (!_isFresh(m)) return null; // 过期缓存不返回，触发重新拉取
       final j = m['json'];
       if (j is! Map) return null;
       final lat = (m['lat'] as num?)?.toDouble() ?? 0;
