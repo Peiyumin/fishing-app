@@ -19,8 +19,16 @@ import 'center_toast.dart';
 /// 模板：标题 + 图片 +（定位 / 评论 / 点赞）
 class PostCard extends StatefulWidget {
   final Post post;
+  /// 作者操作：当传入且当前帖子是本人发布时，卡片右上角显示编辑 / 删除按钮
+  final void Function(Post)? onEdit;
+  final void Function(Post)? onDelete;
 
-  const PostCard({super.key, required this.post});
+  const PostCard({
+    super.key,
+    required this.post,
+    this.onEdit,
+    this.onDelete,
+  });
 
   @override
   State<PostCard> createState() => _PostCardState();
@@ -358,6 +366,36 @@ class _PostCardState extends State<PostCard> {
                     ),
                   ),
                   _followButton(),
+                  // 作者操作：仅本人发布且调用方传入回调时显示
+                  if (_post.isMe &&
+                      (widget.onEdit != null || widget.onDelete != null))
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (widget.onEdit != null)
+                          InkWell(
+                            onTap: () => widget.onEdit!(_post),
+                            borderRadius: BorderRadius.circular(6),
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: 5, vertical: 4),
+                              child: Icon(Icons.edit_outlined,
+                                  size: 17, color: AppTheme.primary),
+                            ),
+                          ),
+                        if (widget.onDelete != null)
+                          InkWell(
+                            onTap: () => widget.onDelete!(_post),
+                            borderRadius: BorderRadius.circular(6),
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: 5, vertical: 4),
+                              child: Icon(Icons.delete_outline,
+                                  size: 18, color: AppTheme.danger),
+                            ),
+                          ),
+                      ],
+                    ),
                   const SizedBox(width: 8),
                   Text(_post.timeAgo,
                       style: const TextStyle(
