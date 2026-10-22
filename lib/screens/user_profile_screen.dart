@@ -134,6 +134,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             color: Colors.white,
                             fontSize: 18,
                             fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 4),
+                    if (p != null && p.bio.trim().isNotEmpty)
+                      Text(p.bio.trim(),
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 13)),
                     const SizedBox(height: 8),
                     if (!(p?.isMe ?? false))
                       FollowButton(
