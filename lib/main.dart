@@ -54,7 +54,7 @@ void main() async {
 void _showNewMessageBanner(int delta) {
   final ctx = navigatorKey.currentContext;
   if (ctx == null) return;
-  final overlay = Overlay.of(ctx);
+  final overlay = Overlay.maybeOf(ctx);
   if (overlay == null) return;
   var removed = false;
   late OverlayEntry entry;
