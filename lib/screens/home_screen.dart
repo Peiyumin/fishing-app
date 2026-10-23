@@ -209,7 +209,8 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _loadWeather({bool silent = false}) async {
     // ① 缓存秒显（仅当当前还没有数据时，避免覆盖刚拉到的真实值）
     if (_weather == null) {
-      final cached = await WeatherService.readCachedCurrent();
+      // allowStale：过期的缓存也先亮出来，别让首页天气卡空着等网络
+      final cached = await WeatherService.readCachedCurrent(allowStale: true);
       if (cached != null && mounted && _weather == null) {
         setState(() {
           _weather = cached;
