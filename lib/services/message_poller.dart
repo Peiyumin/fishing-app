@@ -170,7 +170,12 @@ class MessagePoller {
         onNewItems?.call(fresh, summary);
       }
     } catch (_) {
-      // 网络异常：保持现状，下一轮再试
+      // 网络异常 / 后端还是旧版（没有 /messages/feed 这个路由）：保持现状，下一轮再试。
+      // 但红点角标不能跟着失效 —— 退回老接口只拿未读汇总，
+      // 保证「后端没升级」时至少有角标，升级后自动恢复完整通知。
+      try {
+        unread.value = (await MessageService.summary()).total;
+      } catch (_) {}
     }
   }
 
