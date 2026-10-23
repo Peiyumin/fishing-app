@@ -1,0 +1,69 @@
+# iOS 原生地图真机级验收（GitHub Actions macOS runner + iOS 模拟器）
+#
+# 为什么要有这个：本机是 Windows，跑不了 iOS 模拟器。之前 v2.1.12 / v2.1.13
+# 的"iOS 地图能用"是拍脑袋说的，结果底图其实一直是 SDK 自带的 demotiles
+# 示例样式。这个工作流在真正的 iOS 运行时里跑 integration_test：
+#   1. 读回原生层的 source / layer 列表，确认是星图（sat/vec/cia）而不是 demotiles（maplibre）
+#   2. 确认河流 / 湖泊 / 禁渔区 / 钓点图层的 id 都建出来了，开关能切
+#   3. 对着真实河流和钓点按屏幕坐标 queryRenderedFeatures，确认能命中
+# 任何一条不满足就让 CI 红，不再靠"看着像"。
+name: iOS-Map-Simulator-Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sim-test:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Flutter（固定 3.24.5，与本地/打包一致）
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.24.5
+          channel: stable
+
+      - name: 选择兼容的 Xcode
+        run: |
+          for X in /Applications/Xcode_15.4.app /Applications/Xcode_15.0.app; do
+            if [ -d "$X" ]; then sudo xcode-select -s "$X"; break; fi
+          done
+          xcodebuild -version
+
+      - name: 拉取依赖
+        run: flutter pub get
+
+      - name: 启动 iOS 模拟器
+        id: sim
+        run: |
+          echo "== 可用模拟器 =="
+          xcrun simctl list devices available | sed -n '1,40p'
+          UDID=$(xcrun simctl list devices available | grep -E "iPhone 1[5-7]" \
+                  | grep -oE "[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}" \
+                  | head -n1)
+          if [ -z "$UDID" ]; then
+            UDID=$(xcrun simctl list devices available \
+                  | grep -oE "[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}" \
+                  | head -n1)
+          fi
+          echo "选中的模拟器: $UDID"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: 跑地图集成测试（关键验收）
+        run: |
+          flutter test integration_test/ios_map_test.dart \
+            -d "${{ steps.sim.outputs.udid }}" -r expanded
+
+      - name: 把测试日志留档
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-map-test-log
+          path: |
+            integration_test/*.log
+          if-no-files-found: ignore
+          retention-days: 14
