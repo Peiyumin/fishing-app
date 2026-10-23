@@ -73,13 +73,37 @@ class SpotMapController {
   /// 把地图移到某个 WGS-84 坐标
   void Function(double lat, double lng)? _move;
 
+  /// 地图还没挂载时先缓存目标坐标
+  ///
+  /// ★ 修的是「打开野钓钓点后不显示当前位置」的真 bug：
+  ///   宿主钓点页在 initState 就发起定位，而第 2 个 Tab（野钓钓点）要等
+  ///   TabBarView 真正渲染时才会构建地图，此时 `_move` 还是 null ——
+  ///   定位坐标被**直接丢掉**，等用户切到地图 Tab 时宿主页不会再定位第二次，
+  ///   于是地图永远停在全国视角 z4，看着就像「没定位、地图是废的」。
+  ///   现在把坐标缓存下来，地图一挂载（bind）立刻补走一次。
+  ({double lat, double lng})? _pending;
+
   /// 地图移动到指定坐标（宿主页定位成功后调用）
-  void moveToLocation(double lat, double lng) => _move?.call(lat, lng);
+  void moveToLocation(double lat, double lng) {
+    final f = _move;
+    if (f == null) {
+      _pending = (lat: lat, lng: lng);
+      return;
+    }
+    f(lat, lng);
+  }
 
   /// 地图实现挂载时绑定（flutter_map / 原生 GL 两套实现都用这个）
-  void bind(void Function(double lat, double lng) move) => _move = move;
+  void bind(void Function(double lat, double lng) move) {
+    _move = move;
+    final p = _pending;
+    if (p != null) {
+      _pending = null;
+      move(p.lat, p.lng); // 补上挂载前错过的定位
+    }
+  }
 
-  /// 地图实现卸载时解绑
+  /// 地图实现卸载时解绑（不清 pending：切 Tab 回来还要再补一次）
   void unbind() => _move = null;
 }
 
