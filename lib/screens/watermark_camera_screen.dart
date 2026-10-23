@@ -15,7 +15,7 @@ import '../services/weather_service.dart';
 import '../utils/geo_names.dart';
 import '../utils/watermark_stamp.dart';
 import '../widgets/center_toast.dart';
-import 'publish_screen.dart';
+import 'publish_catch_screen.dart';
 
 /// 渔获拍照（水印相机 · App 内全屏取景）
 ///
@@ -266,24 +266,17 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
     }
   }
 
-  /// 拍一张直接进「发动态」（跳过渔获表单）
-  Future<void> _shootAndPublish() async {
-    final c = _cam;
-    if (c == null || !c.value.isInitialized || _busy || _recording) return;
-    setState(() => _busy = true);
-    try {
-      final shot = await c.takePicture();
-      final path = await _stampOrRaw(shot.path);
-      if (!mounted) return;
-      await Navigator.of(context).pushReplacement(MaterialPageRoute(
-        builder: (_) => PublishScreen(category: 'post', initialImage: path),
-      ));
-    } catch (e) {
-      if (mounted) {
-        setState(() => _busy = false);
-        CenterToast.show(context, '拍照失败：${_brief(e)}');
-      }
-    }
+  /// 顶部「发动态」：直接进「发布渔获」页，**不拍照**
+  ///
+  /// 之前这里接的是「先拍一张、再带着照片进发布页」，于是在相机页点
+  /// 「发动态」的表现就是"咔"一下拍张照，和按钮文字完全不符。
+  /// 现在按语义来：发动态 = 直接去发布页，拍不拍照由用户自己决定
+  /// （发布页里有「拍照（带天气水印）」入口，点它才会再次进相机）。
+  Future<void> _goPublish() async {
+    if (_busy || _recording) return;
+    await Navigator.of(context).pushReplacement(MaterialPageRoute(
+      builder: (_) => const PublishCatchScreen(),
+    ));
   }
 
   /// 从相册选一张（原图直接回传，不伪造拍摄时间水印）
@@ -610,7 +603,7 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
                       ),
                     ),
                     const Spacer(),
-                    _pill('发动态', _shootAndPublish),
+                    _pill('发动态', _goPublish),
                     const SizedBox(width: 10),
                     _roundBtn(
                       Icons.flip_camera_ios_outlined,
