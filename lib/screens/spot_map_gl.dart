@@ -57,6 +57,17 @@ class SpotMapGlScreen extends StatefulWidget {
   /// 宿主页联动定位用
   final SpotMapController? controller;
 
+  /// 集成测试钩子：地图创建后把原生 controller 交出去
+  ///
+  /// 生产环境恒为 null（不持有任何引用，无泄漏风险）。
+  /// 只有 `integration_test/` 会在 iOS 模拟器上设它，用来断言：
+  /// 底图源是不是星图（而不是 SDK 默认 demotiles）、河湖/禁钓区/钓点
+  /// 图层有没有真的加上、按屏幕坐标能不能查到钓点要素。
+  static void Function(MapLibreMapController c)? debugOnControllerCreated;
+
+  /// 原生内核就绪的超时时长（生产 8 秒；集成测试会放宽，模拟器起得慢）
+  static Duration readyTimeout = const Duration(seconds: 8);
+
   @override
   State<SpotMapGlScreen> createState() => _SpotMapGlScreenState();
 }
@@ -133,7 +144,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         _cfgReady = true;
       });
       // 原生层 8 秒还没 ready 就降级，绝不让用户对着白屏
-      _guard = Timer(const Duration(seconds: 8), () {
+      _guard = Timer(SpotMapGlScreen.readyTimeout, () {
         if (!mounted || _styleReady) return;
         // MapLibreMap 从树上摘掉后它内部的 controller 会被自己释放，
         // 这里必须置空，否则页面 dispose 时再 dispose 一次会抛异常。
@@ -539,6 +550,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                 attributionButtonPosition: AttributionButtonPosition.bottomRight,
                 onMapCreated: (c) {
                   _map = c;
+                  SpotMapGlScreen.debugOnControllerCreated?.call(c);
                   _renderLayers();
                 },
                 onStyleLoadedCallback: () {
