@@ -20,6 +20,7 @@ import 'services/session_provider.dart';
 import 'screens/home_screen.dart';
 import 'screens/discover_screen.dart';
 import 'screens/spots_screen.dart';
+import 'screens/spot_map_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/publish_hub_screen.dart';
 import 'widgets/update_dialog.dart';
@@ -162,6 +163,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         '/member-orders': (_) => const MemberOrdersScreen(),
         '/fish-guide': (_) => const FishGuideScreen(),
         '/nearby-anglers': (_) => const NearbyAnglersScreen(),
+        '/spot-map': (_) => const SpotMapScreen(),
       },
     );
   }
@@ -246,12 +248,13 @@ class MainShell extends StatefulWidget {
 }
 
 class _MainShellState extends State<MainShell> {
-  // 四个常规页面（发布页用悬浮按钮单独打开，不占底部 item）
+  // 五个常规页面（发布页用悬浮按钮单独打开，不占底部 item）
   int _currentIndex = 0;
   final List<Widget> _pages = const [
     HomeScreen(),
     DiscoverScreen(),
     SpotsScreen(),
+    SpotMapScreen(),
     ProfileScreen(),
   ];
 
@@ -289,7 +292,8 @@ class _MainShellState extends State<MainShell> {
               _navItem(1, Icons.explore_outlined, Icons.explore, '发现'),
               const SizedBox(width: 56), // 中间留白给发布按钮
               _navItem(2, Icons.place_outlined, Icons.place, '钓点'),
-              _navItem(3, Icons.person_outline, Icons.person, '我的'),
+              _navItem(3, Icons.map_outlined, Icons.map, '地图'),
+              _navItem(4, Icons.person_outline, Icons.person, '我的'),
             ],
           ),
         ),
