@@ -13,6 +13,7 @@ import '../models/no_fishing_zone.dart';
 import '../models/water_body.dart';
 import '../services/fish_service.dart';
 import '../services/location_service.dart';
+import '../services/cached_tile_provider.dart';
 import '../services/map_config_service.dart';
 import '../services/map_data_service.dart';
 import '../services/map_tile_source.dart';
@@ -101,6 +102,18 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
   // 底图：星图地球 > 天地图 > 高德（优先级由后台配置决定，取不到自动降级）
   TileSource _tile = const TileSource(kind: TileSourceKind.gaode);
 
+  // 瓦片提供器（磁盘缓存 + 内置离线包），三种图层各一个，不能每帧新建，
+  // 否则 TileLayer 会认为提供器变了，把所有瓦片重新加载一遍
+  late final CachedTileProvider _imgProvider =
+      CachedTileProvider(layer: 'img', onNetworkFail: _onTileFail);
+  late final CachedTileProvider _vecProvider =
+      CachedTileProvider(layer: 'vec', onNetworkFail: _onTileFail);
+  late final CachedTileProvider _ciaProvider =
+      CachedTileProvider(layer: 'cia', onNetworkFail: _onTileFail);
+
+  // 是否已从星图/天地图降级到高德（一个会话只降一次）
+  bool _degraded = false;
+
   // 搜索
   final TextEditingController _searchCtrl = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
@@ -124,6 +137,8 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
   @override
   void initState() {
     super.initState();
+    // 瓦片缓存目录 + 内置离线包探测（后台跑，不阻塞首帧）
+    unawaited(CachedTileProvider.init());
     _load();
     _searchCtrl.addListener(_onSearchChanged);
     // 宿主页（钓点页）联动定位：把内部移动能力挂到 controller 上
@@ -144,6 +159,19 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     _searchCtrl.dispose();
     _searchFocus.dispose();
     super.dispose();
+  }
+
+  /// 连续多个瓦片加载失败 → 说明当前底图这条线不通（配额用完 / 被限流 / 断网），
+  /// 直接降到免 key 的高德，避免整屏空瓦片还一直重试拖慢 UI。
+  void _onTileFail() {
+    if (!mounted || _degraded) return;
+    if (_tile.kind == TileSourceKind.gaode) return;
+    _degraded = true;
+    setState(() => _tile = const TileSource(kind: TileSourceKind.gaode));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('星图地球连不上（可能是今日配额用完），已自动切换到高德底图'),
+      duration: Duration(seconds: 3),
+    ));
   }
 
   /// 移到某个 WGS-84 坐标（底图是天地图时原样绘制，高德时转 GCJ-02）
@@ -1192,7 +1220,49 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
 
   // ------------------------------------------------------------ 图层构建
 
-  List<Polygon> get _lakePolygons {
+  /// 几何缓存：43 江 + 44 湖 + 33 禁钓区的坐标投影很吃 CPU（高德底图还要
+  /// 逐点做 GCJ-02 纠偏），每帧重算会直接把拖动帧率拖死。这里只在
+  /// 「数据 / 底图 / 图层开关 / 缩放跨过标注阈值」变化时才重算一次。
+  List<Polygon> _lakeCache = const [];
+  List<Polyline> _riverCache = const [];
+  List<Polygon> _zoneCache = const [];
+  List<Marker> _markerCache = const [];
+  String _layerSig = '';
+
+  String _computeLayerSig() => [
+        _tile.kind.name,
+        _layers.lakes,
+        _layers.rivers,
+        _layers.noFishingZones,
+        _layers.spots,
+        _layers.waterLabels,
+        _zoom >= 5.5,
+        _zoom >= 6,
+        _waters.length,
+        _zones.zones.length,
+        _spots.length,
+        widget.extraSpots.length,
+        _myLat,
+        _myLng,
+      ].join('|');
+
+  /// 在 build 开头调用；签名没变就直接复用缓存
+  void _syncLayerCache() {
+    final sig = _computeLayerSig();
+    if (sig == _layerSig) return;
+    _layerSig = sig;
+    _lakeCache = _buildLakePolygons();
+    _riverCache = _buildRiverLines();
+    _zoneCache = _buildZonePolygons();
+    _markerCache = _buildMarkers();
+  }
+
+  List<Polygon> get _lakePolygons => _lakeCache;
+  List<Polyline> get _riverLines => _riverCache;
+  List<Polygon> get _zonePolygons => _zoneCache;
+  List<Marker> get _markers => _markerCache;
+
+  List<Polygon> _buildLakePolygons() {
     if (!_layers.lakes) return const [];
     return _waters.where((w) => !w.isRiver).map((w) {
       final pts = _tile.projectAll(w.geometry);
@@ -1210,7 +1280,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     }).toList();
   }
 
-  List<Polyline> get _riverLines {
+  List<Polyline> _buildRiverLines() {
     if (!_layers.rivers) return const [];
     return _waters.where((w) => w.isRiver).map((w) {
       final pts = _tile.projectAll(w.geometry);
@@ -1225,7 +1295,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     }).toList();
   }
 
-  List<Polygon> get _zonePolygons {
+  List<Polygon> _buildZonePolygons() {
     if (!_layers.noFishingZones) return const [];
     return _zones.zones.where((z) => z.onMap && z.rings.isNotEmpty).map((z) {
       final st = z.statusNow();
@@ -1251,7 +1321,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     return i > 0 ? name.substring(0, i) : name;
   }
 
-  List<Marker> get _markers {
+  List<Marker> _buildMarkers() {
     final list = <Marker>[];
     if (_layers.spots) {
       // 钓点：地图页自己拉的 + 嵌入时外层传入的（钓点页野钓点）
@@ -1325,12 +1395,12 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 河湖/禁钓区坐标投影只在数据或底图变化时算一次，拖动时直接复用
+    _syncLayerCache();
     final bottomInset = MediaQuery.of(context).padding.bottom;
     // 嵌入模式（钓点页「野钓钓点」Tab）没有系统状态栏留白，
-    // 顶部安全区由外层 Scaffold 处理
-    // 嵌入模式：上方是钓点页的「野钓点提示条」，让出约 46px 避免压住
-    final topInset =
-        widget.embedded ? 54.0 : MediaQuery.of(context).padding.top + 8;
+    // 顶部安全区由外层 Scaffold 处理；提示条已改成左侧竖条，顶部不再需要让位
+    final topInset = widget.embedded ? 8.0 : MediaQuery.of(context).padding.top + 8;
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Stack(children: [
@@ -1370,6 +1440,11 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                   subdomains: _tile.subdomains ?? const ['a', 'b', 'c'],
                   additionalOptions: _tile.additionalOptions,
                   userAgentPackageName: 'com.chuidiaoquan.app',
+                  // 磁盘缓存 + 内置离线包：第二次进来直接读本地，不再走网络
+                  tileProvider: _layers.satellite ? _imgProvider : _vecProvider,
+                  // 只保留视野周边一圈（默认 2 圈），少留 60% 解码纹理，省内存不卡顿
+                  keepBuffer: 1,
+                  maxNativeZoom: _tile.maxNativeZoom,
                 ),
                 // 路网标注叠加层（可关）
                 if (_layers.roadLabels && !SpotMapScreen.testSkipTiles)
@@ -1379,6 +1454,9 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                     subdomains: _tile.subdomains ?? const ['a', 'b', 'c'],
                     additionalOptions: _tile.additionalOptions,
                     userAgentPackageName: 'com.chuidiaoquan.app',
+                    tileProvider: _ciaProvider,
+                    keepBuffer: 1,
+                    maxNativeZoom: _tile.maxNativeZoom,
                   ),
                 if ((_layers.lakes || _layers.rivers)) ...[
                   PolygonLayer(polygons: _lakePolygons),
