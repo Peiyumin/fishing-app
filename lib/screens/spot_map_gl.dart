@@ -161,7 +161,14 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   void dispose() {
     _guard?.cancel();
     widget.controller?.unbind();
-    _map?.dispose();
+    // 不要在这里 dispose controller：
+    // MapLibreMap 自己的 State.dispose() 会 dispose 同一个 controller
+    // （maplibre_gl/src/maplibre_map.dart 的 _MapLibreMapState.dispose），
+    // 我们再调一次就是二次 dispose，debug 下直接抛
+    // "A MapLibreMapController was used after being disposed"。
+    // 之前 iOS 上一直是 demotiles（样式没生效），这条路径没人真正走到过，
+    // 是 iOS 集成测试跑通后才发现的老问题。
+    _map = null;
     super.dispose();
   }
 
