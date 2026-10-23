@@ -5,10 +5,14 @@ import 'package:provider/provider.dart';
 
 import 'app_theme.dart';
 import 'models/app_bootstrap.dart';
+import 'models/message.dart';
+import 'screens/chat_screen.dart';
 import 'screens/fish_guide_screen.dart';
 import 'screens/member_center_screen.dart';
 import 'screens/message_center_screen.dart';
 import 'screens/nearby_anglers_screen.dart';
+import 'screens/notify_settings_screen.dart';
+import 'screens/post_detail_screen.dart';
 import 'screens/signin_screen.dart';
 import 'screens/startup/preview_pager_screen.dart';
 import 'screens/startup/splash_screen.dart';
@@ -16,6 +20,8 @@ import 'screens/startup/startup_ad_screen.dart';
 import 'screens/wallet_screen.dart';
 import 'services/app_service.dart';
 import 'services/message_poller.dart';
+import 'services/notification_service.dart';
+import 'services/post_service.dart';
 import 'services/session_provider.dart';
 import 'screens/home_screen.dart';
 import 'screens/discover_screen.dart';
@@ -42,10 +48,14 @@ void main() async {
   final session = SessionProvider();
   await session.restore();
 
-  // 全局消息轮询：随登录态自动启停，App 生命周期内持续轮询未读
+  // 系统通知（私信 / 评论 / 点赞 / 官方公告）
+  await NotificationService.instance.init();
+  NotificationService.instance.onTap = openFromNotification;
+
+  // 全局消息轮询：随登录态自动启停，App 生命周期内持续轮询
   MessagePoller.instance.attach(session);
-  MessagePoller.instance.onNewMessage = (delta, _) {
-    _showNewMessageBanner(delta);
+  MessagePoller.instance.onNewItems = (items, summary) {
+    _showFeedBanner(items, summary);
   };
 
   runApp(
@@ -55,14 +65,70 @@ void main() async {
       child: const MyApp(),
     ),
   );
+
+  // 冷启动：App 是被「点击通知」拉起来的，等首帧画完再跳转
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    final p = NotificationService.instance.pendingPayload;
+    if (p == null) return;
+    NotificationService.instance.pendingPayload = null;
+    // 给 StartupGate → MainShell 一点时间把 Navigator 挂稳
+    await Future.delayed(const Duration(milliseconds: 400));
+    await openFromNotification(p);
+  });
 }
 
-/// 新消息顶部弹条：未读增加时悬浮提示，点击进消息中心（营造「实时收到」的体感）
-void _showNewMessageBanner(int delta) {
+/// 点通知后跳转到对应页面
+///
+/// 映射关系：
+///   私信        → 与发送者的聊天页
+///   官方公告    → 消息中心（公告列表）
+///   评论/点赞   → 对应动态详情（帖子已删除则回消息中心）
+///   其它        → 消息中心
+Future<void> openFromNotification(Map<String, dynamic> p) async {
+  final kind = (p['kind'] ?? '').toString();
+  final type = (p['type'] ?? '').toString();
+  final peerId = (p['peerId'] ?? '').toString();
+  final refId = (p['refId'] ?? '').toString();
+
+  // Navigator 可能还没就绪，最多等 2 秒
+  NavigatorState? nav = navigatorKey.currentState;
+  for (var i = 0; i < 10 && nav == null; i++) {
+    await Future.delayed(const Duration(milliseconds: 200));
+    nav = navigatorKey.currentState;
+  }
+  if (nav == null) return;
+
+  if (kind == 'chat' && peerId.isNotEmpty) {
+    nav.push(MaterialPageRoute(
+      builder: (_) => ChatScreen(peerId: peerId, nickname: (p['fromName'] ?? '钓友').toString()),
+    ));
+    return;
+  }
+  if (type == 'system') {
+    nav.pushNamed('/message-center');
+    return;
+  }
+  if (refId.isNotEmpty) {
+    final post = await PostService.fetchById(refId);
+    if (post != null) {
+      nav.push(MaterialPageRoute(builder: (_) => PostDetailScreen(post: post)));
+      return;
+    }
+  }
+  nav.pushNamed('/message-center');
+}
+
+/// 新消息顶部横幅：带具体内容的卡片，点击直达对应页面
+///
+/// 多条消息时合并成一张（标题显示条数，正文给最新一条），
+/// 不做「一条一个横幅」的堆叠 —— 一次轮询可能带回十几条，会糊满屏幕。
+void _showFeedBanner(List<FeedItem> items, MsgSummary summary) {
+  if (items.isEmpty) return;
   final ctx = navigatorKey.currentContext;
   if (ctx == null) return;
   final overlay = Overlay.maybeOf(ctx);
   if (overlay == null) return;
+
   var removed = false;
   late OverlayEntry entry;
   void dismiss() {
@@ -72,9 +138,28 @@ void _showNewMessageBanner(int delta) {
     }
   }
 
+  final first = items.first;
+  final single = items.length == 1;
+  final title = single ? first.pushTitle : '${items.length} 条新消息';
+  final body = single
+      ? first.pushBody
+      : items
+          .take(2)
+          .map((e) => e.pushTitle)
+          .where((s) => s.isNotEmpty)
+          .join(' · ');
+
+  final icon = first.isChat
+      ? Icons.mail_outline
+      : first.isSystem
+          ? Icons.campaign_outlined
+          : first.type == 'like'
+              ? Icons.favorite_border
+              : Icons.chat_bubble_outline;
+
   entry = OverlayEntry(
     builder: (_) => Positioned(
-      top: MediaQuery.of(ctx).padding.top + 10,
+      top: MediaQuery.of(ctx).padding.top + 8,
       left: 12,
       right: 12,
       child: Material(
@@ -82,46 +167,95 @@ void _showNewMessageBanner(int delta) {
         child: GestureDetector(
           onTap: () {
             dismiss();
-            Navigator.of(ctx).pushNamed('/message-center');
+            openFromNotification(first.toPayload());
+          },
+          onVerticalDragEnd: (d) {
+            if ((d.primaryVelocity ?? 0) < 0) dismiss();
           },
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [AppTheme.primary, AppTheme.primaryDark],
-              ),
-              borderRadius: BorderRadius.circular(12),
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
               boxShadow: const [
                 BoxShadow(
-                    color: Colors.black26, blurRadius: 8, offset: Offset(0, 3)),
+                    color: Color(0x26000000), blurRadius: 16, offset: Offset(0, 6))
               ],
             ),
-            child: Row(
-              children: [
-                const Icon(Icons.notifications_active,
-                    color: Colors.white, size: 18),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '收到 $delta 条新消息（评论 / 点赞等）',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600),
-                  ),
+            child: Row(children: [
+              // 有头像用头像（一眼知道是谁），没有就用类型图标
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: SizedBox(
+                  width: 38,
+                  height: 38,
+                  child: first.fromAvatar.isNotEmpty
+                      ? Image.network(first.fromAvatar,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => _bannerIcon(icon))
+                      : _bannerIcon(icon),
                 ),
-                const Icon(Icons.chevron_right,
-                    color: Colors.white70, size: 16),
-              ],
-            ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(children: [
+                      Expanded(
+                        child: Text(title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.textPrimary)),
+                      ),
+                      if (summary.total > 0)
+                        Container(
+                          margin: const EdgeInsets.only(left: 6),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: AppTheme.danger,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text('${summary.total}',
+                              style: const TextStyle(
+                                  fontSize: 10.5,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700)),
+                        ),
+                    ]),
+                    const SizedBox(height: 2),
+                    Text(body,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 12.5, color: AppTheme.textSecondary)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Icon(Icons.chevron_right,
+                  size: 18, color: AppTheme.textSecondary),
+            ]),
           ),
         ),
       ),
     ),
   );
   overlay.insert(entry);
-  Timer(const Duration(seconds: 3), dismiss);
+  Timer(const Duration(seconds: 4), dismiss);
 }
+
+Widget _bannerIcon(IconData icon) => Container(
+      color: AppTheme.primaryLight,
+      alignment: Alignment.center,
+      child: Icon(icon, size: 20, color: AppTheme.primary),
+    );
+
 
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
@@ -147,7 +281,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      MessagePoller.instance.refreshNow();
+      // 切回前台：立刻补拉一次，把后台期间错过的消息一次性提醒
+      // （iOS 挂起后 Dart 定时器停摆，只能靠这个时机补齐）
+      MessagePoller.instance.refreshNow(fromBackground: true);
+      NotificationService.instance.checkPermission();
     }
   }
 
@@ -170,6 +307,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         '/fish-guide': (_) => const FishGuideScreen(),
         '/nearby-anglers': (_) => const NearbyAnglersScreen(),
         '/spot-map': (_) => const SpotMapScreen(),
+        '/notify-settings': (_) => const NotifySettingsScreen(),
       },
     );
   }
