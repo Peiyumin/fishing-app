@@ -104,7 +104,12 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       // 原生层 8 秒还没 ready 就降级，绝不让用户对着白屏
       _guard = Timer(const Duration(seconds: 8), () {
         if (!mounted || _styleReady) return;
-        setState(() => _fallback = true);
+        // MapLibreMap 从树上摘掉后它内部的 controller 会被自己释放，
+        // 这里必须置空，否则页面 dispose 时再 dispose 一次会抛异常。
+        setState(() {
+          _map = null;
+          _fallback = true;
+        });
       });
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _locate(silent: true));
