@@ -124,3 +124,108 @@ class MsgSummary {
         total: (j['total'] as num?)?.toInt() ?? 0,
       );
 }
+
+/// 增量消息流条目（`GET /messages/feed` 返回的一条）
+///
+/// 与 [NoticeItem] 的区别：这是「通知推送」用的统一模型，
+/// 私信与系统通知混在同一个流里，带发送者昵称/头像，可直接拼成通知栏文案。
+class FeedItem {
+  /// notice = 系统通知/评论/点赞/回复；chat = 私信
+  final String kind;
+  final String id;
+
+  /// system / comment / reply / like / chat
+  final String type;
+  final String typeTitle;
+  final String title;
+  final String content;
+
+  /// 通知关联对象：评论/点赞是 postId
+  final String refId;
+
+  /// 私信对端 userId
+  final String peerId;
+  final String fromId;
+  final String fromName;
+  final String fromAvatar;
+  final bool isRead;
+  final String createdAt;
+
+  const FeedItem({
+    required this.id,
+    this.kind = 'notice',
+    this.type = 'system',
+    this.typeTitle = '',
+    this.title = '',
+    this.content = '',
+    this.refId = '',
+    this.peerId = '',
+    this.fromId = '',
+    this.fromName = '',
+    this.fromAvatar = '',
+    this.isRead = false,
+    this.createdAt = '',
+  });
+
+  factory FeedItem.fromJson(Map<String, dynamic> j) => FeedItem(
+        id: (j['id'] ?? '').toString(),
+        kind: (j['kind'] ?? 'notice').toString(),
+        type: (j['type'] ?? 'system').toString(),
+        typeTitle: (j['typeTitle'] ?? '').toString(),
+        title: (j['title'] ?? '').toString(),
+        content: (j['content'] ?? '').toString(),
+        refId: (j['refId'] ?? '').toString(),
+        peerId: (j['peerId'] ?? '').toString(),
+        fromId: (j['fromId'] ?? '').toString(),
+        fromName: (j['fromName'] ?? '').toString(),
+        fromAvatar: (j['fromAvatar'] ?? '').toString(),
+        isRead: (j['isRead'] as bool?) ?? false,
+        createdAt: (j['createdAt'] ?? '').toString(),
+      );
+
+  bool get isChat => kind == 'chat';
+
+  /// 官方公告（后台「群发系统通知」type=system）
+  bool get isSystem => type == 'system';
+
+  /// 互动类：评论 / 回复 / 点赞
+  bool get isInteract =>
+      type == 'comment' || type == 'reply' || type == 'like';
+
+  /// 通知栏标题
+  String get pushTitle {
+    if (isChat) return fromName.isEmpty ? '新私信' : fromName;
+    switch (type) {
+      case 'comment':
+        return fromName.isEmpty ? '你的动态有新评论' : '$fromName 评论了你的动态';
+      case 'reply':
+        return fromName.isEmpty ? '你的评论有新回复' : '$fromName 回复了你';
+      case 'like':
+        return fromName.isEmpty ? '有人赞了你的动态' : '$fromName 赞了你的动态';
+      case 'system':
+        return title.isEmpty ? '官方公告' : title;
+      default:
+        return title.isEmpty ? '新通知' : title;
+    }
+  }
+
+  /// 通知栏正文
+  String get pushBody {
+    if (isChat) return content;
+    if (isSystem) return content.isEmpty ? title : content;
+    return content.isEmpty ? title : content;
+  }
+
+  /// 点击后跳转用的 payload
+  ///
+  /// 带上 fromName：点私信通知进聊天页时，标题栏直接显示对方昵称，
+  /// 不用等接口回来才从「钓友」变成真名。
+  Map<String, dynamic> toPayload() => {
+        'kind': kind,
+        'type': type,
+        'id': id,
+        'refId': refId,
+        'peerId': peerId,
+        'fromName': fromName,
+      };
+}
