@@ -32,9 +32,6 @@ import 'package:maplibre_gl/maplibre_gl.dart' as mgl;
 /// maplibre_gl 自带一套 LatLng（不依赖 latlong2），要显式转换
 mgl.LatLng _mapLat(ll.LatLng p) => mgl.LatLng(p.latitude, p.longitude);
 
-/// toScreenLocation 返回 Point<num>，queryRenderedFeatures 要 Point<double>
-Point<double> _dbl(Point<num> p) => Point<double>(p.x.toDouble(), p.y.toDouble());
-
 /// 真实时间等待 + 推进一帧
 ///
 /// integration_test 跑在 LiveTestWidgetsFlutterBinding 上，网络/原生回调
@@ -77,34 +74,78 @@ void _disableRealLocation() {
 
 /// 在屏幕上找到「河流图层被真的画出来」的证据
 ///
-/// 只用几何中点单点查询是不稳的：waters.json 里河流是抽稀过的折线，
-/// 中点可能落在两个采样点之间的长直线上，而线宽只有 4.5px，
-/// 屏幕坐标一像素的误差就查空 —— 之前的失败就是这种假阴性。
-/// 这里沿折线取若干顶点逐个查，任意一个命中即证明：GeoJSON 源被接受、
-/// 图层真的渲染在当前视野里。
-Future<({List hits, Point<num> at})> _probeRiver(
+/// ★ 这里踩过一个很隐蔽的坑，写清楚免得以后又改回去：
+///
+/// 长江的折线横跨 91°E~121°E（约 30 个经度、90 多个顶点）。相机对准
+/// 几何中点放大到 z12 时，视野宽度只有约 0.07 度 —— 也就是说，除了中点
+/// 附近那一两个顶点，**其余顶点本来就该在屏幕外**。
+/// 于是「沿折线取 24 个顶点逐个 toScreenLocation + 查要素」这种写法会
+/// 拿到 `screen=Point(78839, -15182)` 这种量级的坐标（离屏幕几万点），
+/// 查询必然空手而归 —— 但它根本不代表图层坏了。
+///
+/// （更讽刺的是：这条测试曾经「通过」，恰恰是因为那时相机没真放大、
+///   整个长江都在视野里，随便哪个顶点都能查到。定位修好之后才暴露。）
+///
+/// 正确判据：相机中心就落在河流折线的顶点上 → 河流必然穿过视口 →
+/// 直接查**整个视口矩形**，命中即证明 GeoJSON 源被接受、图层真渲染了。
+Future<({List hits, Point<num> at, int onScreen})> _probeRiver(
+  WidgetTester tester,
   mgl.MapLibreMapController ctl,
   WaterBody river,
+  Size mapSize,
 ) async {
   final pts = river.geometry;
-  if (pts.isEmpty) {
-    return (hits: const [], at: const Point<num>(0, 0));
+  if (pts.isEmpty || mapSize.width < 8 || mapSize.height < 8) {
+    return (hits: const [], at: const Point<num>(0, 0), onScreen: 0);
   }
-  final step = pts.length <= 24 ? 1 : (pts.length / 24).ceil();
-  var last = const Point<num>(0, 0);
+
+  // 统计有多少顶点真的落在屏幕里，纯粹为了日志能看出「是视野问题还是图层问题」
+  var onScreen = 0;
+  var nearest = const Point<num>(0, 0);
+  var nearestDist = double.infinity;
+  final step = pts.length <= 40 ? 1 : (pts.length / 40).ceil();
   for (var i = 0; i < pts.length; i += step) {
     final scr = await ctl.toScreenLocation(_mapLat(pts[i]));
-    last = scr;
-    final hits =
-        await ctl.queryRenderedFeatures(_dbl(scr), ['rivers-line'], null);
-    if (hits.isNotEmpty) return (hits: hits, at: scr);
+    final x = scr.x.toDouble();
+    final y = scr.y.toDouble();
+    if (x >= 0 && x <= mapSize.width && y >= 0 && y <= mapSize.height) {
+      onScreen++;
+    }
+    final d = (x - mapSize.width / 2) * (x - mapSize.width / 2) +
+        (y - mapSize.height / 2) * (y - mapSize.height / 2);
+    if (d < nearestDist) {
+      nearestDist = d;
+      nearest = scr;
+    }
   }
-  // 再试几个中间点（有些数据中间点是重复坐标）
-  final mid = pts[pts.length ~/ 2];
-  final scr = await ctl.toScreenLocation(_mapLat(mid));
-  final hits = await ctl.queryRenderedFeatures(_dbl(scr), ['rivers-line'], null);
-  if (hits.isNotEmpty) return (hits: hits, at: scr);
-  return (hits: const [], at: last);
+
+  // 主判据：整个视口矩形里查 rivers-line
+  final rect = Rect.fromLTWH(
+    2,
+    2,
+    (mapSize.width - 4).clamp(1.0, double.infinity),
+    (mapSize.height - 4).clamp(1.0, double.infinity),
+  );
+  final hits = await ctl.queryRenderedFeaturesInRect(rect, ['rivers-line'], null);
+  if (hits.isNotEmpty) return (hits: hits, at: nearest, onScreen: onScreen);
+
+  // 兜底 1：中心附近 44x44（万一线太细、视口边缘被裁）
+  final cRect = Rect.fromCenter(
+    center: Offset(mapSize.width / 2, mapSize.height / 2),
+    width: 44,
+    height: 44,
+  );
+  final cHits =
+      await ctl.queryRenderedFeaturesInRect(cRect, ['rivers-line'], null);
+  if (cHits.isNotEmpty) return (hits: cHits, at: nearest, onScreen: onScreen);
+
+  // 兜底 2：相机中心就是折线顶点，所以屏幕正中心必然压在这条线上
+  final centerHits = await ctl.queryRenderedFeatures(
+    Point<double>(mapSize.width / 2, mapSize.height / 2),
+    ['rivers-line'],
+    null,
+  );
+  return (hits: centerHits, at: nearest, onScreen: onScreen);
 }
 
 /// 确保相机真的停在目标点附近，返回是否成功
@@ -247,11 +288,26 @@ void main() {
     expect(await _ensureCameraAt(tester, ctl!, riverPt, 12), isTrue,
         reason: '相机没能移到「${river.name}」所在位置，后续查询结果不可信');
 
-    final probe = await _probeRiver(ctl!, river);
+    // 地图视口尺寸 —— 整视口矩形查询要用
+    var mapSize = tester.getSize(find.byType(mgl.MapLibreMap));
+    // 兜底：某些情况下 MapLibreMap 尺寸拿不到合理值
+    if (mapSize.width < 8 || mapSize.height < 8) {
+      mapSize = tester.getSize(find.byType(SpotMapGlScreen));
+    }
+    final region = await ctl!.getVisibleRegion();
     // ignore: avoid_print
-    print('[TEST] river="${river.name}" screen=${probe.at} hits=${probe.hits.length}');
+    print('[TEST] mapSize=$mapSize region='
+        '${region.southwest.latitude},${region.southwest.longitude} ~ '
+        '${region.northeast.latitude},${region.northeast.longitude} '
+        'riverCenter=$riverPt verts=${river.geometry.length}');
+
+    final probe = await _probeRiver(tester, ctl!, river, mapSize);
+    // ignore: avoid_print
+    print('[TEST] river="${river.name}" hits=${probe.hits.length} '
+        'onScreenVerts=${probe.onScreen} nearest=$probe.at');
     expect(probe.hits, isNotEmpty,
-        reason: '在「${river.name}」可见范围内所有采样点都查不到 rivers-line 要素，'
+        reason: '相机已停在「${river.name}」折线顶点上，但整视口矩形里查不到 '
+            'rivers-line 要素（视口内顶点数=${probe.onScreen}），'
             '说明河流图层没真正渲染出来');
 
     // ---------------------------------------------------------------- 6. 钓点能命中且 id 对得上
@@ -265,13 +321,19 @@ void main() {
         reason: '相机没能移到钓点「${spot.name}」所在位置');
 
     final spotScreen = await ctl!.toScreenLocation(_mapLat(spotPt));
+    // 和 App 内真实点击逻辑保持一致：以点为中心取 44x44 的可点区域
+    final spotRect = Rect.fromCenter(
+      center: Offset(spotScreen.x.toDouble(), spotScreen.y.toDouble()),
+      width: 44,
+      height: 44,
+    );
     final spotHits =
-        await ctl!.queryRenderedFeatures(_dbl(spotScreen), ['spots-circle'], null);
+        await ctl!.queryRenderedFeaturesInRect(spotRect, ['spots-circle'], null);
     // ignore: avoid_print
     print('[TEST] spot="${spot.name}" id=${spot.id} screen=$spotScreen '
-        'hits=${spotHits.length}');
+        'hits=${spotHits.length} (44x44)');
     expect(spotHits, isNotEmpty,
-        reason: '钓点「${spot.name}」在屏幕 $spotScreen 处查不到要素，'
+        reason: '钓点「${spot.name}」在屏幕 $spotScreen 处 44x44 区域内查不到要素，'
             '点它不会进详情');
 
     final props = spotHits.first is Map
@@ -367,9 +429,14 @@ void main() {
     final pt = _centerOf(river)!;
     expect(await _ensureCameraAt(tester, ctl!, pt, 12), isTrue,
         reason: '压测后相机移不回「${river.name}」');
-    final probe = await _probeRiver(ctl!, river);
+    var stressSize = tester.getSize(find.byType(mgl.MapLibreMap));
+    if (stressSize.width < 8 || stressSize.height < 8) {
+      stressSize = tester.getSize(find.byType(SpotMapGlScreen));
+    }
+    final probe = await _probeRiver(tester, ctl!, river, stressSize);
     // ignore: avoid_print
-    print('[PERF] 压测后仍可命中「${river.name}」: ${probe.hits.length} 个要素');
+    print('[PERF] 压测后仍可命中「${river.name}」: ${probe.hits.length} 个要素 '
+        '(视口内顶点=${probe.onScreen})');
     expect(probe.hits, isNotEmpty, reason: '压测后要素查询失效了');
   });
 
