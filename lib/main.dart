@@ -32,6 +32,12 @@ void main() async {
   // Flutter 绑定初始化（必须在 async main 开头调用）
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 图片解码缓存限制：默认 100MB / 1000 张，地图瓦片一屏几十张很容易顶满，
+  // 在 2GB 内存的老机型上会被系统直接杀掉（表现为「打开地图闪退」）。
+  // 瓦片已有磁盘缓存，重解码成本很低，所以这里压到 64MB / 500 张。
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 64 << 20;
+  PaintingBinding.instance.imageCache.maximumSize = 500;
+
   // 恢复本地登录态：只要用户没点「退出登录」，重开 App 保持在线
   final session = SessionProvider();
   await session.restore();
