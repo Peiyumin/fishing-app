@@ -41,6 +41,8 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  integration_test:
+    sdk: flutter
   flutter_lints: ^4.0.0
 
 # 将 latlong2 强制指向本地路径副本，规避沙箱里 pub 缓存延迟解压与编译的竞态
