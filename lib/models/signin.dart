@@ -12,6 +12,9 @@ class SigninStatus {
   final String rules;
   final List<SigninReward> rewards;
 
+  /// 每日任务（后端按当天真实行为统计，v2.1.16）
+  final List<DailyTask> tasks;
+
   const SigninStatus({
     this.enabled = true,
     this.autoPopup = true,
@@ -24,10 +27,12 @@ class SigninStatus {
     this.pointsName = '积分',
     this.rules = '',
     this.rewards = const [],
+    this.tasks = const [],
   });
 
   factory SigninStatus.fromJson(Map<String, dynamic> j) {
     final list = (j['rewards'] as List?) ?? const [];
+    final t = (j['tasks'] as List?) ?? const [];
     return SigninStatus(
       enabled: (j['enabled'] as num?)?.toInt() == 1,
       autoPopup: (j['autoPopup'] as num?)?.toInt() == 1,
@@ -42,8 +47,71 @@ class SigninStatus {
       rewards: list
           .map((r) => SigninReward.fromJson((r as Map).cast<String, dynamic>()))
           .toList(),
+      tasks: t
+          .map((r) => DailyTask.fromJson((r as Map).cast<String, dynamic>()))
+          .toList(),
     );
   }
+
+  /// 换一份任务列表（领奖 / 签到后局部更新，不整页重拉）
+  SigninStatus copyWith({
+    List<DailyTask>? tasks,
+    int? points,
+    bool? signedToday,
+    int? streak,
+    int? total,
+  }) =>
+      SigninStatus(
+        enabled: enabled,
+        autoPopup: autoPopup,
+        signedToday: signedToday ?? this.signedToday,
+        streak: streak ?? this.streak,
+        total: total ?? this.total,
+        dayIndex: dayIndex,
+        points: points ?? this.points,
+        balance: balance,
+        pointsName: pointsName,
+        rules: rules,
+        rewards: rewards,
+        tasks: tasks ?? this.tasks,
+      );
+}
+
+/// 一条每日任务
+class DailyTask {
+  final String key;
+  final String title;
+  final String desc;
+  final int points;
+  final String icon;
+  final int target;
+  final int progress;
+  final bool done;
+  final bool claimed;
+
+  const DailyTask({
+    required this.key,
+    required this.title,
+    required this.desc,
+    this.points = 0,
+    this.icon = '',
+    this.target = 1,
+    this.progress = 0,
+    this.done = false,
+    this.claimed = false,
+  });
+
+  factory DailyTask.fromJson(Map<String, dynamic> j) => DailyTask(
+        key: (j['key'] as String?) ?? '',
+        title: (j['title'] as String?) ?? '',
+        desc: (j['desc'] as String?) ?? '',
+        points: (j['points'] as num?)?.toInt() ?? 0,
+        icon: (j['icon'] as String?) ?? '',
+        target: (j['target'] as num?)?.toInt() ?? 1,
+        progress: (j['progress'] as num?)?.toInt() ?? 0,
+        done: (j['done'] as bool?) ?? false,
+        claimed: (j['claimed'] as bool?) ?? false,
+      );
 }
 
 /// 单日签到奖励
