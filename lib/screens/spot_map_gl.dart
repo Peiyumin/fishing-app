@@ -763,6 +763,20 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
 
   // ---------------------------------------------------------------- UI
 
+  /// 建图时的初始镜头
+  ///
+  /// ★ 如果定位比建图先完成（模拟器 / 已有定位缓存时几乎总是这样），
+  ///   直接把初始镜头设成当前位置 —— 这是**零成本兜底**：镜头一开始就在
+  ///   正确位置，不必跟 style 加载抢时序。真机上 GPS 冷启动通常慢于建图，
+  ///   那时 initialCameraPosition 还是全国视角，靠 _landCamera 的确认重试补。
+  CameraPosition get _initialCamera {
+    final t = _pendingMove;
+    if (t != null) {
+      return CameraPosition(target: LatLng(t.lat, t.lng), zoom: 13);
+    }
+    return const CameraPosition(target: LatLng(34.5, 108.9), zoom: 4);
+  }
+
   @override
   Widget build(BuildContext context) {
     // 原生层起不来 / 后台配了 dart 内核 → 走老内核
@@ -779,10 +793,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         child: _cfgReady
             ? MapLibreMap(
                 styleString: _stylePath ?? '',
-                initialCameraPosition: const CameraPosition(
-                  target: LatLng(34.5, 108.9),
-                  zoom: 4,
-                ),
+                initialCameraPosition: _initialCamera,
                 compassEnabled: false,
                 rotateGesturesEnabled: false,
                 tiltGesturesEnabled: false,
