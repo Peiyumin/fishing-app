@@ -125,23 +125,27 @@ class NotificationService {
     _inited = true;
     try {
       await NotifyPrefs.load();
-      await _plugin.initialize(
-        const InitializationSettings(
-          android: AndroidInitializationSettings(_icStat),
-          // 启动时不主动弹权限框：等用户真的打开通知开关 / 首次轮询到新消息时再问，
-          // 冷启动就弹权限框是 iOS 审核明确不推荐的做法。
-          iOS: DarwinInitializationSettings(
-            requestAlertPermission: false,
-            requestBadgePermission: false,
-            requestSoundPermission: false,
-          ),
-        ),
-        onDidReceiveNotificationResponse: (resp) {
-          final p = _decode(resp.payload);
-          if (p != null) onTap?.call(p);
-        },
-        onDidReceiveBackgroundNotificationResponse: null,
-      );
+      await _plugin
+          .initialize(
+            const InitializationSettings(
+              android: AndroidInitializationSettings(_icStat),
+              // 启动时不主动弹权限框：等用户真的打开通知开关 / 首次轮询到新消息时再问，
+              // 冷启动就弹权限框是 iOS 审核明确不推荐的做法。
+              iOS: DarwinInitializationSettings(
+                requestAlertPermission: false,
+                requestBadgePermission: false,
+                requestSoundPermission: false,
+              ),
+            ),
+            onDidReceiveNotificationResponse: (resp) {
+              final p = _decode(resp.payload);
+              if (p != null) onTap?.call(p);
+            },
+            onDidReceiveBackgroundNotificationResponse: null,
+          )
+          // 初始化卡住不能拖住 App 启动（表现为冷启动白屏更久）。
+          // 3 秒还没好就当作没通知能力，后面 show 会自然失败并回退到应用内横幅。
+          .timeout(const Duration(seconds: 3));
 
       final android = _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
