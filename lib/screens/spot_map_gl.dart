@@ -67,6 +67,12 @@ class SpotMapGlScreen extends StatefulWidget {
   /// 图层有没有真的加上、按屏幕坐标能不能查到钓点要素。
   static void Function(MapLibreMapController c)? debugOnControllerCreated;
 
+  /// 集成测试钩子：六个业务图层全部加完（或重试放弃）时回调一次
+  ///
+  /// 测试里据此断言 `getLayerIds()` 是否包含全部图层 —— 这是「图层生效」
+  /// 唯一的机器可判定证据，比肉眼看截图可靠。
+  static void Function(MapLibreMapController c)? debugOnLayersReady;
+
   /// 原生内核就绪的超时时长（生产 8 秒；集成测试会放宽，模拟器起得慢）
   static Duration readyTimeout = const Duration(seconds: 8);
 
@@ -125,6 +131,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   bool _layersReady = false;
   bool _rendering = false;
 
+  /// 图层添加失败的重试次数（原生层刚 ready 时偶尔会抛「style 未就绪」）
+  int _renderAttempt = 0;
+
   /// 原生内核起不来 → 自动降级 flutter_map
   bool _fallback = false;
   Timer? _guard;
@@ -160,7 +169,57 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         });
       });
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _locate(silent: true));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // 宿主页（钓点页）已经定位过、并把坐标通过 controller 补发过来了，
+      // 这里就不要再定一次 —— 重复定位等于让用户多等一次 GPS 冷启动，
+      // 表现就是「切到野钓钓点后盯着全国视角好几秒」。
+      if (_pendingMove != null) return;
+      _locate(silent: true);
+    });
+  }
+
+  /// 宿主页（钓点页）刷新后把新钓点并进地图
+  ///
+  /// ★ 修的是「添加新钓点后在地图上点不进详情」的真 bug：
+  ///   以前 `extraSpots` 只在本页 initState 用一次，之后宿主页 `_load()`
+  ///   拿到新钓点重新 build，本页因为 State 没重建，`_spots` / `_spotById`
+  ///   一直是旧快照 —— 新钓点既不显示，也查不到 id，点了自然没反应。
+  @override
+  void didUpdateWidget(covariant SpotMapGlScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.extraSpots, widget.extraSpots)) {
+      _mergeSpots(widget.extraSpots);
+    }
+  }
+
+  /// 把一批钓点并进现有集合（只增不删），然后只更新 GeoJSON source
+  ///
+  /// 用 `setGeoJsonSource` 而不是重建图层：重建会让整层闪一下，
+  /// 而且 addLayer 在同名图层已存在时会直接抛异常。
+  Future<void> _mergeSpots(List<FishingSpot> incoming) async {
+    if (incoming.isEmpty) return;
+    final map = <String, FishingSpot>{for (final s in _spots) s.id: s};
+    var added = 0;
+    for (final s in incoming) {
+      if (s.lat == 0 && s.lng == 0) continue;
+      if (!map.containsKey(s.id)) added++;
+      map[s.id] = s; // 覆盖成最新数据（名称/简介可能在后台改过）
+    }
+    if (added == 0) return; // 没有新钓点，没必要惊动原生层
+    if (!mounted) return;
+    setState(() {
+      _spots = map.values.toList();
+      _spotById = map;
+    });
+    await _updateSpotsSource();
+  }
+
+  Future<void> _updateSpotsSource() async {
+    final c = _map;
+    if (c == null || !_styleReady || !_layersReady) return;
+    try {
+      await c.setGeoJsonSource('spots', _fc(_spotFeatures()));
+    } catch (_) {}
   }
 
   @override
@@ -332,6 +391,46 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     return out;
   }
 
+  /// 钓点要素集合（GeoJSON features）
+  ///
+  /// 抽出来单独一份，是为了「首次加载」和「发布新钓点后增量刷新」走同一条
+  /// 生成路径 —— 两边各写一遍很容易出现「新增的点漏了坐标纠偏」这类不一致。
+  List<Map<String, dynamic>> _spotFeatures() {
+    final feats = <Map<String, dynamic>>[];
+    for (final s in _spots) {
+      final q = _tile.project(ll.LatLng(s.lat, s.lng));
+      feats.add(_feature('Point', [q.longitude, q.latitude], {'id': s.id}));
+    }
+    return feats;
+  }
+
+  /// 幂等加 source：已存在就更新数据，不抛异常
+  ///
+  /// 重试逻辑要靠它 —— `addGeoJsonSource` 遇到同名 source 会抛
+  /// «Source X already exists»，直接重试就永远失败。
+  Future<void> _safeSource(String id, Map<String, dynamic> data) async {
+    final c = _map;
+    if (c == null) return;
+    try {
+      await c.addGeoJsonSource(id, data);
+    } catch (_) {
+      await c.setGeoJsonSource(id, data);
+    }
+  }
+
+  /// 幂等加图层：已存在则跳过（属性由 _applyLayerToggles 控制显隐）
+  Future<void> _safeLayer(
+      String source, String layer, LayerProperties props,
+      {double? minzoom}) async {
+    final c = _map;
+    if (c == null) return;
+    try {
+      await c.addLayer(source, layer, props, minzoom: minzoom);
+    } catch (_) {
+      // 已存在：不重建（重建会闪一下），显隐交给 _applyLayerToggles
+    }
+  }
+
   Future<void> _renderLayers() async {
     final c = _map;
     if (c == null || !_styleReady || _layersReady || _rendering) return;
@@ -360,14 +459,8 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         }));
       }
 
-      final spots = <Map<String, dynamic>>[];
-      for (final s in _spots) {
-        final q = _tile.project(ll.LatLng(s.lat, s.lng));
-        spots.add(_feature('Point', [q.longitude, q.latitude], {'id': s.id}));
-      }
-
-      await c.addGeoJsonSource('lakes', _fc(lakes));
-      await c.addLayer(
+      await _safeSource('lakes', _fc(lakes));
+      await _safeLayer(
           'lakes',
           'lakes-fill',
           FillLayerProperties(
@@ -376,7 +469,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           // 全国视角下几十个湖泊只是几个像素点，画了也看不见，
           // 却要占着原生层的绘制批次；6 级以下交给地图瓦片自带的蓝色水面。
           minzoom: 6);
-      await c.addLayer(
+      await _safeLayer(
           'lakes',
           'lakes-line',
           LineLayerProperties(
@@ -385,8 +478,8 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
               lineOpacity: _layers.lakes ? 0.85 : 0.0),
           minzoom: 6);
 
-      await c.addGeoJsonSource('rivers', _fc(rivers));
-      await c.addLayer(
+      await _safeSource('rivers', _fc(rivers));
+      await _safeLayer(
           'rivers',
           'rivers-line',
           LineLayerProperties(
@@ -395,15 +488,15 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
               lineOpacity: _layers.rivers ? 0.5 : 0.0),
           minzoom: 6);
 
-      await c.addGeoJsonSource('zones', _fc(zones));
-      await c.addLayer(
+      await _safeSource('zones', _fc(zones));
+      await _safeLayer(
           'zones',
           'zones-fill',
           FillLayerProperties(
               fillColor: '#E5484D',
               fillOpacity: _layers.noFishingZones ? 0.14 : 0.0),
           minzoom: 5);
-      await c.addLayer(
+      await _safeLayer(
           'zones',
           'zones-line',
           LineLayerProperties(
@@ -413,8 +506,8 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
               lineOpacity: _layers.noFishingZones ? 0.85 : 0.0),
           minzoom: 5);
 
-      await c.addGeoJsonSource('spots', _fc(spots));
-      await c.addLayer(
+      await _safeSource('spots', _fc(_spotFeatures()));
+      await _safeLayer(
           'spots',
           'spots-circle',
           CircleLayerProperties(
@@ -426,9 +519,21 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           minzoom: 4);
 
       _layersReady = true;
+      _renderAttempt = 0;
       await _drawMe();
+      // 集成测试：图层全部加完后回调一次，断言 6 个图层真的存在
+      SpotMapGlScreen.debugOnLayersReady?.call(c);
     } catch (_) {
-      // 图层加失败不影响底图
+      // 原生层刚 ready 的一瞬间可能还没把 style 状态同步好，addLayer 会抛异常。
+      // 旧写法吞掉就再也不重试 → 表现就是「图层整个不生效」。
+      // 这里退避重试，最多 3 次（配合 _safeSource/_safeLayer，重试是幂等的）。
+      _layersReady = false;
+      if (_renderAttempt < 3) {
+        _renderAttempt++;
+        Future.delayed(const Duration(milliseconds: 400), () {
+          if (mounted) _renderLayers();
+        });
+      }
     } finally {
       _rendering = false;
     }
@@ -471,6 +576,13 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
 
   void _moveTo(double lat, double lng) {
     _pendingMove = (lat: lat, lng: lng);
+    // 宿主页定位成功也会走这条路径（controller 补发），
+    // 顺手记下「我的位置」，好把蓝点画上 —— 否则镜头对了但看不到自己在哪
+    if (_myLat != lat || _myLng != lng) {
+      _myLat = lat;
+      _myLng = lng;
+      _drawMe();
+    }
     _flushPendingMove();
   }
 
@@ -478,10 +590,15 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     final t = _pendingMove;
     final c = _map;
     if (t == null || c == null) return;
+    // ★ 样式没加载完就不动镜头。
+    //   此时 animateCamera 会被随后的 style 应用覆盖掉（镜头弹回
+    //   initialCameraPosition 的 z4 全国视角）—— 表现就是「定位闪一下又没了」。
+    //   等 onStyleLoadedCallback 里再补一次才是稳定的。
+    if (!_styleReady) return;
     _pendingMove = null;
     c.animateCamera(
       CameraUpdate.newLatLngZoom(LatLng(t.lat, t.lng), 13),
-      duration: const Duration(milliseconds: 500),
+      duration: const Duration(milliseconds: 400),
     );
   }
 
@@ -540,21 +657,44 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   ///
   /// GeoJSON 加进去的 circle 图层没有 onCircleTapped（那是 AnnotationManager
   /// 才有的回调），只能 queryRenderedFeatures 按屏幕坐标查。
+  ///
+  /// ★ 用 44×44 的矩形查询，不是单点查询。
+  ///   钓点圆直径只有 5.5×2 + 描边 2×2 = 15 px，手指点偏几个像素就查不到，
+  ///   用户体验上就是「点了没反应、进不去详情」。44pt 是 iOS/Android
+  ///   一致的最小可点区域标准，正好让命中率接近 100%。
   Future<void> _onMapClick(Point<double> point) async {
     final c = _map;
-    if (c == null) return;
+    if (c == null || !_layers.spots || !_layersReady) return;
+    const half = 22.0;
+    final rect = Rect.fromLTRB(
+        point.x - half, point.y - half, point.x + half, point.y + half);
+    List feats = const [];
     try {
-      final feats = await c.queryRenderedFeatures(point, ['spots-circle'], null);
-      if (feats.isEmpty) return;
-      final f = feats.first;
-      final props = (f is Map) ? f['properties'] : null;
-      final id = (props is Map) ? props['id'] : null;
-      final s = id == null ? null : _spotById[id.toString()];
-      if (s != null && mounted) {
-        Navigator.of(context)
-            .push(MaterialPageRoute(builder: (_) => SpotDetailScreen(spot: s)));
+      feats = await c.queryRenderedFeaturesInRect(rect, ['spots-circle'], null);
+      if (feats.isEmpty) {
+        // 某些平台实现矩形查询不稳定，退回单点再试一次
+        feats = await c.queryRenderedFeatures(point, ['spots-circle'], null);
       }
-    } catch (_) {}
+    } catch (_) {
+      return;
+    }
+    if (feats.isEmpty) return;
+
+    // 命中多条时（密集钓点区）取第一条能对上 id 的，避免短路失败
+    for (final f in feats) {
+      if (f is! Map) continue;
+      final props = f['properties'];
+      if (props is! Map) continue;
+      final id = props['id'];
+      if (id == null) continue;
+      final s = _spotById[id.toString()];
+      if (s == null) continue;
+      if (mounted) {
+        Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => SpotDetailScreen(spot: s)));
+      }
+      return;
+    }
   }
 
   // ---------------------------------------------------------------- UI
