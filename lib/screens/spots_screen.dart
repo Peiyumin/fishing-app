@@ -5,6 +5,7 @@ import '../app_theme.dart';
 
 import '../models/fishing_spot.dart';
 import '../services/location_service.dart';
+import '../services/map_config_service.dart';
 import '../services/session_provider.dart';
 import '../services/spot_service.dart';
 import '../utils/coord_transform.dart';
@@ -14,6 +15,7 @@ import 'auth_screen.dart';
 import 'publish_spot_screen.dart';
 import 'publish_venue_screen.dart';
 import 'spot_detail_screen.dart';
+import 'spot_map_gl.dart';
 import 'spot_map_screen.dart';
 
 /// 钓点页：双 Tab
@@ -52,6 +54,10 @@ class _SpotsScreenState extends State<SpotsScreen>
       if (mounted) setState(() {});
     });
     _load();
+    // 先拉后台地图配置（决定用原生 GL 还是 flutter_map 内核），拉到了再重建
+    MapConfigService.load().then((_) {
+      if (mounted) setState(() {});
+    });
     // 首帧后再定位：避免在 Flutter 首帧之前就弹系统权限框（iOS 会吞掉），
     // 也不至于在没有地图实例时去操作 MapController。
     WidgetsBinding.instance.addPostFrameCallback((_) => _locate(silent: true));
@@ -498,11 +504,19 @@ class _SpotsScreenState extends State<SpotsScreen>
       children: [
         // 地图本体（嵌入模式：顶部无搜索栏、底部统计条由水面/钓点/渔获胶囊承担）
         Positioned.fill(
-          child: SpotMapScreen(
-            embedded: true,
-            extraSpots: _wild,
-            controller: _mapCtrl,
-          ),
+          // 渲染内核：默认原生 MapLibre（GPU、自带瓦片缓存，拖动不卡），
+          // 后台「地图底图 → 渲染内核」可切回 flutter_map 兜底
+          child: MapConfigService.useNativeEngine
+              ? SpotMapGlScreen(
+                  embedded: true,
+                  extraSpots: _wild,
+                  controller: _mapCtrl,
+                )
+              : SpotMapScreen(
+                  embedded: true,
+                  extraSpots: _wild,
+                  controller: _mapCtrl,
+                ),
         ),
         // 左侧竖排信息条（不再横着压在标准图上方，视野让给地图）
         Positioned(
@@ -567,83 +581,6 @@ class _SpotsScreenState extends State<SpotsScreen>
           ),
         ),
       ],
-    );
-  }
-
-
-  /// 地图标记气泡：野钓点简要信息 + 进详情
-  void _showWildSheet(FishingSpot s) {
-    final distance = _distanceText(s);
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.location_on, color: AppTheme.danger),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(s.name,
-                        style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold)),
-                  ),
-                  if (distance != null)
-                    Text('距我 $distance',
-                        style: const TextStyle(
-                            fontSize: 12, color: AppTheme.accent)),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(s.description.isEmpty ? '钓友暂未填写说明' : s.description,
-                  style: const TextStyle(fontSize: 13, color: Colors.black87)),
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  const Icon(Icons.star, size: 14, color: AppTheme.star),
-                  const SizedBox(width: 3),
-                  Text('${s.rating.toStringAsFixed(1)} 分',
-                      style: const TextStyle(fontSize: 12)),
-                  const SizedBox(width: 14),
-                  const Icon(Icons.set_meal_outlined,
-                      size: 14, color: Colors.grey),
-                  const SizedBox(width: 3),
-                  Expanded(
-                    child: Text(
-                        s.fish.isNotEmpty ? s.fish : '鱼种待补充',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 12, color: Colors.grey)),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _openDetail(s);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primary,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: const Text('查看详情'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
