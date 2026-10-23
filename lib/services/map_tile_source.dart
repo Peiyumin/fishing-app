@@ -258,7 +258,11 @@ class MapLayerState {
 
   MapLayerState({
     this.satellite = true,
-    this.roadLabels = true,
+    // 默认**不叠**注记层：卫星影像 + 地名注记会同时请求两套瓦片，
+    // 每屏请求量直接翻倍（~20 → ~40 张），拖动发涩主要来自这里。
+    // 竞品「钓鱼佬」的卫星 / 路网也是互斥的两个选项，从不同时挂两层。
+    // 需要看地名时在「图层」面板打开即可。
+    this.roadLabels = false,
     this.crosshair = false,
     this.noFishingZones = true,
     this.rivers = true,
