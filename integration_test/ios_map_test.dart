@@ -74,6 +74,38 @@ void _disableRealLocation() {
   };
 }
 
+/// 在屏幕上找到「河流图层被真的画出来」的证据
+///
+/// 只用几何中点单点查询是不稳的：waters.json 里河流是抽稀过的折线，
+/// 中点可能落在两个采样点之间的长直线上，而线宽只有 4.5px，
+/// 屏幕坐标一像素的误差就查空 —— 之前的失败就是这种假阴性。
+/// 这里沿折线取若干顶点逐个查，任意一个命中即证明：GeoJSON 源被接受、
+/// 图层真的渲染在当前视野里。
+Future<({List hits, Point<num> at})> _probeRiver(
+  mgl.MapLibreMapController ctl,
+  WaterBody river,
+) async {
+  final pts = river.geometry;
+  if (pts.isEmpty) {
+    return (hits: const [], at: const Point<num>(0, 0));
+  }
+  final step = pts.length <= 24 ? 1 : (pts.length / 24).ceil();
+  var last = const Point<num>(0, 0);
+  for (var i = 0; i < pts.length; i += step) {
+    final scr = await ctl.toScreenLocation(_mapLat(pts[i]));
+    last = scr;
+    final hits =
+        await ctl.queryRenderedFeatures(_dbl(scr), ['rivers-line'], null);
+    if (hits.isNotEmpty) return (hits: hits, at: scr);
+  }
+  // 再试几个中间点（有些数据中间点是重复坐标）
+  final mid = pts[pts.length ~/ 2];
+  final scr = await ctl.toScreenLocation(_mapLat(mid));
+  final hits = await ctl.queryRenderedFeatures(_dbl(scr), ['rivers-line'], null);
+  if (hits.isNotEmpty) return (hits: hits, at: scr);
+  return (hits: const [], at: last);
+}
+
 ll.LatLng? _centerOf(WaterBody w) {
   if (w.geometry.isEmpty) return null;
   return w.geometry[w.geometry.length ~/ 2];
@@ -165,13 +197,11 @@ void main() {
     await ctl!.animateCamera(mgl.CameraUpdate.newLatLngZoom(_mapLat(riverPt), 12));
     await wait(tester, 6000);
 
-    final riverScreen = await ctl!.toScreenLocation(_mapLat(riverPt));
-    final riverHits = await ctl!
-        .queryRenderedFeatures(_dbl(riverScreen), ['rivers-line'], null);
+    final probe = await _probeRiver(ctl!, river);
     // ignore: avoid_print
-    print('[TEST] river="${river.name}" screen=$riverScreen hits=${riverHits.length}');
-    expect(riverHits, isNotEmpty,
-        reason: '对着「${river.name}」中心查不到 rivers-line 要素，'
+    print('[TEST] river="${river.name}" screen=${probe.at} hits=${probe.hits.length}');
+    expect(probe.hits, isNotEmpty,
+        reason: '在「${river.name}」可见范围内所有采样点都查不到 rivers-line 要素，'
             '说明河流图层没真正渲染出来');
 
     // ---------------------------------------------------------------- 6. 钓点能命中且 id 对得上
@@ -279,11 +309,9 @@ void main() {
     await ctl!.animateCamera(mgl.CameraUpdate.newLatLngZoom(_mapLat(pt), 12),
         duration: const Duration(milliseconds: 300));
     await wait(tester, 5000);
-    final screen = await ctl!.toScreenLocation(_mapLat(pt));
-    final hits =
-        await ctl!.queryRenderedFeatures(_dbl(screen), ['rivers-line'], null);
+    final probe = await _probeRiver(ctl!, river);
     // ignore: avoid_print
-    print('[PERF] 压测后仍可命中「${river.name}」: ${hits.length} 个要素');
-    expect(hits, isNotEmpty, reason: '压测后要素查询失效了');
+    print('[PERF] 压测后仍可命中「${river.name}」: ${probe.hits.length} 个要素');
+    expect(probe.hits, isNotEmpty, reason: '压测后要素查询失效了');
   });
 }
