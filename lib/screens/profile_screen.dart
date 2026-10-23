@@ -199,6 +199,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       case 'notice':
         CenterToast.show(context, '暂无新消息');
         return;
+      case 'notify':
+        Navigator.of(context).pushNamed('/notify-settings');
+        return;
       case 'settings':
         _openEdit();
         return;
@@ -986,6 +989,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         return Icons.photo_camera_outlined;
       case 'notice':
         return Icons.notifications_none;
+      case 'bell':
+        return Icons.notifications_active_outlined;
       case 'help':
         return Icons.help_outline;
       case 'wallet':
