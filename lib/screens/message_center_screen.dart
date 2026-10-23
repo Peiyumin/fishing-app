@@ -89,6 +89,11 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
           decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.notifications_none, color: Colors.white),
+            tooltip: '通知设置',
+            onPressed: () => Navigator.of(context).pushNamed('/notify-settings'),
+          ),
           TextButton(
             onPressed: _markAllRead,
             child: const Text(
