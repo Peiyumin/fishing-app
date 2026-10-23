@@ -161,6 +161,13 @@ class _SpotsScreenState extends State<SpotsScreen>
       ),
       body: TabBarView(
         controller: _tabController,
+        // ★ 禁止左右滑动切页，只能用顶部胶囊切换。
+        //   两个原因：
+        //   ① 第 2 个 Tab 是原生 GL 地图（Flutter PlatformView），横向拖动
+        //      会被 TabBarView 的滚动识别器抢走，地图既拖不动也会卡在
+        //      「手势被截一半」的状态；
+        //   ② 产品上地图页需要整屏响应拖动 / 双指缩放，不能有翻页手势。
+        physics: const NeverScrollableScrollPhysics(),
         children: [
           _buildVenueTab(),
           _buildWildTab(),
