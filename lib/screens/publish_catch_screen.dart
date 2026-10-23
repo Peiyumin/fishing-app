@@ -134,11 +134,24 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
       MaterialPageRoute(
         builder: (_) => const WatermarkCameraScreen(
           returnResult: true,
-          title: '渔获拍照',
+          title: '记渔获',
         ),
       ),
     );
     if (!mounted || path == null || path.isEmpty) return;
+    // 相机页长按录像是「视频」，要落到视频位（与照片互斥）
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.mp4') || lower.endsWith('.mov')) {
+      final hadPhotos = _images.isNotEmpty;
+      setState(() {
+        _video = path;
+        _images.clear();
+      });
+      if (hadPhotos && mounted) {
+        CenterToast.show(context, '已换成视频，之前的照片已移除（照片与视频不能混发）');
+      }
+      return;
+    }
     setState(() => _images.add(path));
   }
 
