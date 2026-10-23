@@ -109,14 +109,14 @@ Future<({List hits, Point<num> at})> _probeRiver(
 
 /// 确保相机真的停在目标点附近，返回是否成功
 ///
-/// ★ CI 上出现过这种假阴性：`animateCamera` 之后 6 秒，
-///   `toScreenLocation(长江中点)` 返回 `Point(83086, -16025)` ——
-///   一个远在屏幕外的坐标，于是后面所有查询都是 0 命中，
-///   看着像「河流图层没生效」，其实是**相机没真正移动到位**。
-///   style 刚加载完的那段时间里，`toScreenLocation` 会返回未就绪矩阵算出的
-///   垃圾值；同一份代码上一次跑是通过的（screen=196,426），说明是时序问题。
-///   这里改成「移动 → 等 → 反算屏幕坐标是否合理 → 不合理再移一次」，
-///   最多 8 轮，让这条断言只反映图层本身对不对。
+/// ★ 两个 CI 假阴性都出在这里，所以判据做得很硬：
+///
+///   ① `animateCamera` 的返回值是 `Future<bool?>`，**false 表示原生层没接受
+///      这次移动**（正在应用 style / 正在渲染时会被拒）。忽略了返回值就会
+///      以为「移过去了」，其实镜头纹丝不动。这里失败立刻退回 `moveCamera`。
+///   ② 光看「目标点在屏幕内」不够：z4 全国视角下长江中点也在屏幕内。
+///      改用 `getVisibleRegion()` 判断 —— 视野经度跨度 < 1 度才算真的放大到
+///      街区级；再叠加中心点匹配，才能证明相机确实落在目标上。
 Future<bool> _ensureCameraAt(
   WidgetTester tester,
   mgl.MapLibreMapController ctl,
@@ -124,17 +124,33 @@ Future<bool> _ensureCameraAt(
   double zoom,
 ) async {
   for (var i = 0; i < 8; i++) {
-    await ctl.animateCamera(
-      mgl.CameraUpdate.newLatLngZoom(_mapLat(target), zoom),
-      duration: const Duration(milliseconds: 1),
-    );
+    final upd = mgl.CameraUpdate.newLatLngZoom(_mapLat(target), zoom);
+    var ok = false;
+    try {
+      ok = (await ctl.animateCamera(upd,
+              duration: const Duration(milliseconds: 1))) ??
+          false;
+    } catch (_) {}
+    if (!ok) {
+      try {
+        await ctl.moveCamera(upd);
+      } catch (_) {}
+    }
     await wait(tester, i == 0 ? 5000 : 1800);
     try {
-      final scr = await ctl.toScreenLocation(_mapLat(target));
-      // 屏幕坐标合理 = 落在屏幕尺寸的几十倍以内；83086 这种就是坏的
-      if (scr.x.abs() < 4000 && scr.y.abs() < 4000) return true;
+      final r = await ctl.getVisibleRegion();
+      final spanLng =
+          (r.northeast.longitude - r.southwest.longitude).abs();
+      final cLat = (r.northeast.latitude + r.southwest.latitude) / 2;
+      final cLng = (r.northeast.longitude + r.southwest.longitude) / 2;
+      if (spanLng < 1.0 &&
+          (cLat - target.latitude).abs() < 0.05 &&
+          (cLng - target.longitude).abs() < 0.05) {
+        return true;
+      }
       // ignore: avoid_print
-      print('[TEST] 相机未到位（第 ${i + 1} 轮）screen=$scr，重试');
+      print('[TEST] 相机未到位(第 ${i + 1} 轮) '
+          'span=$spanLng center=$cLat,$cLng animateOk=$ok');
     } catch (_) {}
   }
   return false;
@@ -310,10 +326,19 @@ void main() {
     for (var round = 0; round < 3; round++) {
       for (final t in targets) {
         final sw = Stopwatch()..start();
-        await ctl!.animateCamera(
-          mgl.CameraUpdate.newLatLngZoom(mgl.LatLng(t.$1, t.$2), t.$3),
-          duration: const Duration(milliseconds: 350),
-        );
+        final upd = mgl.CameraUpdate.newLatLngZoom(mgl.LatLng(t.$1, t.$2), t.$3);
+        // 同样要检查返回值：被拒绝的移动等于没跳，压测就白跑了
+        var ok = false;
+        try {
+          ok = (await ctl!.animateCamera(upd,
+                  duration: const Duration(milliseconds: 350))) ??
+              false;
+        } catch (_) {}
+        if (!ok) {
+          try {
+            await ctl!.moveCamera(upd);
+          } catch (_) {}
+        }
         // 给原生层时间下瓦片、解码、上屏
         await wait(tester, 1200);
         cost.add(sw.elapsedMilliseconds);
@@ -453,11 +478,9 @@ void main() {
     //    这样「查询结果从空 → 有」就只可能是新注入的钓点造成的
     const newLat = 29.9500;
     const newLng = 122.4000;
-    await ctl!.animateCamera(
-      mgl.CameraUpdate.newLatLngZoom(mgl.LatLng(newLat, newLng), 15),
-      duration: const Duration(milliseconds: 300),
-    );
-    await wait(tester, 4000);
+    expect(await _ensureCameraAt(tester, ctl!, ll.LatLng(newLat, newLng), 15),
+        isTrue,
+        reason: '相机没能移到测试海域');
 
     final before = await ctl!.toScreenLocation(mgl.LatLng(newLat, newLng));
     final beforeHits = await ctl!.queryRenderedFeaturesInRect(
