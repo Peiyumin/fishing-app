@@ -32,6 +32,64 @@ class _Pal {
   static const fall = Color(0xFF5FD3AE);
 }
 
+/// 小数小时 → 「HH:mm」（如 6.7 → 06:42）
+String _hm(double hourDouble) {
+  final total = (hourDouble * 60).round();
+  final hh = (total ~/ 60) % 24;
+  final mm = total % 60;
+  return '${hh.toString().padLeft(2, '0')}:${mm.toString().padLeft(2, '0')}';
+}
+
+/// 黄金时段显示串（如 "05:00-08:00"）→ 覆盖小时集合（含跨零点窗口）
+Set<int> _goldenHoursFrom(List<String> windows) {
+  final s = <int>{};
+  for (final w in windows) {
+    final m = RegExp(r'(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})').firstMatch(w);
+    if (m == null) continue;
+    final a = int.parse(m.group(1)!);
+    final b = int.parse(m.group(3)!);
+    if (b > a) {
+      for (var h = a; h < b; h++) {
+        s.add(h % 24);
+      }
+    } else {
+      for (var h = a; h < 24; h++) {
+        s.add(h);
+      }
+      for (var h = 0; h < b; h++) {
+        s.add(h);
+      }
+    }
+  }
+  return s;
+}
+
+/// 当天日出 / 日落时刻（返回本地小时小数，如 6.7 表示 06:42）。
+/// NOAA 简化太阳位置算法，与天文年历偏差约 ±2 分钟，做图标/标识足够。
+/// 高纬度极昼 / 极夜（cosω0 越界）兜底返回 (6, 18)。
+(double, double) _sunTimes(DateTime date, double lat, double lng) {
+  double rad(double d) => d * math.pi / 180;
+  // 当天 00:00（UT）的儒略日；n 为「距 2000-01-01 的天数」，向上取整
+  final midnightUtc = DateTime.utc(date.year, date.month, date.day);
+  final jd = midnightUtc.millisecondsSinceEpoch / 86400000.0 + 2440587.5;
+  final n = (jd - 2451545.0 + 0.0008).ceil();
+  final jStar = n - lng / 360.0; // 该经度的平太阳正午
+  final m = rad((357.5291 + 0.98560028 * jStar) % 360);
+  final c = 1.9148 * math.sin(m) +
+      0.0200 * math.sin(2 * m) +
+      0.0003 * math.sin(3 * m);
+  final lambda = rad((m * 180 / math.pi + c + 180 + 102.9372) % 360);
+  final jTransit =
+      2451545.0 + jStar + 0.0053 * math.sin(m) - 0.0069 * math.sin(2 * lambda);
+  final delta = math.asin(math.sin(lambda) * math.sin(rad(23.44)));
+  final cosOmega = (math.sin(rad(-0.83)) - math.sin(rad(lat)) * math.sin(delta)) /
+      (math.cos(rad(lat)) * math.cos(delta));
+  if (cosOmega.isNaN || cosOmega > 1 || cosOmega < -1) return (6.0, 18.0);
+  final omega = math.acos(cosOmega) * 180 / math.pi;
+  double localH(double j) => ((j - 2440587.5) * 24.0 + 8.0) % 24.0;
+  return (localH(jTransit - omega / 360.0), localH(jTransit + omega / 360.0));
+}
+
 /// 钓鱼天气预报：鱼种 × 钓法 × 逐小时鱼情
 class WeatherScreen extends StatefulWidget {
   const WeatherScreen({super.key});
@@ -224,6 +282,12 @@ class _WeatherScreenState extends State<WeatherScreen> {
       ));
     }
 
+    // 黄金窗口期（当天评分最高的连续 3 小时）→ 逐时表打 ★ 标
+    final gwHours =
+        _goldenHoursFrom(_goldenForDay(b, day.date, sp, mode, metrics, idxOf));
+    // 当天日出 / 日落时刻（本地小时数）→ 夜间图标判定 + 日升日落标识
+    final (srH, ssH) = _sunTimes(day.date, _lat, _lng);
+
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.only(bottom: 30),
@@ -236,6 +300,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
           mode: mode,
           lat: _lat,
           lng: _lng,
+          // 夜间口径与逐时表一致：19:00 起到次日日出前算夜间
+          isNight: dayIdx == 0 &&
+              (DateTime.now().hour >= 19 || DateTime.now().hour < srH),
         ),
         const SizedBox(height: 10),
         _DateStrip(
@@ -272,6 +339,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
           mode: mode,
           lat: _lat,
           lng: _lng,
+          goldenHours: gwHours,
+          sunriseH: srH,
+          sunsetH: ssH,
         ),
       ],
     );
@@ -856,6 +926,9 @@ class _NowCard extends StatelessWidget {
   final FishingMode mode;
   final double lat;
   final double lng;
+
+  /// 当前是否夜间（19:00 起到次日日出前）——决定大图标用太阳还是月亮
+  final bool isNight;
   const _NowCard({
     required this.bundle,
     required this.metrics,
@@ -863,6 +936,7 @@ class _NowCard extends StatelessWidget {
     required this.mode,
     required this.lat,
     required this.lng,
+    this.isNight = false,
   });
 
   @override
@@ -917,8 +991,8 @@ class _NowCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Wmo.icon(bundle.curCode),
-                  size: 38, color: Wmo.color(bundle.curCode)),
+              Icon(Wmo.icon(bundle.curCode, day: !isNight),
+                  size: 38, color: Wmo.color(bundle.curCode, day: !isNight)),
               const SizedBox(width: 10),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1420,12 +1494,23 @@ class _HourTable extends StatelessWidget {
   final FishingMode mode;
   final double lat;
   final double lng;
+
+  /// 黄金窗口期覆盖的小时集合（当天评分最高的连续 3 小时窗口）
+  final Set<int> goldenHours;
+
+  /// 当天日出 / 日落时刻（本地小时数，小数，如 6.7 = 06:42）
+  final double sunriseH;
+  final double sunsetH;
+
   const _HourTable({
     required this.rows,
     this.nowHour,
     required this.mode,
     required this.lat,
     required this.lng,
+    this.goldenHours = const {},
+    this.sunriseH = 6.0,
+    this.sunsetH = 18.0,
   });
 
   static const int _fTime = 28;
@@ -1500,8 +1585,15 @@ class _HourTable extends StatelessWidget {
 
   Widget _row(int i, _HourRow r) {
     final h = r.h;
-    final isDay = h.time.hour >= 6 && h.time.hour < 18;
+    // 夜间口径：晚 19:00 起至次日日出为止（用户明确要求），
+    // 日出前的小时即使 >=6 点也算夜间（冬季日出晚，天确实还没亮）
+    final isDay = h.time.hour >= sunriseH && h.time.hour < 19;
     final isNow = nowHour != null && h.time.hour == nowHour;
+
+    // 日升 / 日落标识：落在该小时行内就显示（图标 + 时刻）
+    final showSunrise = sunriseH.floor() == h.time.hour;
+    final showSunset = sunsetH.floor() == h.time.hour;
+    final isGolden = goldenHours.contains(h.time.hour);
 
     // 气温冷热标签
     Widget? tempTag;
@@ -1555,11 +1647,15 @@ class _HourTable extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
       decoration: BoxDecoration(
+        // 当前时间行：明显提亮 + 左侧金色竖条，下拉浏览时一眼定位「现在」
         color: isNow
-            ? const Color(0xFF17324A)
+            ? const Color(0xFF23456B)
             : (i.isEven ? Colors.transparent : const Color(0x08FFFFFF)),
-        border: const Border(
-          bottom: BorderSide(color: _Pal.line, width: 0.6),
+        border: Border(
+          bottom: const BorderSide(color: _Pal.line, width: 0.6),
+          left: isNow
+              ? const BorderSide(color: _Pal.gold, width: 3)
+              : BorderSide.none,
         ),
       ),
       child: Row(
@@ -1569,18 +1665,57 @@ class _HourTable extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(tl.$1,
+                Text(isNow ? '现在' : tl.$1,
                     maxLines: 1,
-                    style: const TextStyle(
-                        color: _Pal.muted, fontSize: 8.5, height: 1.1)),
+                    style: TextStyle(
+                        color: isNow ? _Pal.gold : _Pal.muted,
+                        fontSize: 8.5,
+                        height: 1.1,
+                        fontWeight:
+                            isNow ? FontWeight.w700 : FontWeight.w400)),
                 const SizedBox(height: 1),
                 Text(tl.$2,
                     maxLines: 1,
-                    style: const TextStyle(
-                        color: _Pal.txt,
+                    style: TextStyle(
+                        color: isNow ? _Pal.gold : _Pal.txt,
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                         height: 1.1)),
+                // 日升 / 日落标识（带具体时刻）
+                if (showSunrise || showSunset) ...[
+                  const SizedBox(height: 2),
+                  // 时间列很窄（320dp 下仅约 39px），用 FittedBox 自动缩放，
+                  // 避免「日出 06:21」把表格撑出横向溢出
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                            showSunrise
+                                ? Icons.wb_twilight
+                                : Icons.brightness_3,
+                            size: 9,
+                            color: showSunrise
+                                ? _Pal.gold
+                                : const Color(0xFFFF9A5A)),
+                        const SizedBox(width: 1),
+                        Text(
+                            showSunrise
+                                ? '日出${_hm(sunriseH)}'
+                                : '日落${_hm(sunsetH)}',
+                            maxLines: 1,
+                            softWrap: false,
+                            style: TextStyle(
+                                color: showSunrise
+                                    ? _Pal.gold
+                                    : const Color(0xFFFF9A5A),
+                                fontSize: 7.5,
+                                height: 1.1)),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -1685,6 +1820,30 @@ class _HourTable extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // 黄金窗口期标记：金色 ★ + 「黄金」小签
+                if (isGolden)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 3, vertical: 0.5),
+                    decoration: BoxDecoration(
+                      color: _Pal.gold.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(3),
+                      border: Border.all(color: _Pal.gold.withOpacity(0.45)),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.star, size: 8, color: _Pal.gold),
+                        SizedBox(width: 1),
+                        Text('黄金',
+                            style: TextStyle(
+                                color: _Pal.gold,
+                                fontSize: 7.5,
+                                height: 1.1)),
+                      ],
+                    ),
+                  ),
                 Text('$sc',
                     maxLines: 1,
                     softWrap: false,
