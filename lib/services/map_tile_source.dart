@@ -161,6 +161,9 @@ class TileSource {
   /// 天地图/高德给到 18 级足够钓点场景使用。
   double get maxZoom => 18;
 
+  /// 瓦片服务真实可用的最大层级（TileLayer.maxNativeZoom 要 int）
+  int get maxNativeZoom => maxZoom.toInt();
+
   /// 当前底图坐标系是否是 GCJ-02（高德）——决定叠加物要不要纠偏
   bool get isGcj02 => kind == TileSourceKind.gaode;
 
