@@ -1,7 +1,7 @@
 name: fishing_app
 description: 垂钓社区 App —— 钓鱼天气、钓点导航、渔获分享（Flutter 双端）
 publish_to: 'none'
-version: 2.1.14+24
+version: 2.1.15+25
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -18,6 +18,8 @@ dependencies:
   cached_network_image: ^3.3.1
   # 发布时选图/拍照/选视频
   image_picker: ^1.1.2
+  # App 内相机（渔获拍照：全屏取景 + 快门 + 前后摄切换 + 长按录像）
+  camera: ^0.11.0
   # 动态视频播放
   video_player: ^2.8.0
   # 启动广告点击跳转外部链接
