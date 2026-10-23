@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
 
 import '../models/fishing_spot.dart';
 import '../services/location_service.dart';
@@ -16,6 +14,7 @@ import 'auth_screen.dart';
 import 'publish_spot_screen.dart';
 import 'publish_venue_screen.dart';
 import 'spot_detail_screen.dart';
+import 'spot_map_screen.dart';
 
 /// 钓点页：双 Tab
 ///   ① 本地钓场：图2 样式卡片列表（封面 / 星级 / 标签 / 地址 / 距离 / 收费 / 简介）
@@ -30,7 +29,7 @@ class SpotsScreen extends StatefulWidget {
 class _SpotsScreenState extends State<SpotsScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
-  final MapController _mapController = MapController();
+  final SpotMapController _mapCtrl = SpotMapController();
 
   List<FishingSpot> _venues = []; // 本地钓场（kind=venue）
   List<FishingSpot> _shops = []; // 渔具店（kind=shop）
@@ -48,6 +47,10 @@ class _SpotsScreenState extends State<SpotsScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    // 左右滑动切换时同步胶囊高亮
+    _tabController.addListener(() {
+      if (mounted) setState(() {});
+    });
     _load();
     // 首帧后再定位：避免在 Flutter 首帧之前就弹系统权限框（iOS 会吞掉），
     // 也不至于在没有地图实例时去操作 MapController。
@@ -85,14 +88,9 @@ class _SpotsScreenState extends State<SpotsScreen>
         _myLat = pos.latitude;
         _myLng = pos.longitude;
       });
-      // 卫星地图居中到当前位置（WGS-84 → GCJ-02 后再定位）
-      // 野钓 Tab 还没渲染时 MapController 未挂载，move 会抛错，这里单独兜住
-      try {
-        final g = CoordTransform.wgs84ToGcj02(pos.latitude, pos.longitude);
-        _mapController.move(LatLng(g[0], g[1]), 13);
-      } catch (_) {
-        // 地图未就绪：坐标已拿到，切到野钓 Tab 时会用当前位置作为中心
-      }
+      // 卫星地图居中到当前位置
+      // 野钓 Tab 还没渲染时地图实例不存在，controller 内部的 _move 为空，调用无副作用
+      _mapCtrl.moveToLocation(pos.latitude, pos.longitude);
       if (!silent && mounted) {
         CenterToast.show(context, '已定位到当前位置', icon: Icons.my_location);
       }
@@ -130,18 +128,22 @@ class _SpotsScreenState extends State<SpotsScreen>
     return Scaffold(
       appBar: AppBar(
         title: const Text('钓点'),
+        // 头部高度与其他主 Tab 统一（首页 46，发现 44 + 44）
+        toolbarHeight: 46,
         flexibleSpace: Container(
           decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
         ),
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-          indicatorColor: Colors.white,
-          tabs: [
-            Tab(text: '本地钓场（${_venues.length + _shops.length}）'),
-            const Tab(text: '野钓钓点'),
-          ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(44),
+          child: Container(
+            color: Colors.white,
+            child: Row(
+              children: [
+                _tabChip(0, '本地钓场（${_venues.length + _shops.length}）'),
+                _tabChip(1, '野钓钓点'),
+              ],
+            ),
+          ),
         ),
         actions: [
           IconButton(
@@ -157,6 +159,39 @@ class _SpotsScreenState extends State<SpotsScreen>
           _buildVenueTab(),
           _buildWildTab(),
         ],
+      ),
+    );
+  }
+
+  /// 顶部 Tab 胶囊（与「发现」页同款，替代默认 TabBar 让头部高度统一）
+  Widget _tabChip(int index, String label) {
+    final selected = _tabController.index == index;
+    return Expanded(
+      child: InkWell(
+        onTap: () {
+          if (selected) return;
+          _tabController.animateTo(index);
+          setState(() {});
+        },
+        child: Container(
+          height: 44,
+          alignment: Alignment.center,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: selected ? AppTheme.primary : Colors.transparent,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? Colors.white : AppTheme.textSecondary,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -412,63 +447,27 @@ class _SpotsScreenState extends State<SpotsScreen>
     );
   }
 
-  // ==================== Tab ② 野钓卫星地图 ====================
   Widget _buildWildTab() {
-    // 默认中心：杭州；有定位时用当前位置
-    final centerGcj = _myLat != null
-        ? LatLng(CoordTransform.wgs84ToGcj02(_myLat!, _myLng!)[0],
-            CoordTransform.wgs84ToGcj02(_myLat!, _myLng!)[1])
-        : const LatLng(30.2741, 120.1551);
-
-    // 野钓点坐标 WGS-84 → GCJ-02 后再叠加到高德卫星图上
-    final markers = _wild.map((s) {
-      final g = CoordTransform.wgs84ToGcj02(s.lat, s.lng);
-      return Marker(
-        point: LatLng(g[0], g[1]),
-        width: 38,
-        height: 38,
-        child: GestureDetector(
-          onTap: () => _showWildSheet(s),
-          child: const Icon(Icons.location_on,
-              color: AppTheme.danger, size: 36),
-        ),
-      );
-    }).toList();
-
     return Stack(
       children: [
-        FlutterMap(
-          mapController: _mapController,
-          options: MapOptions(
-            initialCenter: centerGcj,
-            initialZoom: _myLat != null ? 13 : 8,
+        // 地图本体（嵌入模式：顶部无搜索栏、底部统计条由水面/钓点/渔获胶囊承担）
+        Positioned.fill(
+          child: SpotMapScreen(
+            embedded: true,
+            extraSpots: _wild,
+            controller: _mapCtrl,
           ),
-          children: [
-            // 高德卫星影像（style=8）
-            TileLayer(
-              urlTemplate:
-                  'https://webst01.is.autonavi.com/appmaptile?x={x}&y={y}&z={z}&lang=zh_cn&size=1&scale=1&style=8',
-              userAgentPackageName: 'com.example.fishing_app',
-            ),
-            // 高德路网标注（style=6，叠加在卫星图上）
-            TileLayer(
-              urlTemplate:
-                  'https://webst01.is.autonavi.com/appmaptile?x={x}&y={y}&z={z}&lang=zh_cn&size=1&scale=1&style=6',
-              userAgentPackageName: 'com.example.fishing_app',
-            ),
-            if (markers.isNotEmpty) MarkerLayer(markers: markers),
-          ],
         ),
-        // 顶部提示条
+        // 顶部提示条 + 标记入口
         Positioned(
-          top: 10,
+          top: 8,
           left: 12,
           right: 12,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.92),
-              borderRadius: BorderRadius.circular(10),
+              color: Colors.white.withOpacity(0.94),
+              borderRadius: BorderRadius.circular(12),
               boxShadow: const [
                 BoxShadow(color: Colors.black12, blurRadius: 6)
               ],
@@ -480,24 +479,58 @@ class _SpotsScreenState extends State<SpotsScreen>
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    '红色标记为钓友共享的野钓点（${_wild.length} 个），点击查看详情',
+                    '钓友共享野钓点 ${_wild.length} 个',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 12),
                   ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.refresh, size: 18),
                   tooltip: '刷新',
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 32, minHeight: 32),
                   onPressed: _load,
+                ),
+                const SizedBox(width: 4),
+                // 标记野钓点（主入口，收进顶部条避免遮挡地图）
+                SizedBox(
+                  height: 30,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.danger,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                    ),
+                    onPressed: () async {
+                      if (!await _requireLogin()) return;
+                      if (!mounted) return;
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(
+                            builder: (_) => const PublishSpotScreen()),
+                      );
+                      _load(); // 返回后刷新：新标记全员实时可见
+                    },
+                    icon: const Icon(Icons.add_location_alt, size: 15),
+                    label: const Text('标记',
+                        style: TextStyle(
+                            fontSize: 12, fontWeight: FontWeight.w600)),
+                  ),
                 ),
               ],
             ),
           ),
         ),
-        // 我的位置按钮
+        // 我的位置（右侧，避开底部 AI 胶囊）
         Positioned(
           right: 12,
-          bottom: 96,
+          bottom: 74,
           child: FloatingActionButton.small(
+            heroTag: 'spots_locate',
             backgroundColor: Colors.white,
             foregroundColor: AppTheme.accent,
             tooltip: '我的位置',
@@ -511,30 +544,10 @@ class _SpotsScreenState extends State<SpotsScreen>
                 : const Icon(Icons.my_location),
           ),
         ),
-        // 添加野钓点（主入口）
-        Positioned(
-          right: 12,
-          bottom: 32,
-          child: FloatingActionButton.extended(
-            backgroundColor: AppTheme.danger,
-            foregroundColor: Colors.white,
-            tooltip: '标记野钓点',
-            onPressed: () async {
-              if (!await _requireLogin()) return;
-              if (!mounted) return;
-              await Navigator.of(context).push(
-                MaterialPageRoute(
-                    builder: (_) => const PublishSpotScreen()),
-              );
-              _load(); // 返回后刷新：新标记全员实时可见
-            },
-            icon: const Icon(Icons.add_location_alt),
-            label: const Text('标记野钓点'),
-          ),
-        ),
       ],
     );
   }
+
 
   /// 地图标记气泡：野钓点简要信息 + 进详情
   void _showWildSheet(FishingSpot s) {
