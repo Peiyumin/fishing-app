@@ -98,9 +98,8 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
   // 图层开关（对应参考 App 的「图层」面板）
   MapLayerState _layers = MapLayerState();
 
-  // 底图：天地图优先（合规），没配密钥时回退高德
-  TileSourceKind _baseKind = TileSourceKind.gaode;
-  TileSource get _tile => TileSource(kind: _baseKind, tk: MapConfigService.tiandituTk);
+  // 底图：星图地球 > 天地图 > 高德（优先级由后台配置决定，取不到自动降级）
+  TileSource _tile = const TileSource(kind: TileSourceKind.gaode);
 
   // 搜索
   final TextEditingController _searchCtrl = TextEditingController();
@@ -130,14 +129,11 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     // 宿主页（钓点页）联动定位：把内部移动能力挂到 controller 上
     widget.controller?._move = _moveToLocation;
     WidgetsBinding.instance.addPostFrameCallback((_) => _locate(silent: true));
-    // 天地图密钥：后台「系统设置 → 站点设置」配置；有就用天地图，没有用高德
+    // 底图密钥：后台「系统设置 → 地图底图」配置
+    // 有星图地球 token 用星图，其次天地图 tk，都没有用高德免 key 底图
     MapConfigService.load().then((_) {
       if (!mounted) return;
-      setState(() {
-        _baseKind = MapConfigService.hasTianditu
-            ? TileSourceKind.tianditu
-            : TileSourceKind.gaode;
-      });
+      setState(() => _tile = MapConfigService.source);
     });
   }
 
@@ -449,9 +445,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                     Expanded(
                       child: _baseMapCard(
                         label: '卫星地图',
-                        sub: _baseKind == TileSourceKind.tianditu
-                            ? '天地图影像'
-                            : '高德影像',
+                        sub: '${_tile.shortName}影像',
                         icon: Icons.satellite_alt,
                         selected: _layers.satellite,
                         onTap: () => up((l) => l.satellite = true),
@@ -461,9 +455,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                     Expanded(
                       child: _baseMapCard(
                         label: '矢量地图',
-                        sub: _baseKind == TileSourceKind.tianditu
-                            ? '天地图路网'
-                            : '高德路网',
+                        sub: '${_tile.shortName}路网',
                         icon: Icons.map_outlined,
                         selected: !_layers.satellite,
                         onTap: () => up((l) => l.satellite = false),
@@ -493,9 +485,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                   ]),
                   const SizedBox(height: 10),
                   Text(
-                    _baseKind == TileSourceKind.tianditu
-                        ? '当前底图：天地图（GS(2025)1508号 国家地理信息公共服务平台）'
-                        : '当前底图：高德地图（未配置天地图密钥时的兜底）',
+                    _tile.describe,
                     style: const TextStyle(
                         fontSize: 11.5, color: Color(0xFF8A9099)),
                   ),
@@ -1356,7 +1346,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                 initialCenter: const LatLng(34.5, 108.9),
                 initialZoom: 4,
                 minZoom: 3,
-                maxZoom: 17,
+                maxZoom: _tile.maxZoom,
                 backgroundColor: const Color(0xFFDDE6EC),
                 onPositionChanged: (position, _) {
                   final z = position.zoom ?? _zoom;
@@ -1369,13 +1359,13 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                 onTap: _handleMapTap,
               ),
               children: [
-                // 底图：天地图（合规首选，视觉等同参考 App 的星图地球 GS）/ 高德兜底
+                // 底图：星图地球 / 天地图 / 高德（由后台配置决定）
                 if (!SpotMapScreen.testSkipTiles)
                 TileLayer(
                   urlTemplate: _layers.satellite
                       ? _tile.satelliteTemplate
                       : _tile.vectorTemplate,
-                  // 天地图 DataServer 是 TMS 行号（自下往上），交给 flutter_map 翻转
+                  // 三家都是左上角原点的标准 XYZ，不能开 tms（开了会上下颠倒）
                   tms: _tile.needsTms,
                   subdomains: _tile.subdomains ?? const ['a', 'b', 'c'],
                   additionalOptions: _tile.additionalOptions,
