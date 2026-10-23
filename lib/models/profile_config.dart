@@ -109,6 +109,7 @@ class ProfilePageConfig {
       ProfileItem(title: '附近钓友', icon: 'map', action: 'nearby'),
       ProfileItem(title: '每日签到', icon: 'trophy', action: 'signin'),
       ProfileItem(title: '消息中心', icon: 'notice', action: 'messages'),
+      ProfileItem(title: '通知设置', icon: 'bell', action: 'notify'),
       ProfileItem(title: '会员中心', icon: 'vip', action: 'vip'),
       ProfileItem(title: '我的关注', icon: 'follow', action: 'following'),
       ProfileItem(title: '帮助反馈', icon: 'help', action: 'help'),
