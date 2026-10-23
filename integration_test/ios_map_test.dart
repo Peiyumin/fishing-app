@@ -16,12 +16,13 @@
 //   flutter test integration_test/ios_map_test.dart -d <iOS 模拟器 UDID>
 import 'dart:math' show Point;
 
+import 'package:fishing_app/models/fishing_spot.dart';
 import 'package:fishing_app/models/water_body.dart';
 import 'package:fishing_app/screens/spot_map_gl.dart';
 import 'package:fishing_app/services/location_service.dart';
 import 'package:fishing_app/services/map_data_service.dart';
 import 'package:fishing_app/services/spot_service.dart';
-import 'package:geolocator/geolocator.dart' show LocationAccuracy;
+import 'package:geolocator/geolocator.dart' show LocationAccuracy, Position;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -313,5 +314,166 @@ void main() {
     // ignore: avoid_print
     print('[PERF] 压测后仍可命中「${river.name}」: ${probe.hits.length} 个要素');
     expect(probe.hits, isNotEmpty, reason: '压测后要素查询失效了');
+  });
+
+  // ------------------------------------------------------- 打开地图是否定位
+  // 用户反馈的核心问题：「打开野钓钓点后，地图不显示当前定位」。
+  //
+  // 这条断言的判据很硬：注入一个固定坐标作为「当前位置」，等定位生效后
+  // 把**屏幕中心**反算成经纬度，必须落在这个坐标附近。
+  // 如果定位坐标被流程吞掉（宿主页定位早于地图创建、animateCamera 被
+  // style 覆盖等），中心会停在全国视角 (34.5, 108.9)，差异一眼就能看出来。
+  testWidgets('iOS：打开野钓钓点自动定位到当前位置（我的位置图层 + 镜头中心）',
+      (tester) async {
+    const targetLat = 30.2465; // 杭州西湖
+    const targetLng = 120.1295;
+    LocationService.testDetermineOverride =
+        ({LocationAccuracy accuracy = LocationAccuracy.high}) async => Position(
+              latitude: targetLat,
+              longitude: targetLng,
+              timestamp: DateTime.now(),
+              accuracy: 5,
+              altitude: 0,
+              altitudeAccuracy: 0,
+              heading: 0,
+              headingAccuracy: 0,
+              speed: 0,
+              speedAccuracy: 0,
+            );
+
+    SpotMapGlScreen.readyTimeout = const Duration(seconds: 90);
+    addTearDown(() {
+      LocationService.testDetermineOverride = null;
+      SpotMapGlScreen.readyTimeout = const Duration(seconds: 8);
+      SpotMapGlScreen.debugOnControllerCreated = null;
+      SpotMapGlScreen.debugOnLayersReady = null;
+    });
+
+    mgl.MapLibreMapController? ctl;
+    SpotMapGlScreen.debugOnControllerCreated = (c) => ctl = c;
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(body: SpotMapGlScreen()),
+    ));
+
+    expect(await until(tester, () async => ctl != null, timeoutMs: 90000), isTrue,
+        reason: '原生内核没起来');
+
+    // 「我的位置」图层存在 = 定位结果真的画到地图上了
+    expect(
+        await until(tester, () async {
+          final ids =
+              (await ctl!.getLayerIds()).map((e) => e.toString()).toList();
+          return ids.contains('me-circle');
+        }, timeoutMs: 90000),
+        isTrue,
+        reason: 'me-circle 图层没建出来 —— 定位结果没画到地图上');
+
+    // 等定位动画（400ms）+ 瓦片稳定
+    await wait(tester, 4000);
+
+    final size = tester.getSize(find.byType(SpotMapGlScreen));
+    final center = await ctl!
+        .toLatLng(Point<double>(size.width / 2, size.height / 2));
+    // ignore: avoid_print
+    print('[TEST] 屏幕中心=${center.latitude},${center.longitude} '
+        '定位目标=$targetLat,$targetLng');
+
+    expect((center.latitude - targetLat).abs() < 0.05, isTrue,
+        reason: '打开地图后镜头中心纬度是 ${center.latitude}，'
+            '不在当前位置 $targetLat 附近 —— 定位坐标被流程吞掉了');
+    expect((center.longitude - targetLng).abs() < 0.05, isTrue,
+        reason: '打开地图后镜头中心经度是 ${center.longitude}，'
+            '不在当前位置 $targetLng 附近 —— 定位坐标被流程吞掉了');
+  });
+
+  // ------------------------------------------------- 新增钓点能否增量进地图
+  // 用户反馈：「添加新钓点，点击查看详情不能」。
+  //
+  // 这里模拟宿主页的真实行为：发布成功后宿主页 `_load()` 拿到新列表，
+  // 重新 build 出带新 extraSpots 的地图 —— 地图 State 复用，走 didUpdateWidget。
+  // 断言两条：新钓点的圈出现在屏幕上、按屏幕坐标能查到它的 id（进详情的前半段）。
+  testWidgets('iOS：宿主页刷新后新钓点增量进入地图且可命中', (tester) async {
+    _disableRealLocation();
+    SpotMapGlScreen.readyTimeout = const Duration(seconds: 90);
+    addTearDown(() {
+      SpotMapGlScreen.readyTimeout = const Duration(seconds: 8);
+      SpotMapGlScreen.debugOnControllerCreated = null;
+    });
+
+    mgl.MapLibreMapController? ctl;
+    SpotMapGlScreen.debugOnControllerCreated = (c) => ctl = c;
+
+    // ① 首帧：宿主页刚进来，还没有新钓点
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(body: SpotMapGlScreen(extraSpots: [])),
+    ));
+    expect(await until(tester, () async => ctl != null, timeoutMs: 90000), isTrue);
+    expect(
+        await until(tester, () async {
+          final ids =
+              (await ctl!.getLayerIds()).map((e) => e.toString()).toList();
+          return ids.contains('spots-circle');
+        }, timeoutMs: 90000),
+        isTrue,
+        reason: '钓点图层没就绪');
+
+    // ② 镜头移到一片不会有钓点的海面（东海外海），
+    //    这样「查询结果从空 → 有」就只可能是新注入的钓点造成的
+    const newLat = 29.9500;
+    const newLng = 122.4000;
+    await ctl!.animateCamera(
+      mgl.CameraUpdate.newLatLngZoom(mgl.LatLng(newLat, newLng), 15),
+      duration: const Duration(milliseconds: 300),
+    );
+    await wait(tester, 4000);
+
+    final before = await ctl!.toScreenLocation(mgl.LatLng(newLat, newLng));
+    final beforeHits = await ctl!.queryRenderedFeaturesInRect(
+      Rect.fromCenter(
+          center: Offset(before.x.toDouble(), before.y.toDouble()),
+          width: 20,
+          height: 20),
+      ['spots-circle'],
+      null,
+    );
+    expect(beforeHits, isEmpty,
+        reason: '测试点位本来就有钓点，无法证明「新点增量出现」，换个坐标');
+
+    // ③ 宿主页 _load() 回来，带着刚发布的新钓点重新 build
+    const newSpot = FishingSpot(
+      id: 'itest-new-spot-01',
+      name: '集成测试·新标记钓点',
+      type: '野钓',
+      kind: 'wild',
+      lat: newLat,
+      lng: newLng,
+      rating: 0,
+      description: 'integration_test 注入',
+    );
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(body: SpotMapGlScreen(extraSpots: [newSpot])),
+    ));
+    await wait(tester, 3000);
+
+    // ④ 新钓点必须出现在屏幕上，并且能查到 id
+    final scr = await ctl!.toScreenLocation(mgl.LatLng(newLat, newLng));
+    final hits = await ctl!.queryRenderedFeaturesInRect(
+      Rect.fromCenter(
+          center: Offset(scr.x.toDouble(), scr.y.toDouble()),
+          width: 44,
+          height: 44),
+      ['spots-circle'],
+      null,
+    );
+    // ignore: avoid_print
+    print('[TEST] 新钓点 screen=$scr hits=${hits.length}');
+    expect(hits, isNotEmpty,
+        reason: '新发布的钓点没有进地图（extraSpots 更新后地图没刷新），'
+            '用户点了也不会有反应');
+
+    final props = hits.first is Map ? (hits.first as Map)['properties'] : null;
+    final hitId = props is Map ? props['id'] : null;
+    expect('$hitId', 'itest-new-spot-01',
+        reason: '命中的要素 id 不是新钓点，点击会跳到别的钓点或跳不动');
   });
 }
