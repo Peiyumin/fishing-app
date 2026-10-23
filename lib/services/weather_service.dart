@@ -21,6 +21,12 @@ import '../models/weather_forecast.dart';
 class WeatherService {
   static const String _base = 'https://api.open-meteo.com/v1/forecast';
 
+  /// 复用同一个连接（省掉每次 TLS 握手，冷启动快 200~400ms）
+  static final http.Client _client = http.Client();
+
+  /// 单次请求上限：超时就走缓存兜底，绝不让页面一直转圈
+  static const Duration _timeout = Duration(seconds: 8);
+
   static const String _curCacheKey = 'wx_current_v1';
   static const String _fcCacheKey = 'wx_forecast_v1';
 
@@ -53,7 +59,7 @@ class WeatherService {
         '&models=cma_grapes_global'
         '&forecast_days=$days&timezone=auto',
       );
-      final res = await http.get(uri).timeout(const Duration(seconds: 8));
+      final res = await _client.get(uri).timeout(_timeout);
       if (res.statusCode != 200) return null;
       return jsonDecode(res.body) as Map<String, dynamic>;
     } catch (_) {
@@ -74,7 +80,7 @@ class WeatherService {
       'weather_code,precipitation,cloud_cover'
       '&hourly=temperature_2m,pressure_msl&forecast_days=1&timezone=auto',
     );
-    final res = await http.get(uri);
+    final res = await _client.get(uri).timeout(_timeout);
     if (res.statusCode != 200) {
       throw Exception('天气获取失败：${res.statusCode}');
     }
@@ -93,13 +99,13 @@ class WeatherService {
   }
 
   /// 读当前天气缓存（无缓存 / 解析失败 / 已过期返回 null）
-  static Future<FishingWeather?> readCachedCurrent() async {
+  static Future<FishingWeather?> readCachedCurrent({bool allowStale = false}) async {
     try {
       final sp = await SharedPreferences.getInstance();
       final raw = sp.getString(_curCacheKey);
       if (raw == null || raw.isEmpty) return null;
       final m = jsonDecode(raw) as Map<String, dynamic>;
-      if (!_isFresh(m)) return null; // 过期缓存不返回，触发重新拉取
+      if (!allowStale && !_isFresh(m)) return null; // 过期缓存不返回，触发重新拉取
       final w = m['w'];
       if (w is! Map) return null;
       return FishingWeather.fromJson(Map<String, dynamic>.from(w));
@@ -109,13 +115,13 @@ class WeatherService {
   }
 
   /// 读 7 天预报缓存（无缓存返回 null）
-  static Future<WeatherBundle?> readCachedForecast() async {
+  static Future<WeatherBundle?> readCachedForecast({bool allowStale = false}) async {
     try {
       final sp = await SharedPreferences.getInstance();
       final raw = sp.getString(_fcCacheKey);
       if (raw == null || raw.isEmpty) return null;
       final m = jsonDecode(raw) as Map<String, dynamic>;
-      if (!_isFresh(m)) return null; // 过期缓存不返回，触发重新拉取
+      if (!allowStale && !_isFresh(m)) return null; // 过期缓存不返回，触发重新拉取
       final j = m['json'];
       if (j is! Map) return null;
       final lat = (m['lat'] as num?)?.toDouble() ?? 0;
@@ -161,7 +167,7 @@ class WeatherService {
       'uv_index_max,sunrise,sunset'
       '&timezone=auto&forecast_days=7',
     );
-    final res = await http.get(uri);
+    final res = await _client.get(uri).timeout(_timeout);
     if (res.statusCode != 200) {
       throw Exception('天气获取失败：${res.statusCode}');
     }
@@ -177,6 +183,25 @@ class WeatherService {
       'cma': cma,
     });
     return bundle;
+  }
+
+  /// 读上次缓存里的坐标（不看有效期）
+  ///
+  /// 用途：天气页可以「先用上次的坐标立刻拉一次」，不必干等 GPS。
+  /// 定位回来后如果差得远，再补一次请求。
+  static Future<(double, double)?> readCachedLocation() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final raw = sp.getString(_fcCacheKey) ?? sp.getString(_curCacheKey);
+      if (raw == null || raw.isEmpty) return null;
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      final lat = m['lat'];
+      final lng = m['lng'];
+      if (lat is num && lng is num) return (lat.toDouble(), lng.toDouble());
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 }
 
