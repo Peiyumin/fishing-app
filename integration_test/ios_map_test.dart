@@ -18,8 +18,10 @@ import 'dart:math' show Point;
 
 import 'package:fishing_app/models/water_body.dart';
 import 'package:fishing_app/screens/spot_map_gl.dart';
+import 'package:fishing_app/services/location_service.dart';
 import 'package:fishing_app/services/map_data_service.dart';
 import 'package:fishing_app/services/spot_service.dart';
+import 'package:geolocator/geolocator.dart' show LocationAccuracy;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -57,6 +59,21 @@ Future<bool> until(
   return false;
 }
 
+/// 关掉真实定位
+///
+/// 地图页 initState 里会自动定位一次并 animateCamera 到「我的位置」。
+/// 模拟器上定位回调什么时候回来不确定，**经常在测试已经把镜头移到
+/// 河流之后才回来**，一下把镜头抢走 —— 于是「压测后查询要素」那条
+/// 断言查了个空，看着像是功能坏了，其实是测试自己把镜头移开了。
+/// 这里把定位直接设成必然失败（_locate 内部 catch 掉，静默跳过），
+/// 保证整条测试里镜头只由测试代码控制。
+void _disableRealLocation() {
+  LocationService.testDetermineOverride =
+      ({LocationAccuracy accuracy = LocationAccuracy.high}) async {
+    throw Exception('integration_test: 关闭真实定位');
+  };
+}
+
 ll.LatLng? _centerOf(WaterBody w) {
   if (w.geometry.isEmpty) return null;
   return w.geometry[w.geometry.length ~/ 2];
@@ -66,6 +83,7 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('iOS：底图是星图、河湖图层生效、河流与钓点可命中', (tester) async {
+    _disableRealLocation();
     // 模拟器比真机慢，把 8 秒看门狗放宽，避免"还没 ready 就降级"
     SpotMapGlScreen.readyTimeout = const Duration(seconds: 90);
     addTearDown(() {
@@ -192,6 +210,7 @@ void main() {
   // 这里能测、且值得测的是"长时间连续拖动缩放会不会崩 / 图层会不会丢 /
   // 原生内核会不会中途失效"—— 这正是之前闪退、白屏那类问题的形态。
   testWidgets('iOS：连续跨城拖动缩放压测，不崩不丢图层', (tester) async {
+    _disableRealLocation();
     SpotMapGlScreen.readyTimeout = const Duration(seconds: 90);
     addTearDown(() {
       SpotMapGlScreen.readyTimeout = const Duration(seconds: 8);
