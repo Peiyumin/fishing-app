@@ -13,26 +13,67 @@ import '../models/no_fishing_zone.dart';
 import '../models/water_body.dart';
 import '../services/fish_service.dart';
 import '../services/location_service.dart';
+import '../services/map_config_service.dart';
 import '../services/map_data_service.dart';
+import '../services/map_tile_source.dart';
 import '../services/spot_service.dart';
 import '../services/weather_service.dart';
 import '../utils/coord_transform.dart';
 import 'spot_detail_screen.dart';
 
-/// 钓点地图（v2.1.9 新增）
+/// 钓点地图（v2.1.9 新增，v2.1.10 升级底图与图层面板）
 /// ------------------------------------------------------------
-/// 参照主流钓鱼 App 的「钓点地图」做的全屏地图页：
-///  - 高德卫星/标准底图（与「野钓卫星地图」同一瓦片源，GCJ-02 坐标）
+/// 参照主流钓鱼 App 的「钓点地图」做的全屏地图：
+///  - 底图：天地图卫星影像（合规白名单内，视觉等同参考 App 的「星图地球 GS」）
+///    天地图需 tk 密钥（后台「系统设置 → 站点设置」配置），
+///    没配置时自动回退免 key 的高德卫星图，地图永远能打开。
 ///  - 蓝色图层：全国主要江河（折线）+ 湖泊水库（多边形），43 江 44 湖
 ///  - 红色图层：全国禁钓区 / 禁渔期（33 处，含禁钓时间段与法律依据，
 ///    数据整理自农业农村部等政府部门公开通告，后台可维护）
 ///  - 钓点标记（后端 /spots）+ 底部统计（水域/钓点/渔获）
 ///  - 搜索（水域/钓点/禁钓区）、图层面板、禁钓区名录、AI 找钓点
+///
+/// 坐标系：数据统一存 WGS-84；叠到高德底图要转 GCJ-02，叠到天地图原样绘制。
+/// 见 [TileSource.project]。
+///
+/// 两种用法：
+///  - `SpotMapScreen()`：独立全屏地图页（底部导航「地图」Tab 已删除，此入口保留给
+///    「附近钓点 → 更多」等外部跳转）
+///  - `SpotMapScreen(embedded: true)`：嵌入钓点页「野钓钓点」Tab，
+///    顶部搜索条与底部统计条由外层负责，地图本体一样
 class SpotMapScreen extends StatefulWidget {
-  const SpotMapScreen({super.key});
+  /// 是否嵌入模式（嵌入时不自带搜索栏 / 底部统计条）
+  final bool embedded;
+
+  /// 嵌入模式下额外的钓点标记（钓点页自己拉的野钓点）
+  final List<FishingSpot> extraSpots;
+
+  /// 外部定位联动用（钓点页拿到定位后调用 [SpotMapController.moveToLocation]）
+  final SpotMapController? controller;
+
+  /// 测试专用：为 true 时不加载底图瓦片。
+  /// widget 测试环境没有网络，瓦片请求会抛 ClientException 污染断言；
+  /// 关掉底图后仍能完整验证浮层 / 图层面板的布局。生产代码恒为 false。
+  static bool testSkipTiles = false;
+
+  const SpotMapScreen({
+    super.key,
+    this.embedded = false,
+    this.extraSpots = const [],
+    this.controller,
+  });
 
   @override
   State<SpotMapScreen> createState() => _SpotMapScreenState();
+}
+
+/// 地图对外操作接口（供宿主页联动定位）
+class SpotMapController {
+  /// 把地图移到某个 WGS-84 坐标
+  void Function(double lat, double lng)? _move;
+
+  /// 地图移动到指定坐标（宿主页定位成功后调用）
+  void moveToLocation(double lat, double lng) => _move?.call(lat, lng);
 }
 
 class _SpotMapScreenState extends State<SpotMapScreen> {
@@ -51,12 +92,15 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
   double? _myLng;
   bool _locating = false;
 
-  // 视图状态
-  bool _satellite = true;
-  bool _showWaters = true;
-  bool _showZones = true;
-  bool _showSpots = true;
+  // 视图状态（图层开关统一放在 _layers，避免两套状态不同步）
   double _zoom = 4;
+
+  // 图层开关（对应参考 App 的「图层」面板）
+  MapLayerState _layers = MapLayerState();
+
+  // 底图：天地图优先（合规），没配密钥时回退高德
+  TileSourceKind _baseKind = TileSourceKind.gaode;
+  TileSource get _tile => TileSource(kind: _baseKind, tk: MapConfigService.tiandituTk);
 
   // 搜索
   final TextEditingController _searchCtrl = TextEditingController();
@@ -72,13 +116,9 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
   NoFishingZone? _selZone;
 
   // 高德瓦片（与野钓卫星地图同源；卫星=8 + 路网标注=6 叠加）
-  static const _tileSat =
-      'https://webst01.is.autonavi.com/appmaptile?x={x}&y={y}&z={z}&lang=zh_cn&size=1&scale=1&style=8';
-  static const _tileLabel =
-      'https://webst01.is.autonavi.com/appmaptile?x={x}&y={y}&z={z}&lang=zh_cn&size=1&scale=1&style=6';
-
-  static const _waterColor = Color(0xFF1E88E5);
-  static const _waterFill = Color(0x2E1E88E5);
+  // 天地图底图见 TileSource（密钥从后台配置拉，取不到自动回退高德）
+  static const _waterColor = Color(0xFF1565C0);
+  static const _waterFill = Color(0x591E88E5);
   static const _zoneColor = Color(0xFFE5484D);
   static const _zoneFill = Color(0x26E5484D);
 
@@ -87,15 +127,37 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     super.initState();
     _load();
     _searchCtrl.addListener(_onSearchChanged);
+    // 宿主页（钓点页）联动定位：把内部移动能力挂到 controller 上
+    widget.controller?._move = _moveToLocation;
     WidgetsBinding.instance.addPostFrameCallback((_) => _locate(silent: true));
+    // 天地图密钥：后台「系统设置 → 站点设置」配置；有就用天地图，没有用高德
+    MapConfigService.load().then((_) {
+      if (!mounted) return;
+      setState(() {
+        _baseKind = MapConfigService.hasTianditu
+            ? TileSourceKind.tianditu
+            : TileSourceKind.gaode;
+      });
+    });
   }
 
   @override
   void dispose() {
+    widget.controller?._move = null;
     _searchCtrl.removeListener(_onSearchChanged);
     _searchCtrl.dispose();
     _searchFocus.dispose();
     super.dispose();
+  }
+
+  /// 移到某个 WGS-84 坐标（底图是天地图时原样绘制，高德时转 GCJ-02）
+  void _moveToLocation(double lat, double lng) {
+    final p = _tile.project(LatLng(lat, lng));
+    try {
+      _mapController.move(p, 12.5);
+    } catch (_) {
+      // 地图尚未挂载
+    }
   }
 
   Future<void> _load() async {
@@ -127,8 +189,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
         _myLat = pos.latitude;
         _myLng = pos.longitude;
       });
-      final g = CoordTransform.wgs84ToGcj02(pos.latitude, pos.longitude);
-      _mapController.move(LatLng(g[0], g[1]), 11.5);
+      _moveToLocation(pos.latitude, pos.longitude);
     } catch (_) {
       if (!silent && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -163,7 +224,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     if (cam == null) return;
     final p = pos.relative ?? pos.global;
 
-    if (_showZones) {
+    if (_layers.noFishingZones) {
       for (final z in _zones.zones) {
         if (!z.onMap) continue;
         for (final ring in z.rings) {
@@ -177,7 +238,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
         }
       }
     }
-    if (_showWaters) {
+    if ((_layers.lakes || _layers.rivers)) {
       for (final w in _waters) {
         if (w.isRiver) {
           // 折线：命中判定为到线段的距离
@@ -325,66 +386,342 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
 
   // ------------------------------------------------------------ 面板
 
+  /// 图层面板（v2.1.10 重做，参照参考 App 的三段式布局）
+  ///
+  ///   ① 底图图层 BASE MAP  —— 卫星地图 / 矢量地图 缩略卡片 + 天地图历史影像（VIP 标识）
+  ///   ② 地图设置 SETTINGS   —— 路网图层 / 中心十字星 / 禁渔区域
+  ///   ③ 水域图层 SHOW       —— 河流 / 湖泊 / 钓点
   void _showLayerPanel() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF2F4F7),
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => StatefulBuilder(
-        builder: (ctx, setLocal) => Padding(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 22),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const SizedBox(height: 4),
-            Container(
-                width: 38,
-                height: 4,
-                decoration: BoxDecoration(
-                    color: AppTheme.divider,
-                    borderRadius: BorderRadius.circular(2))),
-            const SizedBox(height: 14),
-            const Align(
-                alignment: Alignment.centerLeft,
-                child: Text('地图图层',
-                    style: TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w700))),
-            const SizedBox(height: 6),
-            _switchRow('江河湖泊水域（蓝色）', _showWaters, AppTheme.accent, (v) {
-              setLocal(() => _showWaters = v);
-              setState(() => _showWaters = v);
-            }),
-            _switchRow('禁钓区 / 禁渔期（红色）', _showZones, AppTheme.danger, (v) {
-              setLocal(() => _showZones = v);
-              setState(() => _showZones = v);
-            }),
-            _switchRow('钓点标记', _showSpots, AppTheme.primary, (v) {
-              setLocal(() => _showSpots = v);
-              setState(() => _showSpots = v);
-            }),
-            const Divider(height: 20),
-            const Align(
-                alignment: Alignment.centerLeft,
-                child: Text('底图',
-                    style: TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w600))),
-            const SizedBox(height: 8),
-            SegmentedButton<bool>(
-              segments: const [
-                ButtonSegment(value: true, label: Text('卫星影像')),
-                ButtonSegment(value: false, label: Text('标准路网')),
+        builder: (ctx, setLocal) {
+          void up(void Function(MapLayerState) fn) {
+            setLocal(() {});
+            setState(() => fn(_layers));
+          }
+
+          return DraggableScrollableSheet(
+            initialChildSize: 0.72,
+            minChildSize: 0.4,
+            maxChildSize: 0.94,
+            expand: false,
+            builder: (ctx, scroll) => ListView(
+              controller: scroll,
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 26),
+              children: [
+                // 标题栏
+                Row(children: [
+                  const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('图层',
+                          style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF1A1D21))),
+                      SizedBox(height: 2),
+                      Text('LAYERS',
+                          style: TextStyle(
+                              fontSize: 11,
+                              letterSpacing: 1.2,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF8A9099))),
+                    ],
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 22),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ]),
+                const SizedBox(height: 14),
+
+                // ① 底图图层
+                _panelCard(children: [
+                  _panelTitle('底图图层', 'BASE MAP'),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(
+                      child: _baseMapCard(
+                        label: '卫星地图',
+                        sub: _baseKind == TileSourceKind.tianditu
+                            ? '天地图影像'
+                            : '高德影像',
+                        icon: Icons.satellite_alt,
+                        selected: _layers.satellite,
+                        onTap: () => up((l) => l.satellite = true),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _baseMapCard(
+                        label: '矢量地图',
+                        sub: _baseKind == TileSourceKind.tianditu
+                            ? '天地图路网'
+                            : '高德路网',
+                        icon: Icons.map_outlined,
+                        selected: !_layers.satellite,
+                        onTap: () => up((l) => l.satellite = false),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    // 历史影像：需要额外资质，标 VIP 占位
+                    Expanded(
+                      child: Opacity(
+                        opacity: 0.55,
+                        child: _baseMapCard(
+                          label: '历史影像',
+                          sub: 'VIP',
+                          icon: Icons.history,
+                          selected: false,
+                          vip: true,
+                          onTap: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text(
+                                      '历史影像为高级功能，需要开通后开放')),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 10),
+                  Text(
+                    _baseKind == TileSourceKind.tianditu
+                        ? '当前底图：天地图（GS(2025)1508号 国家地理信息公共服务平台）'
+                        : '当前底图：高德地图（未配置天地图密钥时的兜底）',
+                    style: const TextStyle(
+                        fontSize: 11.5, color: Color(0xFF8A9099)),
+                  ),
+                ]),
+
+                // ② 地图设置
+                _panelCard(children: [
+                  _panelTitle('地图设置', 'SETTINGS'),
+                  const SizedBox(height: 4),
+                  _layerSwitch(
+                    icon: Icons.route_outlined,
+                    title: '路网图层',
+                    subtitle: '叠加道路与地名注记',
+                    value: _layers.roadLabels,
+                    onChanged: (v) => up((l) => l.roadLabels = v),
+                  ),
+                  _layerSwitch(
+                    icon: Icons.add_location_alt_outlined,
+                    title: '中心十字星',
+                    subtitle: '在屏幕中心显示定位十字',
+                    value: _layers.crosshair,
+                    onChanged: (v) => up((l) => l.crosshair = v),
+                  ),
+                  _layerSwitch(
+                    icon: Icons.block_outlined,
+                    title: '禁渔区域',
+                    subtitle: '红色为禁钓区 / 禁渔期',
+                    value: _layers.noFishingZones,
+                    danger: true,
+                    onChanged: (v) => up((l) => l.noFishingZones = v),
+                  ),
+                ]),
+
+                // ③ 水域图层
+                _panelCard(children: [
+                  _panelTitle('水域图层', 'SHOW'),
+                  const SizedBox(height: 4),
+                  _layerSwitch(
+                    icon: Icons.water_drop_outlined,
+                    title: '河流',
+                    subtitle: '显示河流水系（蓝色）',
+                    value: _layers.rivers,
+                    onChanged: (v) => up((l) => l.rivers = v),
+                  ),
+                  _layerSwitch(
+                    icon: Icons.water_outlined,
+                    title: '湖泊',
+                    subtitle: '显示湖泊水体（蓝色）',
+                    value: _layers.lakes,
+                    onChanged: (v) => up((l) => l.lakes = v),
+                  ),
+                  _layerSwitch(
+                    icon: Icons.place_outlined,
+                    title: '钓点图层',
+                    subtitle: '显示钓友共享的钓点标记',
+                    value: _layers.spots,
+                    onChanged: (v) => up((l) => l.spots = v),
+                  ),
+                  _layerSwitch(
+                    icon: Icons.label_outline,
+                    title: '水域名称',
+                    subtitle: '在水域上标注名称',
+                    value: _layers.waterLabels,
+                    onChanged: (v) => up((l) => l.waterLabels = v),
+                  ),
+                ]),
+
+                const SizedBox(height: 12),
+                const Text(
+                  '蓝色水域与红色禁钓区为参考图层，禁钓规定以现场标识牌及当地通告为准。',
+                  style: TextStyle(fontSize: 11.5, color: Color(0xFF8A9099)),
+                ),
               ],
-              selected: {_satellite},
-              onSelectionChanged: (s) {
-                setLocal(() {});
-                setState(() => _satellite = s.first);
-              },
             ),
-            const SizedBox(height: 10),
-            const Text('蓝色水域与红色禁钓区为参考图层，禁钓规定以现场标识牌及当地通告为准。',
-                style: TextStyle(fontSize: 11.5, color: AppTheme.textSecondary)),
-          ]),
-        ),
+          );
+        },
       ),
+    );
+  }
+
+  /// 面板外层卡片（参考 App 的圆角白底分组）
+  Widget _panelCard({required List<Widget> children}) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: children,
+      ),
+    );
+  }
+
+  /// 面板分组标题（中文 + 英文小字）
+  Widget _panelTitle(String cn, String en) {
+    return Row(
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        // CrossAxisAlignment.baseline 必须配 textBaseline，否则直接断言崩溃
+        textBaseline: TextBaseline.alphabetic,
+        children: [
+      Text(cn,
+          style: const TextStyle(
+              fontSize: 15.5,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF1A1D21))),
+      const SizedBox(width: 6),
+      Text(en,
+          style: const TextStyle(
+              fontSize: 10.5,
+              letterSpacing: 0.8,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF8A9099))),
+    ]);
+  }
+
+  /// 底图缩略卡片
+  Widget _baseMapCard({
+    required String label,
+    required String sub,
+    required IconData icon,
+    required bool selected,
+    required VoidCallback onTap,
+    bool vip = false,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFE8F5EC) : const Color(0xFFF2F4F7),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected ? AppTheme.primary : const Color(0xFFE3E6EA),
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: Column(children: [
+          Stack(clipBehavior: Clip.none, children: [
+            Icon(icon,
+                size: 26,
+                color: selected ? AppTheme.primary : const Color(0xFF9AA1AA)),
+            if (vip)
+              Positioned(
+                right: -14,
+                top: -6,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3A3F46),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text('VIP',
+                      style: TextStyle(
+                          fontSize: 8,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFFFFD666))),
+                ),
+              ),
+          ]),
+          const SizedBox(height: 6),
+          Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? AppTheme.primaryDark : const Color(0xFF3A3F46))),
+          Text(sub,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 9.5, color: Color(0xFF8A9099))),
+        ]),
+      ),
+    );
+  }
+
+  /// 图层开关行（图标 + 标题 + 副标题 + 开关）
+  Widget _layerSwitch({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+    bool danger = false,
+  }) {
+    final color = danger ? AppTheme.danger : AppTheme.primary;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            color: danger
+                ? AppTheme.danger.withOpacity(0.10)
+                : AppTheme.primary.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, size: 18, color: color),
+        ),
+        const SizedBox(width: 11),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1A1D21))),
+              Text(subtitle,
+                  style: const TextStyle(
+                      fontSize: 11, color: Color(0xFF8A9099))),
+            ],
+          ),
+        ),
+        Switch(
+          value: value,
+          onChanged: onChanged,
+          activeColor: color,
+        ),
+      ]),
     );
   }
 
@@ -866,19 +1203,15 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
   // ------------------------------------------------------------ 图层构建
 
   List<Polygon> get _lakePolygons {
-    if (!_showWaters) return const [];
+    if (!_layers.lakes) return const [];
     return _waters.where((w) => !w.isRiver).map((w) {
-      final pts = w.geometry
-          .map((p) => LatLng(
-              CoordTransform.wgs84ToGcj02(p.latitude, p.longitude)[0],
-              CoordTransform.wgs84ToGcj02(p.latitude, p.longitude)[1]))
-          .toList();
+      final pts = _tile.projectAll(w.geometry);
       return Polygon(
         points: pts,
         color: _waterFill,
         borderColor: _waterColor,
         borderStrokeWidth: w.level <= 1 ? 2.2 : 1.4,
-        label: _zoom >= 5.5 ? w.name : null,
+        label: _zoom >= 5.5 && _layers.waterLabels ? w.name : null,
         labelStyle: const TextStyle(
             fontSize: 11,
             color: Color(0xFF0B4F8A),
@@ -888,36 +1221,28 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
   }
 
   List<Polyline> get _riverLines {
-    if (!_showWaters) return const [];
+    if (!_layers.rivers) return const [];
     return _waters.where((w) => w.isRiver).map((w) {
-      final pts = w.geometry
-          .map((p) => LatLng(
-              CoordTransform.wgs84ToGcj02(p.latitude, p.longitude)[0],
-              CoordTransform.wgs84ToGcj02(p.latitude, p.longitude)[1]))
-          .toList();
+      final pts = _tile.projectAll(w.geometry);
+      // 参考 App 的河道样式：浅蓝半透明「水面带」+ 深蓝描边
       return Polyline(
         points: pts,
-        strokeWidth: w.strokeWidth,
-        color: _waterColor,
-        borderStrokeWidth: 0.8,
-        borderColor: const Color(0xCCFFFFFF),
+        strokeWidth: w.strokeWidth * 2.0,
+        color: const Color(0x661E88E5),
+        borderStrokeWidth: 1.1,
+        borderColor: const Color(0xDD1565C0),
       );
     }).toList();
   }
 
   List<Polygon> get _zonePolygons {
-    if (!_showZones) return const [];
+    if (!_layers.noFishingZones) return const [];
     return _zones.zones.where((z) => z.onMap && z.rings.isNotEmpty).map((z) {
       final st = z.statusNow();
       final fill = st.active ? _zoneFill : const Color(0x14E5484D);
       final border = st.active ? _zoneColor : const Color(0x88E5484D);
       return Polygon(
-        points: z.rings
-            .first
-            .map((p) => LatLng(
-                CoordTransform.wgs84ToGcj02(p.latitude, p.longitude)[0],
-                CoordTransform.wgs84ToGcj02(p.latitude, p.longitude)[1]))
-            .toList(),
+        points: _tile.projectAll(z.rings.first),
         color: fill,
         borderColor: border,
         borderStrokeWidth: 1.4,
@@ -938,11 +1263,17 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
 
   List<Marker> get _markers {
     final list = <Marker>[];
-    if (_showSpots) {
-      for (final s in _spots) {
-        final g = CoordTransform.wgs84ToGcj02(s.lat, s.lng);
+    if (_layers.spots) {
+      // 钓点：地图页自己拉的 + 嵌入时外层传入的（钓点页野钓点）
+      final Map<String, FishingSpot> all = {
+        for (final s in _spots) s.id: s,
+      };
+      for (final s in widget.extraSpots) {
+        all[s.id] = s;
+      }
+      for (final s in all.values) {
         list.add(Marker(
-          point: LatLng(g[0], g[1]),
+          point: _tile.project(LatLng(s.lat, s.lng)),
           width: 30,
           height: 30,
           child: GestureDetector(
@@ -954,12 +1285,10 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
         ));
       }
     }
-    if (_showWaters && _zoom >= 5.5) {
+    if (_zoom >= 5.5 && _layers.waterLabels) {
       for (final w in _waters) {
-        final g = CoordTransform.wgs84ToGcj02(
-            w.center.latitude, w.center.longitude);
         list.add(Marker(
-          point: LatLng(g[0], g[1]),
+          point: _tile.project(w.center),
           width: 92,
           height: 20,
           child: GestureDetector(
@@ -986,9 +1315,8 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     }
     // 我的位置
     if (_myLat != null && _myLng != null) {
-      final g = CoordTransform.wgs84ToGcj02(_myLat!, _myLng!);
       list.add(Marker(
-        point: LatLng(g[0], g[1]),
+        point: _tile.project(LatLng(_myLat!, _myLng!)),
         width: 22,
         height: 22,
         child: Container(
@@ -1008,7 +1336,13 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).padding.bottom;
+    // 嵌入模式（钓点页「野钓钓点」Tab）没有系统状态栏留白，
+    // 顶部安全区由外层 Scaffold 处理
+    // 嵌入模式：上方是钓点页的「野钓点提示条」，让出约 46px 避免压住
+    final topInset =
+        widget.embedded ? 54.0 : MediaQuery.of(context).padding.top + 8;
     return Scaffold(
+      backgroundColor: Colors.transparent,
       body: Stack(children: [
         // ---------------- 地图 ----------------
         Builder(builder: (ctx) {
@@ -1035,21 +1369,36 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                 onTap: _handleMapTap,
               ),
               children: [
+                // 底图：天地图（合规首选，视觉等同参考 App 的星图地球 GS）/ 高德兜底
+                if (!SpotMapScreen.testSkipTiles)
                 TileLayer(
-                  urlTemplate: _tileSat,
+                  urlTemplate: _layers.satellite
+                      ? _tile.satelliteTemplate
+                      : _tile.vectorTemplate,
+                  // 天地图 DataServer 是 TMS 行号（自下往上），交给 flutter_map 翻转
+                  tms: _tile.needsTms,
+                  subdomains: _tile.subdomains ?? const ['a', 'b', 'c'],
+                  additionalOptions: _tile.additionalOptions,
                   userAgentPackageName: 'com.chuidiaoquan.app',
                 ),
-                TileLayer(
-                  urlTemplate: _tileLabel,
-                  userAgentPackageName: 'com.chuidiaoquan.app',
-                ),
-                if (_showWaters) ...[
+                // 路网标注叠加层（可关）
+                if (_layers.roadLabels && !SpotMapScreen.testSkipTiles)
+                  TileLayer(
+                    urlTemplate: _tile.labelTemplate,
+                    tms: _tile.needsTms,
+                    subdomains: _tile.subdomains ?? const ['a', 'b', 'c'],
+                    additionalOptions: _tile.additionalOptions,
+                    userAgentPackageName: 'com.chuidiaoquan.app',
+                  ),
+                if ((_layers.lakes || _layers.rivers)) ...[
                   PolygonLayer(polygons: _lakePolygons),
                   PolylineLayer(polylines: _riverLines),
                 ],
-                if (_showZones)
+                if (_layers.noFishingZones)
                   PolygonLayer(polygons: _zonePolygons, polygonLabels: true),
                 MarkerLayer(markers: _markers),
+                // 中心十字星（可关）
+                if (_layers.crosshair) const _CrosshairOverlay(),
               ],
             ),
           );
@@ -1057,49 +1406,54 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
 
         // ---------------- 顶部：搜索 + 图层/名录 ----------------
         Positioned(
-          top: MediaQuery.of(context).padding.top + 8,
+          top: topInset,
           left: 12,
           right: 12,
           child: Column(children: [
             Row(children: [
-              Expanded(
-                child: Container(
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(22),
-                    boxShadow: const [
-                      BoxShadow(color: Colors.black26, blurRadius: 8)
-                    ],
-                  ),
-                  child: TextField(
-                    controller: _searchCtrl,
-                    focusNode: _searchFocus,
-                    onTap: () => setState(() => _searching = true),
-                    decoration: InputDecoration(
-                      hintText: '搜水域、钓点、禁钓区',
-                      hintStyle: const TextStyle(
-                          fontSize: 13, color: AppTheme.textSecondary),
-                      prefixIcon: const Icon(Icons.search,
-                          size: 20, color: AppTheme.textSecondary),
-                      suffixIcon: _searchCtrl.text.isEmpty
-                          ? null
-                          : IconButton(
-                              icon: const Icon(Icons.close, size: 18),
-                              onPressed: _exitSearch),
-                      border: InputBorder.none,
-                      contentPadding:
-                          const EdgeInsets.symmetric(vertical: 12),
+              // 嵌入模式：顶部空间留给钓点页自己的 Tab 栏，只放右侧功能按钮
+              if (!widget.embedded) ...[
+                Expanded(
+                  child: Container(
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(22),
+                      boxShadow: const [
+                        BoxShadow(color: Colors.black26, blurRadius: 8)
+                      ],
+                    ),
+                    child: TextField(
+                      controller: _searchCtrl,
+                      focusNode: _searchFocus,
+                      onTap: () => setState(() => _searching = true),
+                      decoration: InputDecoration(
+                        hintText: '搜水域、钓点、禁钓区',
+                        hintStyle: const TextStyle(
+                            fontSize: 13, color: AppTheme.textSecondary),
+                        prefixIcon: const Icon(Icons.search,
+                            size: 20, color: AppTheme.textSecondary),
+                        suffixIcon: _searchCtrl.text.isEmpty
+                            ? null
+                            : IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: _exitSearch),
+                        border: InputBorder.none,
+                        contentPadding:
+                            const EdgeInsets.symmetric(vertical: 12),
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
+                const SizedBox(width: 8),
+              ],
               _roundBtn(Icons.layers_outlined, '图层', _showLayerPanel),
               const SizedBox(width: 8),
               _roundBtn(Icons.verified_user_outlined, '禁钓名录', _showDirectory),
             ]),
-            if (_searching && _searchCtrl.text.trim().isNotEmpty)
+            if (!widget.embedded &&
+                _searching &&
+                _searchCtrl.text.trim().isNotEmpty)
               _searchResults(),
           ]),
         ),
@@ -1107,85 +1461,114 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
         // ---------------- 右侧工具栏 ----------------
         Positioned(
           right: 12,
-          top: MediaQuery.of(context).padding.top + 140,
+          // 嵌入模式已被外层 AppBar 占掉状态栏高度，工具栏贴着顶部按钮行往下排
+          top: widget.embedded ? 104 : MediaQuery.of(context).padding.top + 140,
           child: Column(children: [
             _roundBtn(
-                _satellite ? Icons.satellite_alt : Icons.map_outlined,
-                _satellite ? '卫星图' : '路网图',
-                () => setState(() => _satellite = !_satellite)),
+                _layers.satellite ? Icons.satellite_alt : Icons.map_outlined,
+                _layers.satellite ? '卫星图' : '路网图',
+                () => setState(() => _layers.satellite = !_layers.satellite)),
             const SizedBox(height: 8),
             _roundBtn(Icons.add, '放大',
                 () => _mapController.move(_mapController.center, _zoom + 1)),
             const SizedBox(height: 8),
             _roundBtn(Icons.remove, '缩小',
                 () => _mapController.move(_mapController.center, _zoom - 1)),
-            const SizedBox(height: 8),
-            _roundBtn(Icons.my_location, '我的位置', () => _locate()),
+            if (!widget.embedded) ...[
+              const SizedBox(height: 8),
+              _roundBtn(Icons.my_location, '我的位置', () => _locate()),
+            ],
           ]),
         ),
 
-        // ---------------- 底部：统计 + AI ----------------
-        Positioned(
-          left: 12,
-          right: 12,
-          bottom: bottomInset + 14,
-          child: Column(children: [
-            Row(children: [
-              Expanded(
-                child: _statCard(Icons.water, '${_waters.length}', '水域'),
+        // ---------------- 底部：统计 + AI（嵌入模式由钓点页承担）----------------
+        if (!widget.embedded)
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: bottomInset + 14,
+            child: Column(children: [
+              Row(children: [
+                Expanded(
+                  child: _statCard(Icons.water, '${_waters.length}', '水域'),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _statCard(Icons.place, '${_spots.length}', '钓点'),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _statCard(Icons.pets, _catchCount > 0 ? '$_catchCount' : '—', '渔获'),
+                ),
+              ]),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: _aiLoading ? null : _aiFindSpots,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                  ),
+                  icon: _aiLoading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.auto_awesome, size: 20),
+                  label: Text(_aiLoading ? 'AI 分析中…' : 'AI 找钓点',
+                      style: const TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w700)),
+                ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _statCard(Icons.place, '${_spots.length}', '钓点'),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _statCard(Icons.pets, _catchCount > 0 ? '$_catchCount' : '—', '渔获'),
+              const SizedBox(height: 6),
+              Text(
+                '${_tile.attribution} · 禁钓数据据政府公开通告整理（2026-10）',
+                style: const TextStyle(fontSize: 10, color: Colors.white70),
               ),
             ]),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton.icon(
-                onPressed: _aiLoading ? null : _aiFindSpots,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primary,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-                icon: _aiLoading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.auto_awesome, size: 20),
-                label: Text(_aiLoading ? 'AI 分析中…' : 'AI 找钓点',
-                    style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w700)),
+          ),
+
+        // ---------------- 嵌入模式：底部版权 + AI 悬浮胶囊（参考 App 样式）----------------
+        if (widget.embedded)
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 10,
+            child: Column(children: [
+              // AI 找钓点胶囊（居中悬浮）
+              _aiCapsule(),
+              const SizedBox(height: 6),
+              Text(
+                '${_tile.attribution} · 禁钓数据据政府公开通告整理（2026-10）',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 9.5,
+                    color: Colors.white70,
+                    shadows: [
+                      Shadow(color: Colors.black45, blurRadius: 3),
+                    ]),
               ),
-            ),
-            const SizedBox(height: 6),
-            const Text('底图 © 高德地图 · 禁钓数据据政府公开通告整理（2026-10）',
-                style: TextStyle(fontSize: 10, color: Colors.white70)),
-          ]),
-        ),
+            ]),
+          ),
 
         // ---------------- 选中详情 ----------------
         if (_selWater != null)
           Positioned(
             left: 12,
             right: 12,
-            bottom: bottomInset + 14,
+            bottom: widget.embedded ? 132 : bottomInset + 14,
             child: _selectedWaterCard(_selWater!),
           ),
         if (_selZone != null)
           Positioned(
             left: 12,
             right: 12,
-            bottom: bottomInset + 14,
+            bottom: widget.embedded ? 132 : bottomInset + 14,
             child: _selectedZoneCard(_selZone!),
           ),
 
@@ -1300,6 +1683,63 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
             onPressed: () => setState(() => _selZone = null),
           ),
         ]),
+      ),
+    );
+  }
+
+  /// AI 找钓点胶囊（参考 App 的深色圆角胶囊 + 绿色星光图标）
+  Widget _aiCapsule() {
+    return Center(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(26),
+          onTap: _aiLoading ? null : _aiFindSpots,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xE6101A12),
+              borderRadius: BorderRadius.circular(26),
+              boxShadow: const [
+                BoxShadow(
+                    color: Colors.black38,
+                    blurRadius: 10,
+                    offset: Offset(0, 3))
+              ],
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 24,
+                height: 24,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF9BE15D),
+                  shape: BoxShape.circle,
+                ),
+                child: _aiLoading
+                    ? const Padding(
+                        padding: EdgeInsets.all(5),
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Color(0xFF101A12)),
+                      )
+                    : const Icon(Icons.auto_awesome,
+                        size: 14, color: Color(0xFF101A12)),
+              ),
+              const SizedBox(width: 8),
+              Text(_aiLoading ? '分析中…' : 'AI 找钓点',
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white)),
+              const SizedBox(width: 6),
+              const Text('AI SPOT',
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.6,
+                      color: Color(0xFF9BE15D))),
+            ]),
+          ),
+        ),
       ),
     );
   }
@@ -1568,4 +2008,43 @@ class _AiSheet extends StatelessWidget {
       ]),
     );
   }
+}
+
+/// 地图中心十字星（参考 App「地图设置 → 中心十字星」图层）
+class _CrosshairOverlay extends StatelessWidget {
+  const _CrosshairOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Center(
+        child: SizedBox(
+          width: 34,
+          height: 34,
+          child: CustomPaint(painter: _CrosshairPainter()),
+        ),
+      ),
+    );
+  }
+}
+
+class _CrosshairPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final p = Paint()
+      ..color = const Color(0xCC1E88E5)
+      ..strokeWidth = 1.6
+      ..style = PaintingStyle.stroke;
+    const r = 13.0;
+    canvas.drawCircle(c, r, p);
+    canvas.drawLine(Offset(c.dx - r - 6, c.dy), Offset(c.dx - r + 1, c.dy), p);
+    canvas.drawLine(Offset(c.dx + r - 1, c.dy), Offset(c.dx + r + 6, c.dy), p);
+    canvas.drawLine(Offset(c.dx, c.dy - r - 6), Offset(c.dx, c.dy - r + 1), p);
+    canvas.drawLine(Offset(c.dx, c.dy + r - 1), Offset(c.dx, c.dy + r + 6), p);
+    canvas.drawCircle(c, 1.6, Paint()..color = const Color(0xCC1E88E5));
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
