@@ -107,6 +107,39 @@ Future<({List hits, Point<num> at})> _probeRiver(
   return (hits: const [], at: last);
 }
 
+/// 确保相机真的停在目标点附近，返回是否成功
+///
+/// ★ CI 上出现过这种假阴性：`animateCamera` 之后 6 秒，
+///   `toScreenLocation(长江中点)` 返回 `Point(83086, -16025)` ——
+///   一个远在屏幕外的坐标，于是后面所有查询都是 0 命中，
+///   看着像「河流图层没生效」，其实是**相机没真正移动到位**。
+///   style 刚加载完的那段时间里，`toScreenLocation` 会返回未就绪矩阵算出的
+///   垃圾值；同一份代码上一次跑是通过的（screen=196,426），说明是时序问题。
+///   这里改成「移动 → 等 → 反算屏幕坐标是否合理 → 不合理再移一次」，
+///   最多 8 轮，让这条断言只反映图层本身对不对。
+Future<bool> _ensureCameraAt(
+  WidgetTester tester,
+  mgl.MapLibreMapController ctl,
+  ll.LatLng target,
+  double zoom,
+) async {
+  for (var i = 0; i < 8; i++) {
+    await ctl.animateCamera(
+      mgl.CameraUpdate.newLatLngZoom(_mapLat(target), zoom),
+      duration: const Duration(milliseconds: 1),
+    );
+    await wait(tester, i == 0 ? 5000 : 1800);
+    try {
+      final scr = await ctl.toScreenLocation(_mapLat(target));
+      // 屏幕坐标合理 = 落在屏幕尺寸的几十倍以内；83086 这种就是坏的
+      if (scr.x.abs() < 4000 && scr.y.abs() < 4000) return true;
+      // ignore: avoid_print
+      print('[TEST] 相机未到位（第 ${i + 1} 轮）screen=$scr，重试');
+    } catch (_) {}
+  }
+  return false;
+}
+
 ll.LatLng? _centerOf(WaterBody w) {
   if (w.geometry.isEmpty) return null;
   return w.geometry[w.geometry.length ~/ 2];
@@ -195,8 +228,8 @@ void main() {
           orElse: () => waters.first,
         );
     final riverPt = _centerOf(river)!;
-    await ctl!.animateCamera(mgl.CameraUpdate.newLatLngZoom(_mapLat(riverPt), 12));
-    await wait(tester, 6000);
+    expect(await _ensureCameraAt(tester, ctl!, riverPt, 12), isTrue,
+        reason: '相机没能移到「${river.name}」所在位置，后续查询结果不可信');
 
     final probe = await _probeRiver(ctl!, river);
     // ignore: avoid_print
@@ -212,8 +245,8 @@ void main() {
 
     final spot = usable.first;
     final spotPt = ll.LatLng(spot.lat, spot.lng);
-    await ctl!.animateCamera(mgl.CameraUpdate.newLatLngZoom(_mapLat(spotPt), 15));
-    await wait(tester, 5000);
+    expect(await _ensureCameraAt(tester, ctl!, spotPt, 15), isTrue,
+        reason: '相机没能移到钓点「${spot.name}」所在位置');
 
     final spotScreen = await ctl!.toScreenLocation(_mapLat(spotPt));
     final spotHits =
@@ -307,9 +340,8 @@ void main() {
     final waters = await MapDataService.waters();
     final river = waters.firstWhere((w) => w.isRiver, orElse: () => waters.first);
     final pt = _centerOf(river)!;
-    await ctl!.animateCamera(mgl.CameraUpdate.newLatLngZoom(_mapLat(pt), 12),
-        duration: const Duration(milliseconds: 300));
-    await wait(tester, 5000);
+    expect(await _ensureCameraAt(tester, ctl!, pt, 12), isTrue,
+        reason: '压测后相机移不回「${river.name}」');
     final probe = await _probeRiver(ctl!, river);
     // ignore: avoid_print
     print('[PERF] 压测后仍可命中「${river.name}」: ${probe.hits.length} 个要素');
