@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' show Point;
 
+import 'package:flutter/foundation.dart' show Factory;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart' as ll;
 import 'package:maplibre_gl/maplibre_gl.dart';
@@ -144,10 +146,14 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         _cfgReady = true;
       });
       // 原生层 8 秒还没 ready 就降级，绝不让用户对着白屏
+      //
+      // ★ 判定条件必须是「原生 View 压根没创建」（_map == null），
+      //   而不是「样式没加载完」。底图瓦片在网络差的时候本来就慢，
+      //   这时候把用户切到 Dart 版内核（flutter_map 逐瓦片画布贴图）
+      //   只会更卡 —— 老内核在 iOS 上一屏几十张图解码，正好是
+      //   「一拖动就卡死」的形态。只要 View 起来了就继续等瓦片。
       _guard = Timer(SpotMapGlScreen.readyTimeout, () {
-        if (!mounted || _styleReady) return;
-        // MapLibreMap 从树上摘掉后它内部的 controller 会被自己释放，
-        // 这里必须置空，否则页面 dispose 时再 dispose 一次会抛异常。
+        if (!mounted || _map != null) return;
         setState(() {
           _map = null;
           _fallback = true;
@@ -451,8 +457,32 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
 
   // ---------------------------------------------------------------- 定位
 
+  /// 待执行的镜头移动
+  ///
+  /// ★ 这里修掉一个「第一次打开地图停在全国视角」的真 bug：
+  ///   `initState` 里定位是 postFrame 就发起的，而原生地图要等
+  ///   底图配置读盘 + 样式文件落地后才会创建，两者是竞速关系。
+  ///   以前 `_map?.animateCamera(...)` 在 `_map == null` 时**静默丢弃**，
+  ///   定位成功的坐标根本没生效，地图永远停在 initialCameraPosition
+  ///   的 z4 全国视角 —— 屏幕上只有一片卫星海面，河流/钓点全部在
+  ///   minzoom 门槛以下不显示，看着就像「地图坏了 / 不动了」。
+  ///   现在把目标坐标缓存下来，等 onMapCreated 时再补一次。
+  ({double lat, double lng})? _pendingMove;
+
   void _moveTo(double lat, double lng) {
-    _map?.animateCamera(CameraUpdate.newLatLngZoom(LatLng(lat, lng), 13));
+    _pendingMove = (lat: lat, lng: lng);
+    _flushPendingMove();
+  }
+
+  void _flushPendingMove() {
+    final t = _pendingMove;
+    final c = _map;
+    if (t == null || c == null) return;
+    _pendingMove = null;
+    c.animateCamera(
+      CameraUpdate.newLatLngZoom(LatLng(t.lat, t.lng), 13),
+      duration: const Duration(milliseconds: 500),
+    );
   }
 
   Future<void> _locate({bool silent = false}) async {
@@ -552,12 +582,33 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                 compassEnabled: false,
                 rotateGesturesEnabled: false,
                 tiltGesturesEnabled: false,
-                trackCameraPosition: true,
+                // ★★ 必须是 false。
+                //   iOS 端 `mapViewRegionIsChanging` 里只要 trackCameraPosition
+                //   为真，就会**每一帧**往 Dart 发一次 `camera#onMove`（带 6 个
+                //   数值的相机参数）。手指拖动时等于 60 次/秒的跨平台通道往返，
+                //   叠加在 platform view 的合成开销上，实测就是「一动就卡住」。
+                //   我们并不需要实时相机位置：缩放按钮改用 zoomBy（增量缩放，
+                //   不需要读当前 zoom），落点由 onMapClick 的原生回调给。
+                trackCameraPosition: false,
+                // ★★ 原生手势独占。
+                //   MapLibreMap 在 iOS 是一个 Flutter PlatformView，默认所有触摸
+                //   都要先过 Flutter 的手势竞技场（gesture arena）。本页被嵌在
+                //   `TabBarView` 里，横向拖动会被 TabBarView 的滚动识别器抢走，
+                //   地图拿到的是一个「半截」手势 —— 表现就是拖不动、双指缩放
+                //   没反应、甚至手指按着不动整页像死掉。
+                //   EagerGestureRecognizer 让原生 View 在触点落下时立即接管，
+                //   Flutter 不再参与，拖动 / 缩放直接走原生 GL 线程。
+                gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+                  Factory<OneSequenceGestureRecognizer>(
+                      () => EagerGestureRecognizer()),
+                },
                 // 原生自带的「i」版权按钮放右下，左下留给自绘的长版权行，避免叠在一起
                 attributionButtonPosition: AttributionButtonPosition.bottomRight,
                 onMapCreated: (c) {
                   _map = c;
                   SpotMapGlScreen.debugOnControllerCreated?.call(c);
+                  // 定位若比原生 View 先到（几乎总是如此），在这里补上镜头移动
+                  _flushPendingMove();
                   _renderLayers();
                 },
                 onStyleLoadedCallback: () {
@@ -566,6 +617,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                   _layersReady = false;
                   _meAdded = false;
                   _styleReady = true;
+                  _flushPendingMove();
                   _renderLayers();
                 },
                 onMapClick: (point, latlng) => _onMapClick(point),
@@ -606,18 +658,19 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
             _applyLayerToggles();
           }),
           const SizedBox(height: 8),
+          // 用增量缩放（zoomBy）而不是 zoomTo：
+          // zoomTo 需要先读到当前 zoom，而读 zoom 依赖 trackCameraPosition，
+          // 那条链路正是拖动卡顿的来源。zoomBy 由原生层自己算，零读取。
           _roundBtn(Icons.add, '放大', () async {
-            final z = _map?.cameraPosition?.zoom;
-            if (z != null) {
-              await _map?.animateCamera(CameraUpdate.zoomTo((z + 1).clamp(3, 18)));
-            }
+            await _map?.animateCamera(
+                CameraUpdate.zoomBy(0.9),
+                duration: const Duration(milliseconds: 220));
           }),
           const SizedBox(height: 8),
           _roundBtn(Icons.remove, '缩小', () async {
-            final z = _map?.cameraPosition?.zoom;
-            if (z != null) {
-              await _map?.animateCamera(CameraUpdate.zoomTo((z - 1).clamp(3, 18)));
-            }
+            await _map?.animateCamera(
+                CameraUpdate.zoomBy(-0.9),
+                duration: const Duration(milliseconds: 220));
           }),
           const SizedBox(height: 8),
           _roundBtn(Icons.my_location, '定位', () => _locate()),
