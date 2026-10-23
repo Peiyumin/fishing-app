@@ -447,6 +447,52 @@ class _SpotsScreenState extends State<SpotsScreen>
     );
   }
 
+  /// 竖排文字：每个汉字一行（中文竖排没有原生排版，用一列 Text 最稳）
+  List<Widget> _vChars(String s, {double size = 12, FontWeight w = FontWeight.w600}) {
+    return s
+        .split('')
+        .where((c) => c.trim().isNotEmpty)
+        .map((c) => Text(c,
+            style: TextStyle(
+                fontSize: size,
+                height: 1.18,
+                fontWeight: w,
+                color: AppTheme.textPrimary)))
+        .toList();
+  }
+
+  /// 竖排条里的「图标 + 中文」按钮
+  Widget _vAction(IconData icon, String label, Color color,
+      {required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 17, color: color),
+            const SizedBox(height: 2),
+            Text(label,
+                style: TextStyle(
+                    fontSize: 10.5, height: 1.1, color: color)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 去标记野钓点（未登录先登录）
+  Future<void> _openPublishSpot() async {
+    if (!await _requireLogin()) return;
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const PublishSpotScreen()),
+    );
+    _load(); // 返回后刷新：新标记全员实时可见
+  }
+
   Widget _buildWildTab() {
     return Stack(
       children: [
@@ -458,69 +504,45 @@ class _SpotsScreenState extends State<SpotsScreen>
             controller: _mapCtrl,
           ),
         ),
-        // 顶部提示条 + 标记入口
+        // 左侧竖排信息条（不再横着压在标准图上方，视野让给地图）
         Positioned(
-          top: 8,
           left: 12,
-          right: 12,
+          // 让开地图自带的「图层 / 禁钓名录」两个圆按钮
+          top: 62,
           child: Container(
-            padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+            width: 48,
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.94),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(14),
               boxShadow: const [
                 BoxShadow(color: Colors.black12, blurRadius: 6)
               ],
             ),
-            child: Row(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.info_outline,
-                    size: 15, color: AppTheme.accent),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    '钓友共享野钓点 ${_wild.length} 个',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh, size: 18),
-                  tooltip: '刷新',
-                  padding: EdgeInsets.zero,
-                  constraints:
-                      const BoxConstraints(minWidth: 32, minHeight: 32),
-                  onPressed: _load,
-                ),
-                const SizedBox(width: 4),
-                // 标记野钓点（主入口，收进顶部条避免遮挡地图）
-                SizedBox(
-                  height: 30,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.danger,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8)),
-                    ),
-                    onPressed: () async {
-                      if (!await _requireLogin()) return;
-                      if (!mounted) return;
-                      await Navigator.of(context).push(
-                        MaterialPageRoute(
-                            builder: (_) => const PublishSpotScreen()),
-                      );
-                      _load(); // 返回后刷新：新标记全员实时可见
-                    },
-                    icon: const Icon(Icons.add_location_alt, size: 15),
-                    label: const Text('标记',
-                        style: TextStyle(
-                            fontSize: 12, fontWeight: FontWeight.w600)),
-                  ),
-                ),
+                // 竖排：钓 / 友 / 共 / 享 一列往下
+                ..._vChars('钓友共享'),
+                const SizedBox(height: 3),
+                Text('${_wild.length}',
+                    style: const TextStyle(
+                        fontSize: 15,
+                        height: 1.1,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.accent)),
+                const Text('个',
+                    style: TextStyle(fontSize: 11, height: 1.2)),
+                const SizedBox(height: 8),
+                Container(width: 22, height: 1, color: const Color(0x14000000)),
+                const SizedBox(height: 8),
+                // 刷新（图标 + 中文）
+                _vAction(Icons.refresh, '刷新', AppTheme.textSecondary,
+                    onTap: _load),
+                const SizedBox(height: 10),
+                // 标记（图标 + 中文，主入口）
+                _vAction(Icons.add_location_alt, '标记', AppTheme.danger,
+                    onTap: _openPublishSpot),
               ],
             ),
           ),
