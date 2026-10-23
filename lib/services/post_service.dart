@@ -205,6 +205,25 @@ class PostService {
     }
   }
 
+  /// 按 id 拉单条动态（通知点击直达详情用）
+  ///
+  /// 通知里只有 postId，没有列表中的完整 Post 对象，必须能单独取一次。
+  /// 帖子已被删除时返回 null（调用方提示「动态已删除」而不是白屏）。
+  static Future<Post?> fetchById(String id) async {
+    if (id.isEmpty) return null;
+    if (_demo) {
+      for (final p in _demoPosts) {
+        if (p.id == id) return p;
+      }
+      return null;
+    }
+    try {
+      final data = await ApiClient.get('/posts/$id');
+      if (data is Map) return _fromApi(data);
+    } catch (_) {}
+    return null;
+  }
+
   /// 发布动态：先上传图片（或单个视频），再写入动态
   /// 图片与视频二选一（后端同样限制不能混传）
   /// category: post 渔获 / ask 问答 / say 说说 / sell 出售 / buy 求购
