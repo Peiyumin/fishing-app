@@ -75,6 +75,12 @@ class SpotMapController {
 
   /// 地图移动到指定坐标（宿主页定位成功后调用）
   void moveToLocation(double lat, double lng) => _move?.call(lat, lng);
+
+  /// 地图实现挂载时绑定（flutter_map / 原生 GL 两套实现都用这个）
+  void bind(void Function(double lat, double lng) move) => _move = move;
+
+  /// 地图实现卸载时解绑
+  void unbind() => _move = null;
 }
 
 class _SpotMapScreenState extends State<SpotMapScreen> {
@@ -104,12 +110,16 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
 
   // 瓦片提供器（磁盘缓存 + 内置离线包），三种图层各一个，不能每帧新建，
   // 否则 TileLayer 会认为提供器变了，把所有瓦片重新加载一遍
-  late final CachedTileProvider _imgProvider =
-      CachedTileProvider(layer: 'img', onNetworkFail: _onTileFail);
-  late final CachedTileProvider _vecProvider =
-      CachedTileProvider(layer: 'vec', onNetworkFail: _onTileFail);
-  late final CachedTileProvider _ciaProvider =
-      CachedTileProvider(layer: 'cia', onNetworkFail: _onTileFail);
+  late final CachedTileProvider _imgProvider = CachedTileProvider(
+      layer: 'img', onNetworkFail: _onTileFail, onTileOk: _onTileOk);
+  late final CachedTileProvider _vecProvider = CachedTileProvider(
+      layer: 'vec', onNetworkFail: _onTileFail, onTileOk: _onTileOk);
+  late final CachedTileProvider _ciaProvider = CachedTileProvider(
+      layer: 'cia', onNetworkFail: _onTileFail, onTileOk: _onTileOk);
+
+  /// 看门狗：进入地图 15 秒还没有任何一块瓦片成功，就认为当前底图这条线不通
+  Timer? _watchdog;
+  bool _gotAnyTile = false;
 
   // 是否已从星图/天地图降级到高德（一个会话只降一次）
   bool _degraded = false;
@@ -139,6 +149,9 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     super.initState();
     // 瓦片缓存目录 + 内置离线包探测（后台跑，不阻塞首帧）
     unawaited(CachedTileProvider.init());
+    _watchdog = Timer(const Duration(seconds: 15), () {
+      if (mounted && !_gotAnyTile) _onTileFail();
+    });
     _load();
     _searchCtrl.addListener(_onSearchChanged);
     // 宿主页（钓点页）联动定位：把内部移动能力挂到 controller 上
@@ -154,6 +167,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
 
   @override
   void dispose() {
+    _watchdog?.cancel();
     widget.controller?._move = null;
     _searchCtrl.removeListener(_onSearchChanged);
     _searchCtrl.dispose();
@@ -163,6 +177,12 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
 
   /// 连续多个瓦片加载失败 → 说明当前底图这条线不通（配额用完 / 被限流 / 断网），
   /// 直接降到免 key 的高德，避免整屏空瓦片还一直重试拖慢 UI。
+  void _onTileOk() {
+    if (_gotAnyTile) return;
+    _gotAnyTile = true;
+    _watchdog?.cancel();
+  }
+
   void _onTileFail() {
     if (!mounted || _degraded) return;
     if (_tile.kind == TileSourceKind.gaode) return;
@@ -516,6 +536,14 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                     _tile.describe,
                     style: const TextStyle(
                         fontSize: 11.5, color: Color(0xFF8A9099)),
+                  ),
+                  const SizedBox(height: 4),
+                  // 瓦片统计：缓存命中越多越省流量，也说明离线缓存确实在工作
+                  Text(
+                    '瓦片 ${CachedTileProvider.statLine}'
+                    '${CachedTileProvider.hasBundledTiles ? ' · 含内置包' : ''}',
+                    style: const TextStyle(
+                        fontSize: 11, color: Color(0xFF8A9099)),
                   ),
                 ]),
 
@@ -1444,6 +1472,8 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                   tileProvider: _layers.satellite ? _imgProvider : _vecProvider,
                   // 只保留视野周边一圈（默认 2 圈），少留 60% 解码纹理，省内存不卡顿
                   keepBuffer: 1,
+                  // 不留视野外的「预加载圈」，少请求一批瓦片
+                  panBuffer: 0,
                   maxNativeZoom: _tile.maxNativeZoom,
                 ),
                 // 路网标注叠加层（可关）
