@@ -1,7 +1,7 @@
 name: fishing_app
 description: 垂钓社区 App —— 钓鱼天气、钓点导航、渔获分享（Flutter 双端）
 publish_to: 'none'
-version: 2.1.16+26
+version: 2.1.17+27
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -39,6 +39,8 @@ dependencies:
   open_filex: ^5.0.0
   gal: 2.1.1
   maplibre_gl: 0.22.0
+  # 系统通知：私信 / 评论 / 点赞 / 官方公告到达时弹通知栏与横幅
+  flutter_local_notifications: ^17.2.4
 
 dev_dependencies:
   flutter_test:
