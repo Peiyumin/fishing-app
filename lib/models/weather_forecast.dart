@@ -30,7 +30,8 @@ class Wmo {
   static Color color(int? code, {bool day = true}) {
     switch (code) {
       case 0:
-        return const Color(0xFFF5A623); // 晴：暖金黄
+        // 晴：日间暖金黄，夜间月白（配月亮图标，避免「夜里一个大金太阳」）
+        return day ? const Color(0xFFF5A623) : const Color(0xFFAFC3E2);
       case 1:
         return day ? const Color(0xFFF5A623) : const Color(0xFF7C8FA6);
       case 2:
@@ -72,7 +73,8 @@ class Wmo {
   static IconData icon(int? code, {bool day = true}) {
     switch (code) {
       case 0:
-        return day ? Icons.wb_sunny : Icons.wb_sunny_outlined;
+        // 晴：日间太阳，夜间月亮（用户口径：晚 7 点至日出为止算夜间）
+        return day ? Icons.wb_sunny : Icons.nightlight_round;
       case 1:
         // 少云：日间带云的太阳（Material 没有标准「多云带阳」，用 outline 区分）
         return day ? Icons.wb_sunny_outlined : Icons.nightlight_round;
