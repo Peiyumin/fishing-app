@@ -6,10 +6,21 @@ import '../models/signin.dart';
 import '../services/session_provider.dart';
 import '../services/signin_service.dart';
 import '../widgets/center_toast.dart';
+import 'discover_screen.dart';
+import 'nearby_anglers_screen.dart';
+import 'publish_catch_screen.dart';
+import 'publish_hub_screen.dart';
 
 /// 每日签到 / 每日任务（v27，参考图一，配色沿用 App 青绿 + 暖金）
 class SigninScreen extends StatefulWidget {
   const SigninScreen({super.key});
+
+  /// 预览/测试钩子：给定时直接当作首屏状态，不请求接口
+  ///
+  /// 生产环境恒为 null（登录后由接口给真实数据）。
+  /// 只有本地 web 预览入口会用它，用来把「今天这格」「已完成待领」
+  /// 这些平时很难凑出来的状态渲染出来看。
+  static SigninStatus? debugStatus;
 
   @override
   State<SigninScreen> createState() => _SigninScreenState();
@@ -20,9 +31,18 @@ class _SigninScreenState extends State<SigninScreen> {
   bool _loading = true;
   bool _submitting = false;
 
+  /// 正在领奖的任务 key（防止连点重复提交）
+  String? _claiming;
+
   @override
   void initState() {
     super.initState();
+    final dbg = SigninScreen.debugStatus;
+    if (dbg != null) {
+      _status = dbg;
+      _loading = false;
+      return;
+    }
     _load();
   }
 
@@ -270,15 +290,23 @@ class _SigninScreenState extends State<SigninScreen> {
     required bool done,
     required bool isToday,
   }) {
-    final highlight = isToday;
+    // ★ 修掉「第一个格子一片空白」的 bug：
+    //   原来 isToday 时底色刷成纯白（Colors.white），而里面
+    //   「+5」「1」「1天」的文字颜色都是 Colors.white —— 白字白底，
+    //   整格看起来就是空的。今天这格改成「白底 + 深色字」。
+    final textColor =
+        isToday ? AppTheme.primaryDark : Colors.white;
+    final subColor = isToday
+        ? AppTheme.primaryDark.withOpacity(0.72)
+        : Colors.white.withOpacity(0.8);
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
         color: done
             ? Colors.white.withOpacity(0.22)
-            : (highlight ? Colors.white : Colors.white.withOpacity(0.12)),
+            : (isToday ? Colors.white : Colors.white.withOpacity(0.12)),
         borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-        border: highlight
+        border: isToday
             ? Border.all(color: AppTheme.star, width: 1.4)
             : null,
       ),
@@ -286,7 +314,7 @@ class _SigninScreenState extends State<SigninScreen> {
         children: [
           Text('+${reward.points}',
               style: TextStyle(
-                  color: Colors.white,
+                  color: textColor,
                   fontSize: 12.5,
                   fontWeight: FontWeight.w800)),
           const SizedBox(height: 5),
@@ -294,7 +322,11 @@ class _SigninScreenState extends State<SigninScreen> {
             width: 22,
             height: 22,
             decoration: BoxDecoration(
-              color: done ? AppTheme.star : Colors.white.withOpacity(0.25),
+              color: done
+                  ? AppTheme.star
+                  : (isToday
+                      ? AppTheme.star
+                      : Colors.white.withOpacity(0.25)),
               shape: BoxShape.circle,
             ),
             alignment: Alignment.center,
@@ -307,23 +339,21 @@ class _SigninScreenState extends State<SigninScreen> {
                         fontWeight: FontWeight.w700)),
           ),
           const SizedBox(height: 3),
-          Text('${day}天',
-              style: TextStyle(
-                  color: Colors.white.withOpacity(0.8), fontSize: 9.5)),
+          Text('${day}天', style: TextStyle(color: subColor, fontSize: 9.5)),
         ],
       ),
     );
   }
 
-  /// 每日任务（引导型）
+  /// 每日任务
+  ///
+  /// 任务清单来自后端（`GET /signin` 的 tasks 字段），完成度按当天
+  /// 真实行为统计。三态：
+  ///   · 未完成 → 「去完成」，点了跳到对应页面，回来自动刷新进度
+  ///   · 已完成未领 → 「领取 +N」，点了调 `POST /signin/tasks`
+  ///   · 已领取 → 「已领取」，置灰不可点
   Widget _tasksCard() {
-    final tasks = <({String title, String desc, String reward, IconData icon})>[
-      (title: '发布 1 条渔获', desc: '每日发布 1 条渔获贴', reward: '+积分', icon: Icons.phishing_outlined),
-      (title: '分享抽奖活动', desc: '每日首次分享抽奖活动', reward: '+1', icon: Icons.ios_share_outlined),
-      (title: '发布任意类型帖', desc: '每日首次发布帖子', reward: '+1', icon: Icons.edit_outlined),
-      (title: '发布 2 条评论', desc: '每日发布任意 2 条评论', reward: '+1', icon: Icons.chat_bubble_outline),
-      (title: '关注 2 名用户', desc: '每日新关注 2 名钓友', reward: '+1', icon: Icons.person_add_alt_outlined),
-    ];
+    final tasks = _status.tasks;
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 6),
       decoration: BoxDecoration(
@@ -335,50 +365,189 @@ class _SigninScreenState extends State<SigninScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('每日任务',
-              style: TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w800)),
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
           const Text('完成任务可获得积分奖励，发布渔获还有额外积分',
               style: TextStyle(
                   fontSize: 11.5, color: AppTheme.textSecondary)),
           const SizedBox(height: 6),
-          for (final t in tasks)
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: AppTheme.primaryLight,
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                alignment: Alignment.center,
-                child: Icon(t.icon, size: 18, color: AppTheme.primary),
-              ),
-              title: Text(t.title,
-                  style: const TextStyle(
-                      fontSize: 13.5, fontWeight: FontWeight.w700)),
-              subtitle: Text(t.desc,
-                  style: const TextStyle(
-                      fontSize: 11, color: AppTheme.textSecondary)),
-              trailing: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: AppTheme.primary,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: const Text('去完成',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w700)),
-              ),
+          if (tasks.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 14),
+              child: Text('任务加载中…',
+                  style: TextStyle(
+                      fontSize: 12, color: AppTheme.textSecondary)),
             ),
+          for (final t in tasks) _taskRow(t),
         ],
       ),
     );
+  }
+
+  Widget _taskRow(DailyTask t) {
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      onTap: t.claimed ? null : () => _onTaskTap(t),
+      leading: Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: AppTheme.primaryLight,
+          borderRadius: BorderRadius.circular(9),
+        ),
+        alignment: Alignment.center,
+        child: Icon(_taskIcon(t.icon), size: 18, color: AppTheme.primary),
+      ),
+      title: Text(t.title,
+          style: const TextStyle(
+              fontSize: 13.5, fontWeight: FontWeight.w700)),
+      subtitle: Row(children: [
+        Expanded(
+          child: Text(
+            t.target > 1 ? '${t.desc}（${t.progress}/${t.target}）' : t.desc,
+            style:
+                const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+          ),
+        ),
+        Text('+${t.points}',
+            style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.star)),
+      ]),
+      trailing: _taskAction(t),
+    );
+  }
+
+  Widget _taskAction(DailyTask t) {
+    if (t.claimed) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppTheme.divider,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: const Text('已领取',
+            style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700)),
+      );
+    }
+    if (t.done) {
+      // 已完成 → 直接领
+      final busy = _claiming == t.key;
+      return GestureDetector(
+        onTap: busy ? null : () => _claim(t),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: AppTheme.star,
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: busy
+              ? const SizedBox(
+                  width: 11,
+                  height: 11,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 1.6, color: Colors.white))
+              : Text('领取 +${t.points}',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700)),
+        ),
+      );
+    }
+    return GestureDetector(
+      onTap: () => _onTaskTap(t),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppTheme.primary,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: const Text('去完成',
+            style: TextStyle(
+                color: Colors.white,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700)),
+      ),
+    );
+  }
+
+  IconData _taskIcon(String key) {
+    switch (key) {
+      case 'fish':
+        return Icons.phishing_outlined;
+      case 'edit':
+        return Icons.edit_outlined;
+      case 'comment':
+        return Icons.chat_bubble_outline;
+      case 'follow':
+        return Icons.person_add_alt_outlined;
+      case 'check':
+        return Icons.event_available_outlined;
+      default:
+        return Icons.task_alt_outlined;
+    }
+  }
+
+  /// 点任务：跳对应页面（签到那条直接签到）
+  Future<void> _onTaskTap(DailyTask t) async {
+    switch (t.key) {
+      case 'checkin':
+        if (!_status.signedToday) {
+          await _checkin();
+        } else {
+          CenterToast.show(context, '今天已经签到过了');
+        }
+        return;
+      case 'publish_catch':
+        await Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => const PublishCatchScreen()));
+        break;
+      case 'publish_post':
+        await Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => const PublishHubScreen()));
+        break;
+      case 'comment_2':
+        await Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => const DiscoverScreen()));
+        break;
+      case 'follow_2':
+        await Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => const NearbyAnglersScreen()));
+        break;
+      default:
+        return;
+    }
+    // 从目标页回来，立刻刷新完成度（比如刚发完渔获，这里就能领了）
+    if (mounted) await _load();
+  }
+
+  /// 领奖
+  Future<void> _claim(DailyTask t) async {
+    if (_claiming != null) return;
+    setState(() => _claiming = t.key);
+    try {
+      final r = await SigninService.claimTask(t.key);
+      if (!mounted) return;
+      setState(() {
+        _claiming = null;
+        _status = _status.copyWith(tasks: r.tasks, points: r.total);
+      });
+      if (r.already) {
+        CenterToast.show(context, '今天已经领过了');
+      } else {
+        CenterToast.show(context, '领取成功  +${r.points} ${_status.pointsName}');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _claiming = null);
+      CenterToast.show(context, e.toString().replaceAll('Exception: ', ''));
+    }
   }
 
   Widget _rulesCard() {
