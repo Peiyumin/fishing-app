@@ -185,4 +185,86 @@ void main() {
     expect('$hitId', spot.id,
         reason: '命中的要素 id 和钓点 id 对不上，点击会跳错人或跳不动');
   });
+
+  // ---------------------------------------------------------------- 压测
+  // 说明清楚边界：CI 的 macOS runner 没有 GPU，MapLibre 走软件渲染，
+  // **帧率在这里没有参考价值**，跑出来的 FPS 只会误导人。
+  // 这里能测、且值得测的是"长时间连续拖动缩放会不会崩 / 图层会不会丢 /
+  // 原生内核会不会中途失效"—— 这正是之前闪退、白屏那类问题的形态。
+  testWidgets('iOS：连续跨城拖动缩放压测，不崩不丢图层', (tester) async {
+    SpotMapGlScreen.readyTimeout = const Duration(seconds: 90);
+    addTearDown(() {
+      SpotMapGlScreen.readyTimeout = const Duration(seconds: 8);
+      SpotMapGlScreen.debugOnControllerCreated = null;
+    });
+
+    mgl.MapLibreMapController? ctl;
+    SpotMapGlScreen.debugOnControllerCreated = (c) => ctl = c;
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(body: SpotMapGlScreen()),
+    ));
+
+    expect(await until(tester, () async => ctl != null, timeoutMs: 90000),
+        isTrue, reason: '原生内核没起来');
+    expect(
+        await until(tester, () async {
+          final ids = (await ctl!.getLayerIds()).map((e) => e.toString()).toList();
+          return ids.contains('spots-circle');
+        }, timeoutMs: 60000),
+        isTrue,
+        reason: '图层没就绪');
+
+    // 5 个城市 × 3 轮 = 15 次跨城跳转，覆盖 z11~z15（不同瓦片层级）
+    final targets = <(double, double, double)>[
+      (39.9042, 116.4074, 11), // 北京
+      (31.2304, 121.4737, 13), // 上海
+      (23.1291, 113.2644, 12), // 广州
+      (30.5728, 104.0668, 14), // 成都
+      (26.0745, 119.2965, 15), // 福州
+    ];
+
+    final cost = <int>[];
+    for (var round = 0; round < 3; round++) {
+      for (final t in targets) {
+        final sw = Stopwatch()..start();
+        await ctl!.animateCamera(
+          mgl.CameraUpdate.newLatLngZoom(mgl.LatLng(t.$1, t.$2), t.$3),
+          duration: const Duration(milliseconds: 350),
+        );
+        // 给原生层时间下瓦片、解码、上屏
+        await wait(tester, 1200);
+        cost.add(sw.elapsedMilliseconds);
+
+        // 每一跳都必须还活着：能读到相机、图层没丢
+        expect(ctl!.cameraPosition, isNotNull,
+            reason: '第 ${cost.length} 次跳转后相机位置读不到，原生层可能已失效');
+        final ids = (await ctl!.getLayerIds()).map((e) => e.toString()).toList();
+        expect(ids, contains('spots-circle'),
+            reason: '第 ${cost.length} 次跳转后钓点图层丢了');
+        expect(ids, contains('rivers-line'),
+            reason: '第 ${cost.length} 次跳转后河流图层丢了');
+      }
+    }
+
+    cost.sort();
+    final avg = cost.reduce((a, b) => a + b) ~/ cost.length;
+    // ignore: avoid_print
+    print('[PERF] 15 次跨城跳转（含 1.2s 观察窗）：'
+        '平均 ${avg}ms 中位 ${cost[cost.length ~/ 2]}ms '
+        '最慢 ${cost.last}ms 最快 ${cost.first}ms');
+
+    // 压测收尾再查一次要素，确认查询能力没被拖垮
+    final waters = await MapDataService.waters();
+    final river = waters.firstWhere((w) => w.isRiver, orElse: () => waters.first);
+    final pt = _centerOf(river)!;
+    await ctl!.animateCamera(mgl.CameraUpdate.newLatLngZoom(_mapLat(pt), 12),
+        duration: const Duration(milliseconds: 300));
+    await wait(tester, 5000);
+    final screen = await ctl!.toScreenLocation(_mapLat(pt));
+    final hits =
+        await ctl!.queryRenderedFeatures(_dbl(screen), ['rivers-line'], null);
+    // ignore: avoid_print
+    print('[PERF] 压测后仍可命中「${river.name}」: ${hits.length} 个要素');
+    expect(hits, isNotEmpty, reason: '压测后要素查询失效了');
+  });
 }
