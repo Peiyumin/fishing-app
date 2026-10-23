@@ -27,6 +27,8 @@
 	<!-- 权限说明：拍照打卡 / 相册选图 / 存相册 / 定位（天气·同城·水印） -->
 	<key>NSCameraUsageDescription</key>
 	<string>用于拍照打卡，拍摄带时间天气水印的渔获照片</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>用于在渔获拍照页长按录制带声音的短视频</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>用于选择照片发布动态、设置头像和钓点环境图</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
