@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' show Point;
 
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart' as ll;
 import 'package:maplibre_gl/maplibre_gl.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../app_theme.dart';
 import '../models/fishing_spot.dart';
@@ -67,8 +69,26 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   bool _cfgReady = false;
   TileSource _tile = const TileSource(kind: TileSourceKind.gaode);
 
-  /// 样式 JSON 只算一次（每次 build 重算会让 MapLibre 重载样式）
-  String? _style;
+  /// 样式文件的**绝对路径**（不是 JSON 内容）
+  ///
+  /// ★★ 这里有个坑，v2.1.13 之前一直是错的（iOS 上表现为「不是卫星地图」）：
+  /// `maplibre_gl 0.22.0` 的 iOS 端 **不支持 JSON 字符串样式** ——
+  /// `MapLibreMapController.swift` 的 `setStyleString` 里写得很清楚：
+  ///
+  ///     } else if styleString.hasPrefix("{") || styleString.hasPrefix("[") {
+  ///       // Currently the iOS MapLibre SDK does not have a builder for json.
+  ///       NSLog("setStyleString - JSON style currently not supported")
+  ///     }
+  ///
+  /// 也就是说传 JSON 会被**直接丢掉**，`styleURL` 保持 SDK 默认值 →
+  /// 地图渲染成 MapLibre 内置的 demo 底图（国家填色 + 英文国名 + 北回归线），
+  /// 我们的星图影像 / 河湖 / 禁钓区 / 钓点图层全部不生效。
+  /// Android 端倒是支持 `fromJson`，所以只有 iOS 中招。
+  ///
+  /// 解法：把样式 **落成临时文件、传绝对路径**。两端都认这个分支 ——
+  ///   iOS:     `hasPrefix("/")` → `mapView.styleURL = URL(fileURLWithPath:)`
+  ///   Android: `startsWith("/")` → `setStyle(Style.Builder().fromUri(...))`
+  String? _stylePath;
 
   List<WaterBody> _waters = const [];
   NoFishingData _zones = NoFishingData.empty;
@@ -101,11 +121,15 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     super.initState();
     widget.controller?.bind(_moveTo);
     _loadData();
-    MapConfigService.load().then((_) {
+    MapConfigService.load().then((_) async {
+      if (!mounted) return;
+      // 先切底图源，_buildStyle() 依赖 _tile
+      _tile = MapConfigService.source;
+      // ★ 样式必须落成文件传绝对路径，原因见 _stylePath 注释
+      final path = await _writeStyleFile(_buildStyle());
       if (!mounted) return;
       setState(() {
-        _tile = MapConfigService.source;
-        _style = _buildStyle();
+        _stylePath = path;
         _cfgReady = true;
       });
       // 原生层 8 秒还没 ready 就降级，绝不让用户对着白屏
@@ -231,6 +255,27 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         },
       ],
     });
+  }
+
+  /// 把样式 JSON 写进临时目录，返回绝对路径
+  ///
+  /// 为什么不用 `file://`：0.22.0 的 iOS 实现里 `file://` 分支是拿
+  /// `Bundle.main.path(forResource:)` 去找**打包进 App 的资源**，
+  /// 传沙盒绝对路径会直接 `NSLog("Path not found")` 失败；
+  /// 而以 `/` 开头的裸路径才会走 `URL(fileURLWithPath:)`。
+  /// 所以这里返回不带 scheme 的纯路径。
+  Future<String> _writeStyleFile(String json) async {
+    final dir = await getTemporaryDirectory();
+    final f = File('${dir.path}/spot_map_style.json');
+    try {
+      // 内容没变就不重写，省掉每次进页面的一次 IO
+      if (await f.exists() && await f.readAsString() == json) return f.path;
+    } catch (_) {
+      // 读失败就当作需要重写
+    }
+    await f.writeAsString(json, flush: true);
+    debugPrint('[SpotMapGL] style -> ${f.path}');
+    return f.path;
   }
 
   // ---------------------------------------------------------------- 图层
@@ -481,7 +526,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       Positioned.fill(
         child: _cfgReady
             ? MapLibreMap(
-                styleString: _style ?? _buildStyle(),
+                styleString: _stylePath ?? '',
                 initialCameraPosition: const CameraPosition(
                   target: LatLng(34.5, 108.9),
                   zoom: 4,
