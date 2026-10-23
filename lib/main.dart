@@ -248,13 +248,13 @@ class MainShell extends StatefulWidget {
 }
 
 class _MainShellState extends State<MainShell> {
-  // 五个常规页面（发布页用悬浮按钮单独打开，不占底部 item）
+  // 四个常规页面（发布页用悬浮按钮单独打开，不占底部 item）
+  // v2.1.10：删掉「地图」Tab —— 地图已嵌入钓点页的「野钓钓点」Tab 内
   int _currentIndex = 0;
   final List<Widget> _pages = const [
     HomeScreen(),
     DiscoverScreen(),
     SpotsScreen(),
-    SpotMapScreen(),
     ProfileScreen(),
   ];
 
@@ -292,8 +292,7 @@ class _MainShellState extends State<MainShell> {
               _navItem(1, Icons.explore_outlined, Icons.explore, '发现'),
               const SizedBox(width: 56), // 中间留白给发布按钮
               _navItem(2, Icons.place_outlined, Icons.place, '钓点'),
-              _navItem(3, Icons.map_outlined, Icons.map, '地图'),
-              _navItem(4, Icons.person_outline, Icons.person, '我的'),
+              _navItem(3, Icons.person_outline, Icons.person, '我的'),
             ],
           ),
         ),
