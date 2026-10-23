@@ -32,6 +32,7 @@ class CachedTileProvider extends TileProvider {
     required this.layer,
     super.headers,
     this.onNetworkFail,
+    this.onTileOk,
   });
 
   /// 图层名（img / cia / vec），决定磁盘子目录与内置包路径
@@ -39,6 +40,9 @@ class CachedTileProvider extends TileProvider {
 
   /// 网络连续失败时的回调（由页面决定是否降级到高德）
   final VoidCallback? onNetworkFail;
+
+  /// 任意一块瓦片成功拿到数据时的回调（用于「看门狗」判断地图是否活了）
+  final VoidCallback? onTileOk;
 
   /// 同时最多几个瓦片请求
   static const int maxConcurrent = 6;
@@ -57,6 +61,14 @@ class CachedTileProvider extends TileProvider {
   /// 是否随包内置了离线瓦片（assets/tiles/manifest.json 存在即为 true）
   static bool get hasBundledTiles => _bundled;
 
+  // ---- 运行统计（图层面板里显示，用来判断缓存到底有没有生效）----
+  static int statDisk = 0;   // 磁盘命中
+  static int statNet = 0;    // 网络下载
+  static int statFail = 0;   // 失败
+
+  /// 一行可读的统计，例：缓存 82 · 网络 14 · 失败 0
+  static String get statLine => '缓存 $statDisk · 网络 $statNet · 失败 $statFail';
+
   /// 初始化：准备缓存目录、探测内置包、后台清理超量缓存
   static Future<void> init() {
     return _ready ??= _init();
@@ -66,7 +78,7 @@ class CachedTileProvider extends TileProvider {
     try {
       final base = await getApplicationSupportDirectory();
       final dir = Directory('${base.path}/map_tiles');
-      if (!dir.existsSync()) dir.createSync(recursive: true);
+      if (!await dir.exists()) await dir.create(recursive: true);
       _root = dir;
     } catch (_) {
       // 拿不到目录就退化成「纯网络」，地图照样能看
@@ -77,8 +89,8 @@ class CachedTileProvider extends TileProvider {
     } catch (_) {
       _bundled = false;
     }
-    // 不阻塞启动，后台做一次容量清理
-    unawaited(_prune());
+    // 清理延后 8 秒再做，且全程异步 I/O，绝不占 UI 线程
+    Timer(const Duration(seconds: 8), () => unawaited(_prune()));
   }
 
   /// 命中一次网络成功
@@ -115,6 +127,7 @@ class CachedTileProvider extends TileProvider {
       y: coordinates.y,
       headers: headers,
       onFail: onNetworkFail,
+      onOk: onTileOk,
     );
   }
 
@@ -123,10 +136,12 @@ class CachedTileProvider extends TileProvider {
     final root = _root;
     if (root == null) return;
     try {
-      if (!root.existsSync()) return;
+      if (!await root.exists()) return;
       final files = <File>[];
-      for (final e in root.listSync(recursive: true, followLinks: false)) {
+      // 上限 20000 个，防止异常目录把清理本身变成负担
+      await for (final e in root.list(recursive: true, followLinks: false)) {
         if (e is File) files.add(e);
+        if (files.length >= 20000) break;
       }
       // 文件不多就不折腾（避免每次启动都扫盘）
       if (files.length < 2000) return;
@@ -135,8 +150,8 @@ class CachedTileProvider extends TileProvider {
       final entries = <MapEntry<File, int>>[];
       for (final f in files) {
         try {
-          final len = f.lengthSync();
-          final mt = f.lastModifiedSync().millisecondsSinceEpoch;
+          final len = await f.length();
+          final mt = (await f.lastModified()).millisecondsSinceEpoch;
           total += len;
           entries.add(MapEntry(f, mt));
         } catch (_) {}
@@ -148,8 +163,8 @@ class CachedTileProvider extends TileProvider {
       for (final e in entries) {
         if (total <= target) break;
         try {
-          final len = e.key.lengthSync();
-          e.key.deleteSync();
+          final len = await e.key.length();
+          await e.key.delete();
           total -= len;
         } catch (_) {}
       }
@@ -169,6 +184,7 @@ class _TileImage extends ImageProvider<_TileImage> {
     required this.y,
     required this.headers,
     this.onFail,
+    this.onOk,
   });
 
   final String url;
@@ -178,6 +194,7 @@ class _TileImage extends ImageProvider<_TileImage> {
   final int y;
   final Map<String, String> headers;
   final VoidCallback? onFail;
+  final VoidCallback? onOk;
 
   @override
   Future<_TileImage> obtainKey(ImageConfiguration configuration) =>
@@ -205,9 +222,12 @@ class _TileImage extends ImageProvider<_TileImage> {
       path = CachedTileProvider._filePath(layer, z, x, y);
       if (path != null) {
         final f = File(path);
-        if (f.existsSync()) {
-          final b = f.readAsBytesSync();
-          if (b.isNotEmpty) bytes = b;
+        if (await f.exists()) {
+          final b = await f.readAsBytes();
+          if (b.isNotEmpty) {
+            bytes = b;
+            CachedTileProvider.statDisk++;
+          }
         }
       }
     } catch (_) {}
@@ -235,6 +255,7 @@ class _TileImage extends ImageProvider<_TileImage> {
       // 而不是抛异常把整层瓦片打成错误块
       return ui.instantiateImageCodec(TileProvider.transparentImage);
     }
+    onOk?.call();
     return ui.instantiateImageCodec(bytes);
   }
 
@@ -248,6 +269,7 @@ class _TileImage extends ImageProvider<_TileImage> {
         return null;
       }
       CachedTileProvider._markOk();
+      CachedTileProvider.statNet++;
       final data = resp.bodyBytes;
       // 落盘（不等待，失败也无所谓）
       final path = CachedTileProvider._filePath(layer, z, x, y);
@@ -260,6 +282,7 @@ class _TileImage extends ImageProvider<_TileImage> {
   }
 
   void _hitFail() {
+    CachedTileProvider.statFail++;
     final n = CachedTileProvider._markFail();
     // 连续 12 个瓦片失败 = 不是偶发抖动，通知页面降级
     if (n >= 12) {
@@ -271,10 +294,10 @@ class _TileImage extends ImageProvider<_TileImage> {
   Future<void> _save(String path, Uint8List data) async {
     try {
       final f = File(path);
-      if (!f.parent.existsSync()) f.parent.createSync(recursive: true);
+      if (!await f.parent.exists()) await f.parent.create(recursive: true);
       final tmp = File('$path.tmp');
-      tmp.writeAsBytesSync(data, flush: false);
-      tmp.renameSync(path);
+      await tmp.writeAsBytes(data, flush: false);
+      await tmp.rename(path);
     } catch (_) {}
   }
 
