@@ -1,3 +1,4 @@
+import '../models/ai_spot.dart';
 import '../models/fish.dart';
 import 'api_client.dart';
 import 'api_config.dart';
@@ -44,5 +45,12 @@ class FishService {
   static Future<AiBite> biteAi(Map<String, dynamic> payload) async {
     final data = await ApiClient.post('/fish/bite-ai', payload) as Map;
     return AiBite.fromJson(data.cast<String, dynamic>());
+  }
+
+  /// AI 找钓点：附近水域 + 当前天气 → 大模型推荐现在最值得去的水域。
+  /// 后端未配置 AI 时 ok=false。
+  static Future<AiSpotRec> spotAi(Map<String, dynamic> payload) async {
+    final data = await ApiClient.post('/fish/spot-ai', payload) as Map;
+    return AiSpotRec.fromJson(data.cast<String, dynamic>());
   }
 }
