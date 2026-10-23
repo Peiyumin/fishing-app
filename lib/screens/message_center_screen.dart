@@ -4,8 +4,10 @@ import '../app_theme.dart';
 import '../models/message.dart';
 import '../services/message_poller.dart';
 import '../services/message_service.dart';
+import '../services/post_service.dart';
 import '../widgets/center_toast.dart';
 import 'chat_screen.dart';
+import 'post_detail_screen.dart';
 
 /// 消息中心（v27）
 /// - 顶部「私信」黑卡入口：与钓友和客服的对话（需互相关注才能发消息）
@@ -389,7 +391,10 @@ class _NoticeListScreenState extends State<NoticeListScreen> {
                         );
                       }
                       final n = _items[i];
-                      return Container(
+                      return InkWell(
+                        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                        onTap: () => _openNotice(n),
+                        child: Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           color: AppTheme.surface,
@@ -436,10 +441,53 @@ class _NoticeListScreenState extends State<NoticeListScreen> {
                             ),
                           ],
                         ),
-                      );
+                      ));
                     },
                   ),
                 ),
+    );
+  }
+
+  /// 点一条通知：标记已读，能定位到动态的就直接打开动态详情
+  ///
+  /// ★ 以前通知列表是「只看不动」的，用户看到「老张评论了你的动态」却点不进去，
+  ///   等于白提醒。现在评论 / 回复 / 点赞都带 refId（postId），点开直达那条动态；
+  ///   系统公告没有关联动态，点一下只标记已读。
+  Future<void> _openNotice(NoticeItem n) async {
+    // 先本地标记已读，界面立刻消红点（失败不影响跳转）
+    if (!n.isRead) {
+      try {
+        await MessageService.markRead(id: n.id);
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          final idx = _items.indexWhere((e) => e.id == n.id);
+          if (idx >= 0) {
+            _items[idx] = NoticeItem(
+              id: n.id,
+              type: n.type,
+              typeTitle: n.typeTitle,
+              title: n.title,
+              content: n.content,
+              refId: n.refId,
+              isRead: true,
+              createdAt: n.createdAt,
+            );
+          }
+        });
+      }
+    }
+    if (!mounted) return;
+    if (n.refId.isEmpty) return; // 系统公告：没有可跳转的对象
+
+    final post = await PostService.fetchById(n.refId);
+    if (!mounted) return;
+    if (post == null) {
+      CenterToast.show(context, '这条动态已被删除');
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => PostDetailScreen(post: post)),
     );
   }
 
