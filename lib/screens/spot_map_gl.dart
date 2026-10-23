@@ -75,7 +75,14 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   List<FishingSpot> _spots = const [];
   Map<String, FishingSpot> _spotById = const {};
 
-  final MapLayerState _layers = MapLayerState(satellite: true, roadLabels: true);
+  /// 默认只挂一层底图（卫星），路网注记关掉。
+  ///
+  /// 竞品「钓鱼佬」的底图配置里，卫星 / 路网是**互斥的两个选项**，
+  /// 永远不会同时请求两套瓦片。我们之前默认把影像 + 注记一起叠上，
+  /// 每屏瓦片请求直接翻倍（40 张 vs 20 张），这才是拖动发涩的主因。
+  /// 需要地名时在「图层」里手动打开即可。
+  final MapLayerState _layers =
+      MapLayerState(satellite: true, roadLabels: false);
 
   double? _myLat;
   double? _myLng;
@@ -197,14 +204,31 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           'type': 'background',
           'paint': {'background-color': '#DDE6EC'},
         },
-        {'id': 'sat', 'type': 'raster', 'source': 'sat'},
+        // raster-fade-duration: 0 —— 关掉瓦片淡入动画。
+        // 默认 300ms 的淡入会让原生层在瓦片刚到时反复重绘，
+        // 快速拖动时叠加上一层重绘，是掉帧的隐形大头。
+        {
+          'id': 'sat',
+          'type': 'raster',
+          'source': 'sat',
+          'paint': {'raster-fade-duration': 0},
+        },
         {
           'id': 'vec',
           'type': 'raster',
           'source': 'vec',
           'layout': {'visibility': 'none'},
+          'paint': {'raster-fade-duration': 0},
         },
-        {'id': 'cia', 'type': 'raster', 'source': 'cia'},
+        {
+          'id': 'cia',
+          'type': 'raster',
+          'source': 'cia',
+          // 低倍视野下地名注记看不清也没意义，却不省瓦片请求 ——
+          // 10 级以下直接不请求，全国视角只拉一层影像。
+          'minzoom': 10,
+          'paint': {'raster-fade-duration': 0},
+        },
       ],
     });
   }
@@ -279,14 +303,18 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           'lakes-fill',
           FillLayerProperties(
               fillColor: '#1E88E5',
-              fillOpacity: _layers.lakes ? 0.32 : 0.0));
+              fillOpacity: _layers.lakes ? 0.32 : 0.0),
+          // 全国视角下几十个湖泊只是几个像素点，画了也看不见，
+          // 却要占着原生层的绘制批次；6 级以下交给地图瓦片自带的蓝色水面。
+          minzoom: 6);
       await c.addLayer(
           'lakes',
           'lakes-line',
           LineLayerProperties(
               lineColor: '#1565C0',
               lineWidth: 1.2,
-              lineOpacity: _layers.lakes ? 0.85 : 0.0));
+              lineOpacity: _layers.lakes ? 0.85 : 0.0),
+          minzoom: 6);
 
       await c.addGeoJsonSource('rivers', _fc(rivers));
       await c.addLayer(
@@ -295,7 +323,8 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           LineLayerProperties(
               lineColor: '#1E88E5',
               lineWidth: 4.5,
-              lineOpacity: _layers.rivers ? 0.5 : 0.0));
+              lineOpacity: _layers.rivers ? 0.5 : 0.0),
+          minzoom: 6);
 
       await c.addGeoJsonSource('zones', _fc(zones));
       await c.addLayer(
@@ -303,7 +332,8 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           'zones-fill',
           FillLayerProperties(
               fillColor: '#E5484D',
-              fillOpacity: _layers.noFishingZones ? 0.14 : 0.0));
+              fillOpacity: _layers.noFishingZones ? 0.14 : 0.0),
+          minzoom: 5);
       await c.addLayer(
           'zones',
           'zones-line',
@@ -311,7 +341,8 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
               lineColor: '#E5484D',
               lineWidth: 1.4,
               lineDasharray: const [3, 2],
-              lineOpacity: _layers.noFishingZones ? 0.85 : 0.0));
+              lineOpacity: _layers.noFishingZones ? 0.85 : 0.0),
+          minzoom: 5);
 
       await c.addGeoJsonSource('spots', _fc(spots));
       await c.addLayer(
@@ -322,7 +353,8 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
               circleRadius: 5.5,
               circleStrokeColor: '#FFFFFF',
               circleStrokeWidth: 2,
-              circleOpacity: _layers.spots ? 1.0 : 0.0));
+              circleOpacity: _layers.spots ? 1.0 : 0.0),
+          minzoom: 4);
 
       _layersReady = true;
       await _drawMe();
@@ -343,7 +375,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     if (!_layersReady) return;
     await _setVis('sat', _layers.satellite);
     await _setVis('vec', !_layers.satellite);
-    await _setVis('cia', _layers.roadLabels);
+    // 矢量路网图本身自带地名，再叠注记等于白跑一倍瓦片却看不出差别；
+    // 只有卫星模式才需要注记层。
+    await _setVis('cia', _layers.roadLabels && _layers.satellite);
     await _setVis('lakes-fill', _layers.lakes);
     await _setVis('lakes-line', _layers.lakes);
     await _setVis('rivers-line', _layers.rivers);
@@ -456,7 +490,8 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                 rotateGesturesEnabled: false,
                 tiltGesturesEnabled: false,
                 trackCameraPosition: true,
-                attributionButtonPosition: AttributionButtonPosition.bottomLeft,
+                // 原生自带的「i」版权按钮放右下，左下留给自绘的长版权行，避免叠在一起
+                attributionButtonPosition: AttributionButtonPosition.bottomRight,
                 onMapCreated: (c) {
                   _map = c;
                   _renderLayers();
@@ -579,8 +614,8 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
             const SizedBox(height: 4),
             _sw(Icons.satellite_alt, '卫星影像', '星图地球卫星底图', _layers.satellite,
                 (v) => up(() => _layers.satellite = v)),
-            _sw(Icons.route_outlined, '路网注记', '叠加道路与地名', _layers.roadLabels,
-                (v) => up(() => _layers.roadLabels = v)),
+            _sw(Icons.route_outlined, '路网注记', '叠加道路与地名（开着更清楚，但瓦片翻倍，建议按需打开）',
+                _layers.roadLabels, (v) => up(() => _layers.roadLabels = v)),
             _sw(Icons.water_drop_outlined, '河流', '蓝色水面带', _layers.rivers,
                 (v) => up(() => _layers.rivers = v)),
             _sw(Icons.waves, '湖泊水库', '蓝色填充', _layers.lakes,
