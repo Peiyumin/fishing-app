@@ -264,7 +264,15 @@ class NotificationService {
             category: AndroidNotificationCategory.message,
           ),
           iOS: const DarwinNotificationDetails(
+            // ★ iOS 14 起，App 在前台时的横幅/通知中心展示由
+            //   presentBanner / presentList 决定，presentAlert 只对
+            //   iOS 10~14 生效。只设 presentAlert 的话，用户开着 App
+            //   时通知**什么都不会显示**（会被系统静默丢弃）。
+            //   插件源码 willPresentNotification 里就是按这两个字段拼
+            //   UNNotificationPresentationOptionBanner/List 的。
             presentAlert: true,
+            presentBanner: true,
+            presentList: true,
             presentBadge: true,
             presentSound: true,
           ),
