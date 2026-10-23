@@ -619,12 +619,22 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       if (!mounted || seq != _landSeq) return;
       final c = _map;
       if (c == null) return;
+      final target = CameraUpdate.newLatLngZoom(LatLng(lat, lng), 13);
+      // ★ animateCamera 的返回值是 Future<bool?>，**false = 这次移动没被接受**
+      //   （原生层正在应用 style / 正在渲染时会拒绝新的动画）。
+      //   以前直接忽略返回值，镜头就没动，表现成「定位没反应、地图停在全国视角」。
+      //   失败时退回 moveCamera：它是同步设置相机、不进动画队列，抗干扰强得多。
+      var ok = false;
       try {
-        await c.animateCamera(
-          CameraUpdate.newLatLngZoom(LatLng(lat, lng), 13),
-          duration: Duration(milliseconds: i == 0 ? 400 : 1),
-        );
+        ok = (await c.animateCamera(target,
+                duration: Duration(milliseconds: i == 0 ? 400 : 1))) ??
+            false;
       } catch (_) {}
+      if (!ok) {
+        try {
+          await c.moveCamera(target);
+        } catch (_) {}
+      }
       await Future<void>.delayed(const Duration(milliseconds: 320));
       if (!mounted || seq != _landSeq) return;
       if (await _cameraNear(lat, lng)) {
@@ -769,12 +779,21 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   ///   直接把初始镜头设成当前位置 —— 这是**零成本兜底**：镜头一开始就在
   ///   正确位置，不必跟 style 加载抢时序。真机上 GPS 冷启动通常慢于建图，
   ///   那时 initialCameraPosition 还是全国视角，靠 _landCamera 的确认重试补。
+  ///
+  /// ★ 结果**只算一次并缓存**：`MapLibreMap` 每次 rebuild 都会用
+  ///   `initialCameraPosition.toMap()` 重建 creationParams，如果这里每次返回
+  ///   新对象，等于每帧往 PlatformView 塞一份新参数（iOS 上实测会干扰相机），
+  ///   而且改动前是 `const` 对象，行为必须保持一致。
+  CameraPosition? _initialLocked;
+
   CameraPosition get _initialCamera {
+    final cached = _initialLocked;
+    if (cached != null) return cached;
     final t = _pendingMove;
-    if (t != null) {
-      return CameraPosition(target: LatLng(t.lat, t.lng), zoom: 13);
-    }
-    return const CameraPosition(target: LatLng(34.5, 108.9), zoom: 4);
+    _initialLocked = t != null
+        ? CameraPosition(target: LatLng(t.lat, t.lng), zoom: 13)
+        : const CameraPosition(target: LatLng(34.5, 108.9), zoom: 4);
+    return _initialLocked!;
   }
 
   @override
