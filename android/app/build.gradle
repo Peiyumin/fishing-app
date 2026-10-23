@@ -11,6 +11,9 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        // flutter_local_notifications 17.x 内部用到 java.time，
+        // minSdk 23 的老机型上必须开脱糖（desugaring），否则运行期 NoClassDefFoundError
+        coreLibraryDesugaringEnabled true
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
@@ -58,4 +61,9 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // 脱糖库（配合 coreLibraryDesugaringEnabled，flutter_local_notifications 需要）
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
 }
