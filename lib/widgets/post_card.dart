@@ -335,114 +335,140 @@ class _PostCardState extends State<PostCard> {
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      // 渔获帖的头部通铺条要贴着卡片圆角裁切，否则直角会戳出卡片边框
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         // 卡片整块可点：标题 / 正文 / 图片任意位置都进详情
         onTap: _openDetail,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 作者行（点头像/昵称进 TA 的主页）
-              Row(
-                children: [
-                  GestureDetector(
-                    onTap: _openAuthor,
-                    child: UserAvatar(
-                      url: _post.avatarUrl,
-                      userId: _post.userId,
-                      radius: 16,
-                      vipLevel: _post.authorVip,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: _openAuthor,
-                      child: Text(
-                        _post.username ?? '钓友',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  ),
-                  _followButton(),
-                  // 作者操作：仅本人发布且调用方传入回调时显示
-                  if (_post.isMe &&
-                      (widget.onEdit != null || widget.onDelete != null))
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (widget.onEdit != null)
-                          InkWell(
-                            onTap: () => widget.onEdit!(_post),
-                            borderRadius: BorderRadius.circular(6),
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(
-                                  horizontal: 5, vertical: 4),
-                              child: Icon(Icons.edit_outlined,
-                                  size: 17, color: AppTheme.primary),
-                            ),
-                          ),
-                        if (widget.onDelete != null)
-                          InkWell(
-                            onTap: () => widget.onDelete!(_post),
-                            borderRadius: BorderRadius.circular(6),
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(
-                                  horizontal: 5, vertical: 4),
-                              child: Icon(Icons.delete_outline,
-                                  size: 18, color: AppTheme.danger),
-                            ),
-                          ),
-                      ],
-                    ),
-                  const SizedBox(width: 8),
-                  Text(_post.timeAgo,
-                      style: const TextStyle(
-                          fontSize: 12, color: AppTheme.textSecondary)),
-                ],
-              ),
-              const SizedBox(height: 8),
-              // 标题：渔获统一「今日鱼获分享」，其它类别显示原标题 + 类别标签
-              if (_post.isCatch)
-                _catchTitle()
-              else
-                Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 渔获帖：「今日鱼获分享」头部条置顶（头像/昵称之上），
+            // 通铺整卡宽度 + 与卡片同色系浅绿底 + 上圆角与卡片一致 → 与内容边框融合
+            if (_post.isCatch)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
+                decoration: const BoxDecoration(
+                  color: AppTheme.primaryLight,
+                  borderRadius:
+                      BorderRadius.vertical(top: Radius.circular(AppTheme.radiusLg)),
+                ),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      margin: const EdgeInsets.only(top: 2, right: 6),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: AppTheme.categorySoft(_post.category),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(_post.categoryLabel,
-                          style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: _categoryColor(_post.category))),
-                    ),
-                    Expanded(
-                      child: Text(_post.displayTitle,
-                          style: const TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold)),
-                    ),
+                    _catchTitle(),
+                    if (_post.fish.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      _catchSummaryLine(),
+                    ],
                   ],
                 ),
-              if (_post.body != null && _post.body!.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(_post.body!,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.black87)),
-              ],
-              // 渔获内容：鱼种 + 条数（「鲫鱼 2 条 · 鲤鱼 1 条」）
-              if (_post.fish.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                _catchSummaryLine(),
-              ],
+              ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(12, _post.isCatch ? 10 : 12, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 作者行（点头像/昵称进 TA 的主页）
+                  Row(
+                    children: [
+                      GestureDetector(
+                        onTap: _openAuthor,
+                        child: UserAvatar(
+                          url: _post.avatarUrl,
+                          userId: _post.userId,
+                          radius: 16,
+                          vipLevel: _post.authorVip,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: _openAuthor,
+                          child: Text(
+                            _post.username ?? '钓友',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                      _followButton(),
+                      // 作者操作：仅本人发布且调用方传入回调时显示
+                      if (_post.isMe &&
+                          (widget.onEdit != null || widget.onDelete != null))
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (widget.onEdit != null)
+                              InkWell(
+                                onTap: () => widget.onEdit!(_post),
+                                borderRadius: BorderRadius.circular(6),
+                                child: const Padding(
+                                  padding: EdgeInsets.symmetric(
+                                      horizontal: 5, vertical: 4),
+                                  child: Icon(Icons.edit_outlined,
+                                      size: 17, color: AppTheme.primary),
+                                ),
+                              ),
+                            if (widget.onDelete != null)
+                              InkWell(
+                                onTap: () => widget.onDelete!(_post),
+                                borderRadius: BorderRadius.circular(6),
+                                child: const Padding(
+                                  padding: EdgeInsets.symmetric(
+                                      horizontal: 5, vertical: 4),
+                                  child: Icon(Icons.delete_outline,
+                                      size: 18, color: AppTheme.danger),
+                                ),
+                              ),
+                          ],
+                        ),
+                      const SizedBox(width: 8),
+                      Text(_post.timeAgo,
+                          style: const TextStyle(
+                              fontSize: 12, color: AppTheme.textSecondary)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  // 标题：渔获帖的标题已在顶部头部条展示，这里不再重复；
+                  // 其它类别显示原标题 + 类别标签
+                  if (!_post.isCatch)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          margin: const EdgeInsets.only(top: 2, right: 6),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppTheme.categorySoft(_post.category),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(_post.categoryLabel,
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: _categoryColor(_post.category))),
+                        ),
+                        Expanded(
+                          child: Text(_post.displayTitle,
+                              style: const TextStyle(
+                                  fontSize: 16, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                  if (_post.body != null && _post.body!.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(_post.body!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.black87)),
+                  ],
+                  // 渔获摘要：渔获帖已放进顶部头部条，这里只处理其它带鱼种的帖子
+                  if (!_post.isCatch && _post.fish.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    _catchSummaryLine(),
+                  ],
               // 二手价格（出售=售价 / 求购=预算）
               if (_post.isTrade && _post.price.isNotEmpty) ...[
                 const SizedBox(height: 8),
@@ -554,8 +580,10 @@ class _PostCardState extends State<PostCard> {
                   ),
                 ],
               ),
-            ],
-          ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
