@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -125,8 +126,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
   }
 
   Future<void> _load() async {
+    // ① 先亮缓存（哪怕已过期）：打开就有内容，不再白屏等网络
     if (_bundle == null) {
-      final cached = await WeatherService.readCachedForecast();
+      final cached = await WeatherService.readCachedForecast(allowStale: true);
       if (cached != null && mounted) {
         setState(() {
           _bundle = cached;
@@ -141,32 +143,67 @@ class _WeatherScreenState extends State<WeatherScreen> {
       });
     }
 
-    double lat = 30.2741, lng = 120.1551; // 默认：杭州
+    // ② 有上次的坐标就立刻拉天气，不必干等 GPS（定位冷启动常常要 3~8 秒）
+    final gen = ++_loadGen;
+    final cachedLoc = await WeatherService.readCachedLocation();
+    final hadCached = cachedLoc != null;
+    if (cachedLoc != null && mounted) {
+      _lat = cachedLoc.$1;
+      _lng = cachedLoc.$2;
+      // 不 await：让它和定位并行跑
+      unawaited(_applyForecast(_lat, _lng, gen));
+    }
+
+    // ③ 定位（LocationService 内部已有 15s 上限；界面此时已经有缓存数据，
+    //    所以这里等定位不会让用户干瞪眼）
+    double lat = _lat, lng = _lng; // 兜底：上次坐标 / 杭州
+    bool located = false;
     try {
       final pos = await LocationService.determinePosition();
       lat = pos.latitude;
       lng = pos.longitude;
+      located = true;
     } on LocationException catch (e) {
       if (e.type == LocationErrorType.permissionDenied && mounted) {
         LocationPrompt.showError(context, e);
       }
     } catch (_) {
-      // 用默认坐标
+      // 超时 / 失败：用缓存坐标或默认坐标
+    }
+
+    // ④ 位置和缓存坐标差得多（>0.05°，约 5km）才重新拉一次
+    final moved = !hadCached ||
+        (lat - _lat).abs() > 0.05 ||
+        (lng - _lng).abs() > 0.05;
+    if (located && !moved) {
+      if (mounted) setState(() => _loading = false);
+      return;
     }
     _lat = lat;
     _lng = lng;
+    // 新位置的结果才允许覆盖界面（作废前面那次缓存坐标的请求）
+    final gen2 = ++_loadGen;
+    await _applyForecast(lat, lng, gen2);
+  }
+
+  int _loadGen = 0;
+
+  /// 拉一次预报并落到界面；[gen] 用于丢弃过期结果（避免后发先至覆盖）
+  Future<void> _applyForecast(double lat, double lng, int gen) async {
     try {
       final b = await WeatherService.fetchForecast(lat, lng);
-      if (mounted) {
-        setState(() {
-          _bundle = b;
-          _error = null;
-        });
-      }
+      if (!mounted || gen != _loadGen) return;
+      setState(() {
+        _bundle = b;
+        _error = null;
+        _loading = false;
+      });
     } catch (e) {
-      if (mounted && _bundle == null) setState(() => _error = e.toString());
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      if (!mounted || gen != _loadGen) return;
+      if (_bundle == null) {
+        setState(() => _error = e.toString());
+      }
+      setState(() => _loading = false);
     }
   }
 
