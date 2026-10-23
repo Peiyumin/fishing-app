@@ -5,18 +5,26 @@ import '../utils/coord_transform.dart';
 /// 底图瓦片源
 ///
 /// ------------------------------------------------------------
-/// 合规说明（重要）：
-///   国内在线底图只能用「腾讯 / 高德 / 百度 / 天地图」四家，
-///   星图地球、Mapbox、OSM 等均不在白名单内。
-///   用户提到的「星图地球 GS」卫星底图，其官方底图本身就是
-///   天地图（参考 App 的版权行写的就是「数据来源-天地图 GS(2025)1508号」），
-///   所以这里用 **天地图** 达成完全一致的视觉效果，同时满足合规要求。
+/// 三家底图可选，优先级由后台配置决定：
+///
+///  1. **星图地球（GEOVIS Earth / 星图云）** —— 推荐
+///     中科星图数字地球合肥有限公司运营，甲测资字34100640，
+///     影像审图号 GS(2026)3166号，商业图源里合规性最完整的一家。
+///     全国 0.8m / 重点城市 0.5m，偏远山区乡镇也有数据（高德在野外高层级常无图）。
+///     注册即送个人免费额度（1 万次/天），token 直接从控制台拿，
+///     **不像天地图 2026-10-01 起要「授权申请」才能调接口**。
+///
+///  2. **天地图** —— 国家队，但 2026-10-01 起接口改为「授权后调用」，
+///     个人自注册已无法直接拿可用 tk，需单位备案审核。
+///
+///  3. **高德** —— 免 key 兜底，保证地图永远能打开（GCJ-02，需纠偏）。
 ///
 /// 坐标系差异（最容易踩的坑）：
 ///   - 高德瓦片：GCJ-02（火星坐标）
+///   - 星图地球瓦片：CGCS2000 / WGS-84，**未加偏**（这是它的一大优势）
 ///   - 天地图瓦片：CGCS2000 ≈ WGS-84（厘米级差异，可直接叠加）
 ///   叠加物（钓点/禁钓区/水域）统一按 WGS-84 存储，
-///   叠到高德底图上要先转 GCJ-02，叠到天地图上则原样绘制。
+///   叠到高德底图上要先转 GCJ-02，叠到星图地球/天地图上则原样绘制。
 class TileSource {
   /// 底图类型
   final TileSourceKind kind;
@@ -24,17 +32,29 @@ class TileSource {
   /// 天地图密钥（tk）。为空时天地图不可用。
   final String tk;
 
-  const TileSource({required this.kind, this.tk = ''});
+  /// 星图地球 token。为空时星图地球不可用。
+  final String geoToken;
+
+  const TileSource({required this.kind, this.tk = '', this.geoToken = ''});
 
   /// 天地图用 subdomain 轮询（t0~t7）突破单域名并发限制
   static const List<String> _tdtSubdomains = [
     '0', '1', '2', '3', '4', '5', '6', '7'
   ];
 
+  /// 星图地球只有 tiles1~tiles3 三个域
+  static const List<String> _geoSubdomains = ['1', '2', '3'];
+
   /// 底图是否可用
   bool get usable {
-    if (kind == TileSourceKind.gaode) return true;
-    return tk.trim().isNotEmpty;
+    switch (kind) {
+      case TileSourceKind.gaode:
+        return true;
+      case TileSourceKind.tianditu:
+        return tk.trim().isNotEmpty;
+      case TileSourceKind.geovisearth:
+        return geoToken.trim().isNotEmpty;
+    }
   }
 
   /// 天地图瓦片类型常量
@@ -52,9 +72,24 @@ class TileSource {
         '?T=$type&x={x}&y={y}&l={z}&tk={tk}';
   }
 
+  /// 星图地球瓦片 URL 模板
+  ///
+  /// 官方文档：https://open.geovisearth.com/service/qa-assistance/81
+  ///   影像  /base/v1/img/{z}/{x}/{y}?format=webp&tmsIds=w&token=xxx
+  ///   注记  /base/v1/cia/{z}/{x}/{y}?format=png&tmsIds=w&token=xxx
+  ///   矢量  /base/v1/vec/{z}/{x}/{y}?format=png&tmsIds=w&token=xxx
+  /// tmsIds=w 表示球面墨卡托（u 为经纬度投影，这里不能用）；
+  /// y 轴同样是左上角原点、自上而下递增，所以也不能开 tms。
+  String _geoTemplate(String layer, String format) {
+    return 'https://tiles{s}.geovisearth.com/base/v1/$layer/{z}/{x}/{y}'
+        '?format=$format&tmsIds=w&token={token}';
+  }
+
   /// 卫星影像底图 URL 模板
   String get satelliteTemplate {
     switch (kind) {
+      case TileSourceKind.geovisearth:
+        return _geoTemplate('img', 'webp');
       case TileSourceKind.tianditu:
         return _tdtTemplate(tdtImage);
       case TileSourceKind.gaode:
@@ -66,6 +101,8 @@ class TileSource {
   /// 注记（路网/地名）叠加层 URL 模板
   String get labelTemplate {
     switch (kind) {
+      case TileSourceKind.geovisearth:
+        return _geoTemplate('cia', 'png');
       case TileSourceKind.tianditu:
         return _tdtTemplate(tdtImageLabel);
       case TileSourceKind.gaode:
@@ -77,6 +114,8 @@ class TileSource {
   /// 矢量（路网）底图 URL 模板
   String get vectorTemplate {
     switch (kind) {
+      case TileSourceKind.geovisearth:
+        return _geoTemplate('vec', 'png');
       case TileSourceKind.tianditu:
         return _tdtTemplate(tdtVector);
       case TileSourceKind.gaode:
@@ -87,22 +126,40 @@ class TileSource {
 
   /// 是否需要 TMS y 翻转
   ///
-  /// 两家都是标准 Web Mercator（瓦片原点在左上角、y 自上而下递增），
+  /// 三家都是标准 Web Mercator（瓦片原点在左上角、y 自上而下递增），
   /// 千万不要开 tms —— 开了会把地图整个上下颠倒。
   /// （天地图官方说明：level n 的瓦片行号从 0 到 2^n-1，原点 (-180°, 90°)）
   bool get needsTms => false;
 
-  /// 天地图子域列表（高德固定单域，返回 null）
+  /// 子域列表（高德固定单域，返回 null）
   List<String>? get subdomains {
-    if (kind == TileSourceKind.tianditu) return _tdtSubdomains;
-    return null;
+    switch (kind) {
+      case TileSourceKind.tianditu:
+        return _tdtSubdomains;
+      case TileSourceKind.geovisearth:
+        return _geoSubdomains;
+      case TileSourceKind.gaode:
+        return null;
+    }
   }
 
-  /// 额外参数注入（天地图需要把 tk 塞进模板）
+  /// 额外参数注入（密钥塞进 URL 模板的占位符）
   Map<String, String> get additionalOptions {
-    if (kind == TileSourceKind.tianditu) return {'tk': tk};
-    return const {};
+    switch (kind) {
+      case TileSourceKind.tianditu:
+        return {'tk': tk};
+      case TileSourceKind.geovisearth:
+        return {'token': geoToken};
+      case TileSourceKind.gaode:
+        return const {};
+    }
   }
+
+  /// 底图最大缩放级别
+  ///
+  /// 星图地球影像：13 级全球、14~18 级中国大陆（再放大就没瓦片了）；
+  /// 天地图/高德给到 18 级足够钓点场景使用。
+  double get maxZoom => 18;
 
   /// 当前底图坐标系是否是 GCJ-02（高德）——决定叠加物要不要纠偏
   bool get isGcj02 => kind == TileSourceKind.gaode;
@@ -121,17 +178,46 @@ class TileSource {
   /// 底图版权署名（合规要求必须显示）
   String get attribution {
     switch (kind) {
+      case TileSourceKind.geovisearth:
+        return '底图 © 星图地球 甲测资字34100640 · GS(2026)3166号';
       case TileSourceKind.tianditu:
         return '底图 © 天地图 GS(2025)1508号 · 国家地理信息公共服务平台';
       case TileSourceKind.gaode:
         return '底图 © 高德地图';
     }
   }
+
+  /// 底图短名（图层面板里显示用）
+  String get shortName {
+    switch (kind) {
+      case TileSourceKind.geovisearth:
+        return '星图地球';
+      case TileSourceKind.tianditu:
+        return '天地图';
+      case TileSourceKind.gaode:
+        return '高德';
+    }
+  }
+
+  /// 当前底图说明（图层面板底部小字）
+  String get describe {
+    switch (kind) {
+      case TileSourceKind.geovisearth:
+        return '当前底图：星图地球（GS(2026)3166号 中科星图数字地球）';
+      case TileSourceKind.tianditu:
+        return '当前底图：天地图（GS(2025)1508号 国家地理信息公共服务平台）';
+      case TileSourceKind.gaode:
+        return '当前底图：高德地图（未配置星图/天地图密钥时的兜底）';
+    }
+  }
 }
 
 /// 底图类型
 enum TileSourceKind {
-  /// 天地图（合规首选，视觉等同参考 App 的「星图地球 GS」）
+  /// 星图地球 / 星图云（推荐：注册即用，未加偏，野外覆盖好）
+  geovisearth,
+
+  /// 天地图（2026-10-01 起接口需授权，个人注册已不可直接调用）
   tianditu,
 
   /// 高德（免 key 兜底）
