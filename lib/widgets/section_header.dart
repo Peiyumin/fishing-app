@@ -26,6 +26,11 @@ class SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 布局要点：左组（标题+副标题）整体包在 Expanded 里，动作链接紧随其后，
+    // 才能保证「更多 / 7天预报」永远贴容器右缘。
+    // 早期版本把副标题单独包 Flexible + 后面接 Spacer：FlexFit.loose 的子组件
+    // 用不完分配到的空间时，剩余部分不会还给 Spacer，导致有副标题时
+    // 动作链接比无副标题时偏左 60px 左右（实测 291 vs 354）。
     return Padding(
       padding: padding,
       child: Row(
@@ -39,42 +44,52 @@ class SectionHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: AppTheme.textPrimary,
-              letterSpacing: 0.3,
+          Expanded(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.textPrimary,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ),
+                if (subtitle != null && subtitle!.isNotEmpty) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    width: 2,
+                    height: 2,
+                    decoration: const BoxDecoration(
+                      color: AppTheme.textSecondary,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      subtitle!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        height: 1.2,
+                        color: AppTheme.textSecondary,
+                        fontWeight: FontWeight.w400,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
-          if (subtitle != null && subtitle!.isNotEmpty) ...[
-            const SizedBox(width: 6),
-            Container(
-              width: 2,
-              height: 2,
-              decoration: const BoxDecoration(
-                color: AppTheme.textSecondary,
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                subtitle!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 11.5,
-                  height: 1.2,
-                  color: AppTheme.textSecondary,
-                  fontWeight: FontWeight.w400,
-                  letterSpacing: 0,
-                ),
-              ),
-            ),
-          ],
-          const Spacer(),
           if (actionLabel != null && onAction != null)
             InkWell(
               onTap: onAction,
