@@ -590,16 +590,77 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     final t = _pendingMove;
     final c = _map;
     if (t == null || c == null) return;
-    // ★ 样式没加载完就不动镜头。
-    //   此时 animateCamera 会被随后的 style 应用覆盖掉（镜头弹回
-    //   initialCameraPosition 的 z4 全国视角）—— 表现就是「定位闪一下又没了」。
-    //   等 onStyleLoadedCallback 里再补一次才是稳定的。
-    if (!_styleReady) return;
+    // ★ 这里**不清空** pending —— 镜头是否真的落到位由 _landCamera 反算确认后
+    //   才清。原因见 _landCamera 的注释：iOS 上在 style 加载收尾阶段调
+    //   animateCamera 会被后续的 camera 重置吞掉，只调一次不可靠。
+    _landCamera(t.lat, t.lng);
+  }
+
+  /// 把镜头落到目标点，并**反算屏幕中心确认真的到位**
+  ///
+  /// ★ iOS 真机/模拟器实测定下来的坑（v2.1.17 用集成测试抓到的）：
+  ///   `onStyleLoadedCallback` 触发之后立刻 `animateCamera`，镜头会**纹丝不动**，
+  ///   屏幕中心精确等于 `initialCameraPosition` 的 (34.5, 108.9) —— 也就是
+  ///   style 应用的收尾阶段把 camera 重置回了创建时的值。
+  ///   而 `onMapCreated`（style 还没加载）时调用，则可能被排队后又被覆盖。
+  ///   两个时机单独用都不可靠，所以改成：**发起 → 等一会 → toLatLng 反算中心 →
+  ///   不对就再来一次**，最多 4 轮（约 3 秒）。到位就停，不再骚扰用户。
+  ///
+  /// 用 `_landSeq` 做代次号：连续触发的落点请求只有最后一个有效，
+  /// 避免多个重试循环互相抢镜头。
+  int _landSeq = 0;
+
+  Future<void> _landCamera(double lat, double lng) async {
+    final seq = ++_landSeq;
+    for (var i = 0; i < 4; i++) {
+      if (!mounted || seq != _landSeq) return;
+      // 第一轮稍等一下让样式收尾，之后每轮间隔 420ms
+      await Future<void>.delayed(Duration(milliseconds: i == 0 ? 80 : 420));
+      if (!mounted || seq != _landSeq) return;
+      final c = _map;
+      if (c == null) return;
+      try {
+        await c.animateCamera(
+          CameraUpdate.newLatLngZoom(LatLng(lat, lng), 13),
+          duration: Duration(milliseconds: i == 0 ? 400 : 1),
+        );
+      } catch (_) {}
+      await Future<void>.delayed(const Duration(milliseconds: 320));
+      if (!mounted || seq != _landSeq) return;
+      if (await _cameraNear(lat, lng)) {
+        _pendingMove = null;
+        return;
+      }
+      debugPrint('[SpotMapGL] 镜头未到位，重试第 ${i + 1} 轮');
+    }
+    // 4 轮都没成（极慢的模拟器 / 网络卡死）：放弃重试，别一直抢用户镜头
     _pendingMove = null;
-    c.animateCamera(
-      CameraUpdate.newLatLngZoom(LatLng(t.lat, t.lng), 13),
-      duration: const Duration(milliseconds: 400),
-    );
+  }
+
+  /// 屏幕中心是不是已经在目标点附近（约 1 公里内）
+  Future<bool> _cameraNear(double lat, double lng) async {
+    final c = _map;
+    final size = _mapSize;
+    if (c == null || size == null) return false;
+    try {
+      final center =
+          await c.toLatLng(Point<double>(size.width / 2, size.height / 2));
+      return (center.latitude - lat).abs() < 0.01 &&
+          (center.longitude - lng).abs() < 0.01;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 地图视图的真实尺寸（嵌入式 Tab 里不等于屏幕尺寸，必须从 RenderBox 取）
+  Size? get _mapSize {
+    try {
+      final box = context.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) return null;
+      return box.size;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _locate({bool silent = false}) async {
@@ -665,6 +726,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   Future<void> _onMapClick(Point<double> point) async {
     final c = _map;
     if (c == null || !_layers.spots || !_layersReady) return;
+    // 用户主动点了地图 = 他在看别处了，取消还在跑的定位补镜头重试，
+    // 否则第 3、4 轮会把镜头硬拽回当前位置，像被抢方向盘
+    _landSeq++;
     const half = 22.0;
     final rect = Rect.fromLTRB(
         point.x - half, point.y - half, point.x + half, point.y + half);
