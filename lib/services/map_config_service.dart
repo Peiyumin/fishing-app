@@ -1,3 +1,7 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import '../services/api_client.dart';
 import '../services/api_config.dart';
 import 'map_tile_source.dart';
@@ -19,6 +23,7 @@ class MapConfigService {
   static String _geoToken = '';
   static String _tk = '';
   static String _prefer = 'auto';
+  static String _engine = 'gl';
   static bool _loaded = false;
 
   /// 天地图密钥（空 = 不可用）
@@ -32,6 +37,18 @@ class MapConfigService {
 
   /// 是否已拿到星图地球 token
   static bool get hasGeovisearth => _geoToken.isNotEmpty;
+
+  /// 渲染内核：'gl' = MapLibre 原生（默认，快） / 'dart' = flutter_map（老内核兜底）
+  static String get engine => _engine;
+
+  /// 是否用原生 GL 内核
+  ///
+  /// 只有 Android / iOS 才有 MapLibre 原生实现；桌面端、Web、以及
+  /// flutter test 的宿主环境一律走老的 flutter_map，避免平台通道缺失。
+  static bool get useNativeEngine {
+    if (_engine == 'dart' || kIsWeb) return false;
+    return Platform.isAndroid || Platform.isIOS;
+  }
 
   /// 实际应使用的底图
   ///
@@ -79,6 +96,8 @@ class MapConfigService {
         _geoToken = (cfg['geovisearthToken'] ?? '').toString().trim();
         _tk = (cfg['tiandituTk'] ?? '').toString().trim();
         _prefer = (cfg['prefer'] ?? 'auto').toString().trim().toLowerCase();
+        final e = (cfg['engine'] ?? 'gl').toString().trim().toLowerCase();
+        _engine = e == 'dart' ? 'dart' : 'gl';
       }
     } catch (_) {
       // 后台不可达：保持空密钥 → 使用高德兜底
