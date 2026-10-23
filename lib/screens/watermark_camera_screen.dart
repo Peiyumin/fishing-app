@@ -722,10 +722,18 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
   /// 取景框 + 两行提示
   Widget _frameLayer() {
     return LayoutBuilder(builder: (context, cons) {
-      final fw = math.min(cons.maxWidth - 54, 420.0);
-      final fh = fw * 1.19;
+      // 横屏（高度不够）时用紧凑版：框更小、只留一行提示，别和快门叠在一起
+      final compact = cons.maxHeight < 520;
+      // 宽度优先，但不能超过屏幕高度的一部分（横屏/小平板时按高度反算宽度）
+      var fw = math.min(cons.maxWidth - 54, 420.0);
+      var fh = fw * 1.19;
+      final maxH = cons.maxHeight * (compact ? 0.40 : 0.56);
+      if (fh > maxH) {
+        fh = maxH;
+        fw = fh / 1.19;
+      }
       return Align(
-        alignment: const Alignment(0, -0.07),
+        alignment: Alignment(0, compact ? -0.13 : -0.07),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -734,17 +742,27 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
               height: fh,
               child: const CustomPaint(painter: _BracketPainter()),
             ),
-            const SizedBox(height: 20),
+            SizedBox(height: compact ? 12 : 20),
             Text(
               _recording ? '松手结束录制' : '把鱼放在框内，整条鱼都拍进来',
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 color: Colors.white,
-                fontSize: 14.5,
+                fontSize: compact ? 13 : 14.5,
                 fontWeight: FontWeight.w500,
-                shadows: [Shadow(color: Color(0x99000000), blurRadius: 8)],
+                shadows: const [
+                  Shadow(color: Color(0x99000000), blurRadius: 8)
+                ],
               ),
             ),
+            if (compact && _recording) ...[
+              const SizedBox(height: 5),
+              Text(
+                '已录 ${_fmtSec(_recSecs)} / ${_fmtSec(_maxRecSecs)}',
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ],
+            if (!compact) ...[
             const SizedBox(height: 7),
             Text(
               _recording
@@ -759,6 +777,7 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
                 ],
               ),
             ),
+            ],
           ],
         ),
       );
@@ -902,16 +921,6 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
       ),
     );
   }
-}
-
-/// 水印一行
-class _StampLine {
-  final String text;
-  final double size;
-  final FontWeight weight;
-  final Color color;
-  final double gap; // 与下一行的间距
-  const _StampLine(this.text, this.size, this.weight, this.color, this.gap);
 }
 
 /// 四角取景框
