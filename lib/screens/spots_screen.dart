@@ -22,7 +22,9 @@ import 'spot_map_screen.dart';
 ///   ① 本地钓场：图2 样式卡片列表（封面 / 星级 / 标签 / 地址 / 距离 / 收费 / 简介）
 ///   ② 野钓钓点：卫星地图（高德卫星 + 路网），用户可在地图上添加标记，全员实时可见
 class SpotsScreen extends StatefulWidget {
-  const SpotsScreen({super.key});
+  /// 打开时预选的钓场类型（「路亚」页会带 '路亚' 进来直接过滤）
+  final String initialType;
+  const SpotsScreen({super.key, this.initialType = '全部'});
 
   @override
   State<SpotsScreen> createState() => _SpotsScreenState();
@@ -38,8 +40,9 @@ class _SpotsScreenState extends State<SpotsScreen>
   List<FishingSpot> _wild = []; // 野钓点（kind=wild）
   bool _loading = true;
   bool _locating = false; // 正在定位（按钮转圈，避免「点了没反应」的错觉）
-  String _type = '全部';
   final List<String> _types = ['全部', '黑坑', '路亚', '野钓场', '海钓', '渔具店'];
+  late String _type =
+      _types.contains(widget.initialType) ? widget.initialType : '全部';
 
   // 我的当前位置（WGS-84，用于距离计算）
   double? _myLat;
