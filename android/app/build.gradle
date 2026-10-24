@@ -27,8 +27,13 @@ android {
         applicationId = "com.example.fishing.fishing_app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        // MapLibre GL 原生渲染内核要求 minSdk >= 21，这里取 23（Android 6.0+）
-        minSdk = 23
+        // ★ v2.1.23：minSdk 23 → 21（Android 5.0+）
+        //   原因：用户手机是 Android 5.1.1（API 22），minSdk=23 会被系统直接拒装，
+        //   界面提示「安装包已损坏 / 解析包出错」，其实质是 INSTALL_FAILED_OLDER_SDK。
+        //   依赖侧核对：maplibre_gl / geolocator / camera / video_player 全是 minSdk 21，
+        //   21 是这套依赖链的地板值，再往下 lib 合并就会失败。
+        //   java.time 走 coreLibraryDesugaring，5.x 上依然可用。
+        minSdk = 21
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
