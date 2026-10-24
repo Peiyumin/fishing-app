@@ -201,6 +201,34 @@ class _NotifySettingsScreenState extends State<NotifySettingsScreen> {
           ]),
           const SizedBox(height: 14),
 
+          // 权限自检入口：定位 / 相机 / 相册 / 通知 一站式检查与补齐
+          _card(children: [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryLight,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.verified_user_outlined,
+                    size: 19, color: AppTheme.primary),
+              ),
+              title: const Text('应用权限自检',
+                  style:
+                      TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              subtitle: const Text('检查定位、相机、相册、通知授权并一键补齐',
+                  style:
+                      TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+              trailing: const Icon(Icons.chevron_right,
+                  size: 18, color: AppTheme.textSecondary),
+              onTap: () => Navigator.of(context)
+                  .pushNamed('/permission-check'),
+            ),
+          ]),
+          const SizedBox(height: 14),
+
           // 说明（正面表述 + 事实交代）
           Container(
             padding: const EdgeInsets.all(13),
