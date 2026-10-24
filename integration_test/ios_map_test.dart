@@ -17,6 +17,7 @@
 import 'dart:math' show Point;
 
 import 'package:fishing_app/models/fishing_spot.dart';
+import 'package:fishing_app/models/no_fishing_zone.dart';
 import 'package:fishing_app/models/water_body.dart';
 import 'package:fishing_app/screens/spot_map_gl.dart';
 import 'package:fishing_app/services/location_service.dart';
@@ -249,7 +250,7 @@ void main() {
     late List<String> layers;
     final layersOk = await until(tester, () async {
       layers = (await ctl!.getLayerIds()).map((e) => e.toString()).toList();
-      return layers.contains('spots-circle');
+      return layers.contains('spots-pin');
     }, timeoutMs: 60000);
 
     // ignore: avoid_print
@@ -261,10 +262,11 @@ void main() {
       'cia',
       'lakes-fill',
       'lakes-line',
+      'rivers-casing',
       'rivers-line',
       'zones-fill',
       'zones-line',
-      'spots-circle',
+      'spots-pin',
     ]) {
       expect(layers, contains(id), reason: '缺图层 $id');
     }
@@ -310,6 +312,87 @@ void main() {
             'rivers-line 要素（视口内顶点数=${probe.onScreen}），'
             '说明河流图层没真正渲染出来');
 
+    // ---------------------------------------------------------------- 5b. 禁钓区 / 湖泊真的画出来了
+    //
+    // 「图层开关点了没反应」最常见的真因不是开关坏了，而是图层压根没渲染成像素：
+    //   - 禁钓区填色只有 0.14 不透明度，在卫星影像上基本看不见；
+    //   - minzoom 定得太高（6 级），城市级别根本不显示。
+    // 这里挑一个「紧凑的」多边形，把相机对准它再查整视口 ——
+    // 能查到要素，才说明红色禁钓区真的落在屏幕上了。
+    ({double lat, double lng, double span})? bboxOf(List<ll.LatLng> ring) {
+      if (ring.length < 3) return null;
+      var minLat = 90.0, maxLat = -90.0, minLng = 180.0, maxLng = -180.0;
+      var la = 0.0, ln = 0.0;
+      for (final p in ring) {
+        if (p.latitude < minLat) minLat = p.latitude;
+        if (p.latitude > maxLat) maxLat = p.latitude;
+        if (p.longitude < minLng) minLng = p.longitude;
+        if (p.longitude > maxLng) maxLng = p.longitude;
+        la += p.latitude;
+        ln += p.longitude;
+      }
+      return (
+        lat: la / ring.length,
+        lng: ln / ring.length,
+        span: (maxLng - minLng).abs(),
+      );
+    }
+
+    final zonesData = await MapDataService.zones();
+    final compactZones = <NoFishingZone>[];
+    for (final z in zonesData.zones) {
+      if (!z.onMap || z.rings.isEmpty) continue;
+      final b = bboxOf(z.rings.first);
+      if (b == null) continue;
+      if (b.span >= 0.02 && b.span <= 0.6) compactZones.add(z);
+    }
+    expect(compactZones, isNotEmpty, reason: '禁钓区里没有紧凑多边形，无法验证渲染');
+    final zone = compactZones.first;
+    final zoneB = bboxOf(zone.rings.first)!;
+    expect(
+        await _ensureCameraAt(tester, ctl!, ll.LatLng(zoneB.lat, zoneB.lng), 11),
+        isTrue,
+        reason: '相机没能移到禁钓区「${zone.name}」');
+    await wait(tester, 500);
+    final viewRect =
+        Rect.fromLTWH(4, 4, mapSize.width - 8, mapSize.height - 8);
+    final zoneHits =
+        await ctl!.queryRenderedFeaturesInRect(viewRect, ['zones-fill'], null);
+    // ignore: avoid_print
+    print('[TEST] zone="${zone.name}" center=${zoneB.lat},${zoneB.lng} '
+        'hits=${zoneHits.length}');
+    expect(zoneHits, isNotEmpty,
+        reason: '禁钓区「${zone.name}」在视野里查不到 zones-fill 要素，'
+            '红色禁钓区没渲染出来');
+
+    WaterBody? lake;
+    var lakeSpan = 9e9;
+    for (final w in waters) {
+      if (w.isRiver || w.geometry.length < 4) continue;
+      final b = bboxOf(w.geometry);
+      if (b == null) continue;
+      if (b.span >= 0.02 && b.span < lakeSpan) {
+        lakeSpan = b.span;
+        lake = w;
+      }
+    }
+    expect(lake, isNotNull, reason: '没有可用的湖泊多边形');
+    final lk = lake!;
+    final lakeB = bboxOf(lk.geometry)!;
+    expect(
+        await _ensureCameraAt(tester, ctl!, ll.LatLng(lakeB.lat, lakeB.lng), 10),
+        isTrue,
+        reason: '相机没能移到湖泊「${lk.name}」');
+    await wait(tester, 500);
+    final lakeHits =
+        await ctl!.queryRenderedFeaturesInRect(viewRect, ['lakes-fill'], null);
+    // ignore: avoid_print
+    print('[TEST] lake="${lk.name}" center=${lakeB.lat},${lakeB.lng} '
+        'hits=${lakeHits.length}');
+    expect(lakeHits, isNotEmpty,
+        reason: '湖泊「${lk.name}」在视野里查不到 lakes-fill 要素，'
+            '蓝色水面没渲染出来');
+
     // ---------------------------------------------------------------- 6. 钓点能命中且 id 对得上
     final spots = await SpotService.fetchSpots();
     final usable = spots.where((s) => s.lat != 0 && s.lng != 0).toList();
@@ -328,7 +411,7 @@ void main() {
       height: 44,
     );
     final spotHits =
-        await ctl!.queryRenderedFeaturesInRect(spotRect, ['spots-circle'], null);
+        await ctl!.queryRenderedFeaturesInRect(spotRect, ['spots-pin'], null);
     // ignore: avoid_print
     print('[TEST] spot="${spot.name}" id=${spot.id} screen=$spotScreen '
         'hits=${spotHits.length} (44x44)');
@@ -370,7 +453,7 @@ void main() {
     expect(
         await until(tester, () async {
           final ids = (await ctl!.getLayerIds()).map((e) => e.toString()).toList();
-          return ids.contains('spots-circle');
+          return ids.contains('spots-pin');
         }, timeoutMs: 60000),
         isTrue,
         reason: '图层没就绪');
@@ -409,7 +492,7 @@ void main() {
         expect(ctl!.cameraPosition, isNotNull,
             reason: '第 ${cost.length} 次跳转后相机位置读不到，原生层可能已失效');
         final ids = (await ctl!.getLayerIds()).map((e) => e.toString()).toList();
-        expect(ids, contains('spots-circle'),
+        expect(ids, contains('spots-pin'),
             reason: '第 ${cost.length} 次跳转后钓点图层丢了');
         expect(ids, contains('rivers-line'),
             reason: '第 ${cost.length} 次跳转后河流图层丢了');
@@ -536,7 +619,7 @@ void main() {
         await until(tester, () async {
           final ids =
               (await ctl!.getLayerIds()).map((e) => e.toString()).toList();
-          return ids.contains('spots-circle');
+          return ids.contains('spots-pin');
         }, timeoutMs: 90000),
         isTrue,
         reason: '钓点图层没就绪');
@@ -555,7 +638,7 @@ void main() {
           center: Offset(before.x.toDouble(), before.y.toDouble()),
           width: 20,
           height: 20),
-      ['spots-circle'],
+      ['spots-pin'],
       null,
     );
     expect(beforeHits, isEmpty,
@@ -584,7 +667,7 @@ void main() {
           center: Offset(scr.x.toDouble(), scr.y.toDouble()),
           width: 44,
           height: 44),
-      ['spots-circle'],
+      ['spots-pin'],
       null,
     );
     // ignore: avoid_print
