@@ -7,8 +7,10 @@ import '../models/user_profile.dart';
 import '../services/follow_service.dart';
 import '../services/post_service.dart';
 import '../widgets/follow_button.dart';
+import '../widgets/member_gate.dart';
 import '../widgets/post_card.dart';
 import '../widgets/user_avatar.dart';
+import 'chat_screen.dart';
 import 'follow_list_screen.dart';
 
 /// 他人（或自己）的用户资料页：头像 + 关注/粉丝/发布 + 关注按钮 + TA 的动态
@@ -30,6 +32,17 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  /// 私信对方：非会员先引导开通会员；会员则进入会话页（会话内再校验关注/单向上限）
+  Future<void> _openChat() async {
+    if (await ensureMember(context)) {
+      if (!mounted) return;
+      Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) =>
+            ChatScreen(peerId: widget.userId, nickname: _profile?.nickname ?? '钓友'),
+      ));
+    }
   }
 
   Future<void> _load() async {
@@ -141,11 +154,28 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                               color: Colors.white70, fontSize: 13)),
                     const SizedBox(height: 8),
                     if (!(p?.isMe ?? false))
-                      FollowButton(
-                        userId: widget.userId,
-                        initialFollowing: p?.isFollowing ?? false,
-                        isMe: p?.isMe ?? false,
-                        onChanged: (f) => _load(),
+                      Row(
+                        children: [
+                          FollowButton(
+                            userId: widget.userId,
+                            initialFollowing: p?.isFollowing ?? false,
+                            isMe: p?.isMe ?? false,
+                            onChanged: (f) => _load(),
+                          ),
+                          const SizedBox(width: 10),
+                          OutlinedButton.icon(
+                            onPressed: _openChat,
+                            icon: const Icon(Icons.chat_bubble_outline, size: 16),
+                            label: const Text('私信'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: const BorderSide(color: Colors.white70),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                   ],
                 ),
