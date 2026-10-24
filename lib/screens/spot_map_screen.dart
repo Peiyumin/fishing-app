@@ -20,6 +20,7 @@ import '../services/map_tile_source.dart';
 import '../services/spot_service.dart';
 import '../services/weather_service.dart';
 import '../utils/coord_transform.dart';
+import '../widgets/spot_pin.dart';
 import 'spot_detail_screen.dart';
 
 /// 钓点地图（v2.1.9 新增，v2.1.10 升级底图与图层面板）
@@ -1334,15 +1335,18 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
 
   List<Polyline> _buildRiverLines() {
     if (!_layers.rivers) return const [];
+    // 宽度随缩放变化：全国视野是细线，城市/街道视野是实心水面带
+    // （与原生内核的 rivers-casing + rivers-line 视觉保持一致）
+    final zt = ((_zoom - 3) / 13).clamp(0.0, 1.0);
     return _waters.where((w) => w.isRiver).map((w) {
       final pts = _tile.projectAll(w.geometry);
-      // 参考 App 的河道样式：浅蓝半透明「水面带」+ 深蓝描边
+      final base = w.level <= 1 ? 24.0 : 15.0;
       return Polyline(
         points: pts,
-        strokeWidth: w.strokeWidth * 2.0,
-        color: const Color(0x661E88E5),
-        borderStrokeWidth: 1.1,
-        borderColor: const Color(0xDD1565C0),
+        strokeWidth: base * (0.35 + 0.85 * zt),
+        color: const Color(0xEB2E8FD0),
+        borderStrokeWidth: 2.2,
+        borderColor: const Color(0xFF0B4FA8),
       );
     }).toList();
   }
@@ -1386,13 +1390,15 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
       for (final s in all.values) {
         list.add(Marker(
           point: _tile.project(LatLng(s.lat, s.lng)),
-          width: 30,
-          height: 30,
+          width: 32,
+          height: 42,
+          // 针尖对准坐标点：flutter_map 的 alignment 描述「整个 widget 相对
+          // 这个点的位置」，topCenter = widget 整体在点上方，正好让针尖落地点
+          alignment: Alignment.topCenter,
           child: GestureDetector(
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => SpotDetailScreen(spot: s))),
-            child: const Icon(Icons.location_on,
-                color: AppTheme.danger, size: 28),
+            child: const SpotPin(),
           ),
         ));
       }
