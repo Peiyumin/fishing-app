@@ -504,7 +504,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ('关注', '${_me?.followingCount ?? 0}', () => _openFollowList(false)),
       ('粉丝', '${_me?.followerCount ?? 0}', () => _openFollowList(true)),
       ('${_me?.pointsName ?? '积分'}', '${_me?.points ?? 0}',
-          () => _runAction('mall')),
+          () => _runAction('wallet')),
     ];
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
