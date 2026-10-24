@@ -1008,9 +1008,13 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       }
       await _drawMe();
       _updateScale();
-      // 图层一建好就先探一次，不等 camera idle ——
-      // 有些场景（测试、冷启动后镜头本来就没动）根本不会触发 idle 事件
-      unawaited(_probeHydro());
+      // 图层一建好就安排一次探测，不等 camera idle ——
+      // 有些场景（测试、冷启动后镜头本来就没动）根本不会触发 idle 事件。
+      // ★ 延后 1 秒：style 才刚 ready，立刻 querySourceFeatures 在 iOS 上
+      //   可能长时间不返回，把启动拖住。
+      Future.delayed(const Duration(seconds: 1), () {
+        if (mounted) _probeHydro();
+      });
       // 集成测试：图层全部加完后回调一次，断言 6 个图层真的存在
       SpotMapGlScreen.debugOnLayersReady?.call(c);
     } catch (_) {
@@ -1137,6 +1141,14 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   bool _hydroReady = false;
   int _hydroProbe = 0;
 
+  /// 探针是否正在跑
+  ///
+  /// ★ 必须有：`_renderLayers` 失败会退避重试，每次成功都会发起探测；
+  ///   camera idle 也会发起。没有这个标记就会同时开好几条 channel 调用链，
+  ///   把原生主线程堵住 —— iOS 上表现为 App 起来后连不上 VM service，
+  ///   `flutter test` 直接卡在 loading 十几分钟没有任何输出。
+  bool _hydroProbing = false;
+
   Future<void> _safeVecSource() async {
     final c = _map;
     if (c == null) return;
@@ -1198,31 +1210,45 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     }
   }
 
-  /// 探针：地图停下来后问原生层「hydro 源里到底有没有要素」
+  /// 探针：问原生层「hydro 源里到底有没有要素」
   ///
   /// 有 → 说明瓦片加载成功，可以关掉本地那套简化数据（否则长江会被
   ///      本地宽带和 OSM 真实水面画两遍，看起来有重影）
-  /// 没有 → 1.2 秒后重试，最多 5 次，全程不打扰用户
+  /// 没有 → 1.2 秒后重试，最多 20 次，全程不打扰用户
+  ///
+  /// ★ 防重入 + 查询超时：`querySourceFeatures` 是跨 channel 调用，
+  ///   style 还没真正 ready 时在 iOS 上会长时间不返回。同时开多条链
+  ///   会把原生主线程堵死，所以这里既串行化，也给每次查询加 4 秒上限 ——
+  ///   宁可这一轮探不到，也不能拖住 App 启动。
   Future<void> _probeHydro() async {
     if (_hydroReady) return;
+    if (_hydroProbing) return;
     final c = _map;
     if (c == null) return;
     // 高德底图是加偏坐标，在线图层本来就不开，不用探
     if (_tile.isGcj02) return;
+    _hydroProbing = true;
     try {
       // waterway 是河流中心线；某些视野只有湖没有河，补问 water
-      final ways =
-          await c.querySourceFeatures('hydro', 'waterway', null);
+      final ways = await c
+          .querySourceFeatures('hydro', 'waterway', null)
+          .timeout(const Duration(seconds: 4), onTimeout: () => const []);
       if (ways.isNotEmpty) {
         _markHydroReady();
         return;
       }
-      final water = await c.querySourceFeatures('hydro', 'water', null);
+      final water = await c
+          .querySourceFeatures('hydro', 'water', null)
+          .timeout(const Duration(seconds: 4), onTimeout: () => const []);
       if (water.isNotEmpty) {
         _markHydroReady();
         return;
       }
-    } catch (_) {}
+    } catch (_) {
+      // 原生层还没准备好：忽略，下一轮再问
+    } finally {
+      _hydroProbing = false;
+    }
     // 瓦片可能还没下完：1.2 秒后再问，最多 20 次（约 24 秒）
     if (_hydroProbe < 20 && mounted) {
       _hydroProbe++;
