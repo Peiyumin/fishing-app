@@ -62,6 +62,12 @@ class MyOrder {
   bool get isDone => status == 2;
   bool get isCancelled => status == 3;
 
+  /// 能不能从列表里删掉
+  ///
+  /// 只允许已完成 / 已取消的订单删除：待发货的必须走「取消订单」
+  /// （要退积分、恢复库存），不能直接抹掉，否则账对不上。
+  bool get canDelete => status == 2 || status == 3;
+
   String get typeLabel => isPoints ? '积分兑换' : '现金购买';
 
   /// 金额展示：积分单显示「1200 积分」，现金单显示「¥19.90」
