@@ -61,34 +61,41 @@ class MessageService {
         .toList();
   }
 
-  /// 聊天记录
-  static Future<({List<ChatMessage> messages, bool mutual})> chat(
+  /// 聊天记录（含会员截断标记 + 私信资格）
+  static Future<({List<ChatMessage> messages, bool truncated, ChatCan can})> chat(
       String peerId) async {
     final data = await ApiClient.get('/messages/chat/$peerId') as Map;
     final map = data.cast<String, dynamic>();
     final list = (map['messages'] as List?) ?? const [];
+    final canMap = (map['can'] as Map?) ?? const {};
     return (
       messages: list
           .map((e) => ChatMessage.fromJson((e as Map).cast<String, dynamic>()))
           .toList(),
-      mutual: (map['mutual'] as bool?) ?? false,
+      truncated: (map['truncated'] as bool?) ?? false,
+      can: ChatCan.fromJson(canMap.cast<String, dynamic>()),
     );
   }
 
-  /// 发送私信
+  /// 发送私信（失败时抛出 [ChatSendException]，含业务 code）
   static Future<ChatMessage> send(String toId, String content) async {
-    final data = await ApiClient.post('/messages/chat', {
-      'toId': toId,
-      'content': content,
-    }) as Map;
-    final raw = (data as Map)['message'];
+    final json =
+        await ApiClient.postRaw('/messages/chat', {'toId': toId, 'content': content});
+    if (json['ok'] != true) {
+      throw ChatSendException(
+        (json['code'] ?? 'error').toString(),
+        (json['error'] ?? '发送失败').toString(),
+      );
+    }
+    final raw = json['message'];
     return ChatMessage.fromJson(
-        (raw as Map?)?.cast<String, dynamic>() ?? data.cast<String, dynamic>());
+        (raw as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{});
   }
 
-  /// 是否可与某人私信（互相关注）
-  static Future<bool> canChat(String peerId) async {
-    final data = await ApiClient.get('/messages/can-chat', {'peerId': peerId}) as Map;
-    return (data['mutual'] as bool?) ?? false;
+  /// 查询与某人的私信资格（会员/关注/单向上限）
+  static Future<ChatCan> canChat(String peerId) async {
+    final data =
+        await ApiClient.get('/messages/can-chat', {'peerId': peerId}) as Map;
+    return ChatCan.fromJson(data.cast<String, dynamic>());
   }
 }
