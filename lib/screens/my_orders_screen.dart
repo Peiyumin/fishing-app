@@ -105,6 +105,24 @@ class _MyOrdersScreenState extends State<MyOrdersScreen>
     if (r.ok) await _load();
   }
 
+  /// 删除订单记录
+  ///
+  /// 只作用于「已完成 / 已取消」的订单（[MyOrder.canDelete]）：
+  /// 待发货的必须先取消（要退积分、恢复库存），不能直接抹掉。
+  Future<void> _delete(MyOrder o) async {
+    final ok = await _confirm(
+      title: '删除这笔订单？',
+      body: '删除后这条记录不再出现在「我的订单」里，订单已结束，'
+          '不影响已到账的积分和商品。',
+      danger: true,
+    );
+    if (ok != true) return;
+    final r = await ShopService.deleteOrder(o.id);
+    if (!mounted) return;
+    CenterToast.show(context, r.ok ? '订单已删除' : r.msg);
+    if (r.ok) await _load();
+  }
+
   Future<bool?> _confirm({
     required String title,
     required String body,
@@ -158,6 +176,10 @@ class _MyOrdersScreenState extends State<MyOrdersScreen>
         onConfirm: o.canConfirm ? () {
           Navigator.of(ctx).pop();
           _confirmReceive(o);
+        } : null,
+        onDelete: o.canDelete ? () {
+          Navigator.of(ctx).pop();
+          _delete(o);
         } : null,
       ),
     );
@@ -528,10 +550,12 @@ class _OrderDetail extends StatelessWidget {
   final MyOrder order;
   final VoidCallback? onCancel;
   final VoidCallback? onConfirm;
+  final VoidCallback? onDelete;
   const _OrderDetail({
     required this.order,
     this.onCancel,
     this.onConfirm,
+    this.onDelete,
   });
 
   @override
@@ -624,6 +648,13 @@ class _OrderDetail extends StatelessWidget {
                     style: TextStyle(
                         fontSize: 11.5, color: AppTheme.textSecondary)),
               ),
+            if (order.canDelete)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text('订单已结束，可以删掉这条记录，列表会更清爽。',
+                    style: TextStyle(
+                        fontSize: 11.5, color: AppTheme.textSecondary)),
+              ),
             const SizedBox(height: 16),
             Row(
               children: [
@@ -643,24 +674,34 @@ class _OrderDetail extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (onCancel != null || onConfirm != null) ...[
+                if (onCancel != null || onConfirm != null || onDelete != null) ...[
                   const SizedBox(width: 10),
                   Expanded(
                     child: GestureDetector(
-                      onTap: onConfirm ?? onCancel,
+                      onTap: onConfirm ?? onCancel ?? onDelete,
                       child: Container(
                         height: 44,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
                           color: onConfirm != null
                               ? AppTheme.primary
-                              : AppTheme.danger,
+                              : (onCancel != null
+                                  ? AppTheme.danger
+                                  : AppTheme.danger.withOpacity(0.1)),
                           borderRadius: BorderRadius.circular(12),
+                          border: onDelete != null
+                              ? Border.all(color: AppTheme.danger.withOpacity(0.35))
+                              : null,
                         ),
-                        child: Text(onConfirm != null ? '确认收货' : '取消订单',
-                            style: const TextStyle(
+                        child: Text(
+                            onConfirm != null
+                                ? '确认收货'
+                                : (onCancel != null ? '取消订单' : '删除订单'),
+                            style: TextStyle(
                                 fontSize: 14,
-                                color: Colors.white,
+                                color: onDelete != null
+                                    ? AppTheme.danger
+                                    : Colors.white,
                                 fontWeight: FontWeight.w600)),
                       ),
                     ),
