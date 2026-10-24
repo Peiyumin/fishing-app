@@ -13,13 +13,13 @@ import '../services/post_service.dart';
 import '../services/profile_service.dart';
 import '../services/refresh_bus.dart';
 import '../services/session_provider.dart';
-import '../services/shop_service.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/user_avatar.dart';
 import 'auth_screen.dart';
 import 'edit_profile_screen.dart';
 import 'follow_list_screen.dart';
 import 'mall_screen.dart';
+import 'my_orders_screen.dart';
 import 'spots_screen.dart';
 import 'wallet_screen.dart';
 import 'weather_screen.dart';
@@ -141,7 +141,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _runAction(String action) {
     switch (action) {
       case 'orders':
-        _showOrdersSheet();
+        _openOrders();
         return;
       case 'coupons':
         CenterToast.show(context, '卡券功能即将上线');
@@ -321,85 +321,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  /// 我的订单（积分兑换 / 现金登记都在这）
-  Future<void> _showOrdersSheet() async {
-    final orders = await ShopService.fetchMyOrders();
-    if (!mounted) return;
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppTheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (_) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('我的订单',
-                  style:
-                      TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              if (orders.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 28),
-                  child: Center(
-                    child: Text('暂无订单',
-                        style: TextStyle(color: AppTheme.textSecondary)),
-                  ),
-                )
-              else
-                Flexible(
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: orders.length,
-                    separatorBuilder: (_, __) => const Divider(height: 14),
-                    itemBuilder: (_, i) {
-                      final o = orders[i];
-                      final isPoints = (o['type'] ?? '') == 'points';
-                      final amount = (o['amount'] ?? '').toString();
-                      return Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text((o['product_name'] ?? '商品').toString(),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        fontSize: 13.5,
-                                        fontWeight: FontWeight.w600)),
-                                const SizedBox(height: 3),
-                                Text(
-                                  '${isPoints ? '积分兑换' : '现金购买'} · x${(o['quantity'] ?? 1)}'
-                                  ' · ${(o['status_label'] ?? '').toString()}',
-                                  style: const TextStyle(
-                                      fontSize: 11.5,
-                                      color: AppTheme.textSecondary),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Text(
-                            isPoints ? '$amount 积分' : '¥$amount',
-                            style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: AppTheme.primary),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
+  /// 我的订单：跳完整订单页（状态筛选 / 商品图 / 取消 / 确认收货 / 详情）
+  void _openOrders() {
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const MyOrdersScreen()));
   }
 
   // ============================================================
