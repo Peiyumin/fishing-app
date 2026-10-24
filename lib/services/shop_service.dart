@@ -284,6 +284,17 @@ class ShopService {
     }
   }
 
+  /// 删除订单（仅「已完成 / 已取消」可删，只从我的列表里移除，不做退款）
+  static Future<({bool ok, String msg})> deleteOrder(String orderId) async {
+    try {
+      final data = await ApiClient.post('/shop/orders/$orderId/delete', const {});
+      final m = (data is Map) ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      return (ok: true, msg: (m['message'] ?? '订单已删除').toString());
+    } catch (e) {
+      return (ok: false, msg: _msgOf(e));
+    }
+  }
+
   /// 从 Exception / 其它异常里取出后端返回的中文提示
   /// （api_client 抛的是 Exception('已发货的订单不能取消')，toString 会带前缀）
   static String _msgOf(Object e) {
