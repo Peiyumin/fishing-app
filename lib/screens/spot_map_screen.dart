@@ -1336,7 +1336,11 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
   List<Polyline> _buildRiverLines() {
     if (!_layers.rivers) return const [];
     // 宽度随缩放变化：全国视野是细线，城市/街道视野是实心水面带
-    // （与原生内核的 rivers-casing + rivers-line 视觉保持一致）
+    //
+    // ★ 单层浅蓝，不再画深蓝描边（v2.1.21）：
+    //   原来 `borderStrokeWidth + borderColor` 会在外面套一圈更深的蓝，
+    //   加上填充色就是"一条河两种蓝"，看着像画了两条。这里与原生内核的
+    //   rivers-line 对齐成同一个色值 #3FA9F5。
     final zt = ((_zoom - 3) / 13).clamp(0.0, 1.0);
     return _waters.where((w) => w.isRiver).map((w) {
       final pts = _tile.projectAll(w.geometry);
@@ -1344,9 +1348,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
       return Polyline(
         points: pts,
         strokeWidth: base * (0.35 + 0.85 * zt),
-        color: const Color(0xEB2E8FD0),
-        borderStrokeWidth: 2.2,
-        borderColor: const Color(0xFF0B4FA8),
+        color: const Color(0xCC3FA9F5),
       );
     }).toList();
   }
