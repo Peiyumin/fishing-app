@@ -2,11 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import '../models/weather_forecast.dart';
-import '../services/fishing_advisor.dart';
 import '../services/weather_service.dart';
 
 /// 首页「钓鱼天气」卡片
 /// 显示气温、湿度、风速、气压 + 垂钓适宜指数与建议
+///
+/// ★ 时段口径（v2.1.19）：温度 / 湿度 / 风 / 气压 / 天气现象 / 垂钓指数
+///   全部来自同一个整点（[FishingWeather.atLabel] 就是那个小时），
+///   与天气页顶部卡、逐时表「现在」那一行完全一致。
+///   之前首页自己用 FishingAdvisor 另算一套分数，天气页用 Bite 引擎，
+///   同一时刻能差 5~8 分，用户会以为数据错了。
 class WeatherCard extends StatelessWidget {
   final FishingWeather weather;
 
@@ -14,15 +19,17 @@ class WeatherCard extends StatelessWidget {
   final String? placeLabel;
   const WeatherCard({super.key, required this.weather, this.placeLabel});
 
+  /// 分数 → 颜色（与天气页同一套分级：≥80 绿、≥60 金、≥40 橙、其余红）
+  static Color scoreColor(int s) {
+    if (s >= 80) return const Color(0xFF2E9E5B);
+    if (s >= 60) return const Color(0xFFD9A02B);
+    if (s >= 40) return const Color(0xFFE07A29);
+    return const Color(0xFFD9534F);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final advice = FishingAdvisor.build(
-      temp: weather.temperature,
-      pressure: weather.pressure,
-      windKmh: weather.windSpeed,
-      weatherCode: weather.weatherCode,
-      hour: DateTime.now().hour,
-    );
+    final score = weather.score;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Padding(
@@ -57,15 +64,22 @@ class WeatherCard extends StatelessWidget {
                   ),
                 ],
                 const Spacer(),
+                // 时段标签：明确这是哪一小时的数据，和天气页对得上
+                if (weather.atLabel.isNotEmpty) ...[
+                  Text(weather.atLabel,
+                      style: const TextStyle(
+                          fontSize: 11, color: AppTheme.textSecondary)),
+                  const SizedBox(width: 6),
+                ],
                 // 垂钓指数：直接显示分数，贴右侧显示
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                   decoration: BoxDecoration(
-                    color: advice.color,
+                    color: scoreColor(score),
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: Text('垂钓指数：${advice.score}',
+                  child: Text('垂钓指数：$score',
                       style: const TextStyle(
                           color: Colors.white,
                           fontSize: 12,
@@ -100,7 +114,7 @@ class WeatherCard extends StatelessWidget {
                       size: 15, color: AppTheme.primary),
                   const SizedBox(width: 6),
                   Expanded(
-                    child: Text('AI 建议：${advice.headline}',
+                    child: Text('AI 建议：${weather.fishAdvice}',
                         style: const TextStyle(
                             fontSize: 13, color: AppTheme.primary)),
                   ),
