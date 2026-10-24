@@ -1052,7 +1052,12 @@ class _NowCard extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 3),
-                  Text('当前 · ${Wmo.text(bundle.curCode)}',
+                  // 标出这是哪个整点的数据：温度、天气现象、指数全部来自这一小时，
+                  // 用户对照下面逐时表就能核对上（表里这一行也会高亮成「现在」）
+                  Text(
+                      h == null
+                          ? '当前 · ${Wmo.text(bundle.curCode)}'
+                          : '${h.hhmm} · ${Wmo.text(bundle.curCode)}',
                       style: const TextStyle(color: _Pal.muted, fontSize: 11)),
                 ],
               ),
