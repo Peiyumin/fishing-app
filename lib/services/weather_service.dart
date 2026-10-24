@@ -73,21 +73,16 @@ class WeatherService {
   /// 全球模式常在「实际没下雨」时也给 drizzle 代码，只看 weather_code 会把
   /// 晴天报成「小毛雨」。用实测降水量 + 云量回推天气现象，才与中央气象台一致。
   static Future<FishingWeather> fetch(double lat, double lng) async {
-    final cmaF = _fetchCma(lat, lng, days: 1);
-    final uri = Uri.parse(
-      '$_base?latitude=$lat&longitude=$lng'
-      '&current=temperature_2m,relative_humidity_2m,wind_speed_10m,pressure_msl,'
-      'weather_code,precipitation,cloud_cover'
-      '&hourly=temperature_2m,pressure_msl&forecast_days=1&timezone=auto',
-    );
-    final res = await _client.get(uri).timeout(_timeout);
-    if (res.statusCode != 200) {
-      throw Exception('天气获取失败：${res.statusCode}');
-    }
-    final json = jsonDecode(res.body) as Map<String, dynamic>;
-    final cma = await cmaF;
-    final bundle = WeatherBundle.fromOpenMeteo(lat, lng, json,
-        ensembleJson: cma);
+    // ★★ 与天气页共用同一个 7 天 bundle（v2.1.21）
+    //
+    //   以前这里单独发一次 `forecast_days=1` 的请求，于是首页和天气页拿到的是
+    //   **两份不同的逐时序列**（不同请求、不同天数）：
+    //     · 同一小时的湿度 / 风速在两次请求里可能差一点；
+    //     · 更关键的是水温 —— WaterMetrics 的热惯性模型吃的是"过去若干小时"
+    //       的序列，24 小时 vs 168 小时算出来的水温不同，垂钓指数跟着差好几分。
+    //   用户把首页「垂钓指数 82」和天气页「74」一对照，就认定数据错了。
+    //   现在只保留一个数据源：一次 7 天请求 → 首页和天气页都从它派生。
+    final bundle = await fetchForecast(lat, lng);
     final w = FishingWeather.fromBundle(bundle);
     await _saveCache(_curCacheKey, {
       'lat': lat,
@@ -243,7 +238,10 @@ class FishingWeather {
   ///   和天气页顶部卡、逐时表里标「现在」的那一行是同一组数字。
   factory FishingWeather.fromBundle(WeatherBundle b) {
     final now = DateTime.now();
-    final i = b.indexOfHourNear(now);
+    // ★ 用「当前所在的那一小时」（20:35 → 20:00），不是"绝对最近"
+    //   （20:35 会挑到 21:00 那个还没到的时段）。天气页顶部卡用的是同一个函数，
+    //   两处必须一致，否则同一时刻会显示两个时段。
+    final i = b.indexOfCurrentHour(now);
     final h = i >= 0 ? b.hours[i] : null;
     // 与天气页同源的水温/水氧（热惯性模型），保证两页指数可对齐
     final metrics = WaterMetrics.derive(b.hours);
