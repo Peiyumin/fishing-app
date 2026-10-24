@@ -53,9 +53,14 @@ class _HomeScreenState extends State<HomeScreen>
   double? _myLat;
   double? _myLng;
 
-  /// 首页自动刷新定时器：每 3 分钟拉一次最新动态 / 天气 / 钓点
-  Timer? _autoTimer;
-  static const Duration _autoInterval = Duration(minutes: 3);
+  /// 钓友动态「实时更新」轮询：每 15 秒探测一次最新动态，
+  /// 只有出现新帖子（id 集合变化）才刷新列表，无变化不重绘、不打扰。
+  Timer? _feedTimer;
+  static const Duration _feedInterval = Duration(seconds: 15);
+
+  /// 天气 / 钓点的较慢全量刷新（数据变化慢，3 分钟一次足够）
+  Timer? _slowTimer;
+  static const Duration _slowInterval = Duration(minutes: 3);
 
   /// App 是否在前台（后台时不自动刷新，省流量也避免无谓请求）
   bool _resumed = true;
@@ -114,7 +119,8 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.removeObserver(this);
     RefreshBus.feedTick.removeListener(_onFeedTick);
     RefreshBus.spotTick.removeListener(_onSpotTick);
-    _autoTimer?.cancel();
+    _feedTimer?.cancel();
+    _slowTimer?.cancel();
     super.dispose();
   }
 
@@ -123,6 +129,7 @@ class _HomeScreenState extends State<HomeScreen>
     _resumed = state == AppLifecycleState.resumed;
     // 回到前台立刻补一次刷新（可能已经离开很久）
     if (_resumed && _lastUpdated != null) {
+      _pollFeed();
       _silentRefresh();
     }
   }
@@ -131,17 +138,44 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _onSpotTick() => _loadSpots();
 
-  /// 每 3 分钟自动刷新一次（后台时跳过）
+  /// 启动两类自动刷新：
+  ///   - 15 秒：钓友动态「实时更新」探测（有新帖才刷新）
+  ///   - 3 分钟：天气 / 钓点全量刷新
   void _startAutoRefresh() {
-    _autoTimer?.cancel();
-    _autoTimer = Timer.periodic(_autoInterval, (_) => _silentRefresh());
+    _feedTimer?.cancel();
+    _slowTimer?.cancel();
+    _feedTimer = Timer.periodic(_feedInterval, (_) => _pollFeed());
+    _slowTimer = Timer.periodic(_slowInterval, (_) => _silentRefresh());
+  }
+
+  /// 钓友动态实时轮询：拉最新一页动态，仅当「id 集合」有变化才刷新列表。
+  /// 这样既能在别人发布后立即上屏（最多 15 秒延迟），又不会无谓重绘导致列表跳动。
+  Future<void> _pollFeed() async {
+    if (!mounted || !_resumed) return;
+    try {
+      final posts = await PostService.fetchFeed(limit: 20);
+      if (!mounted) return;
+      final newIds = posts.map((p) => p.id).toSet();
+      final oldIds = _posts.map((p) => p.id).toSet();
+      // 长度不同，或存在新 id（含置顶插入到非首位的情况）→ 视为有更新
+      final changed =
+          newIds.length != oldIds.length || !oldIds.containsAll(newIds);
+      if (changed) {
+        setState(() {
+          _posts = posts;
+          _lastUpdated = DateTime.now();
+        });
+      }
+    } catch (_) {
+      // 轮询失败静默，下次再试
+    }
   }
 
   /// 静默刷新：不弹错误提示，失败就等下一次
   Future<void> _silentRefresh() async {
     if (!mounted || !_resumed) return;
     await Future.wait([
-      _loadFeed(silent: true),
+      _pollFeed(),
       _loadWeather(silent: true),
       _loadSpots(),
     ]);
