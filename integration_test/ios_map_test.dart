@@ -164,6 +164,13 @@ const List<String> _riverLayers = [
   'hydro-water',
 ];
 
+/// 湖泊/水面图层：本地填充 + 在线水体面
+const List<String> _lakeLayers = [
+  'lakes-fill',
+  'lakes-line',
+  'hydro-water',
+];
+
 /// 确保相机真的停在目标点附近，返回是否成功
 ///
 /// ★ 两个 CI 假阴性都出在这里，所以判据做得很硬：
@@ -349,9 +356,13 @@ void main() {
         'riverCenter=$riverPt verts=${river.geometry.length}');
 
     final probe = await _probeRiver(tester, ctl!, river, mapSize);
+    // queryRenderedFeaturesInRect 返回的是 List<Map>，取图层名要用 ['layerId']
+    final hitLayers = probe.hits.isEmpty
+        ? '-'
+        : probe.hits.map((h) => '${(h as Map)['layerId']}').toSet();
     // ignore: avoid_print
     print('[TEST] river="${river.name}" hits=${probe.hits.length} '
-        'layers=${probe.hits.isEmpty ? "-" : probe.hits.map((h) => h.layerId).toSet()} '
+        'layers=$hitLayers '
         'onScreenVerts=${probe.onScreen} nearest=$probe.at');
     expect(probe.hits, isNotEmpty,
         reason: '相机已停在「${river.name}」折线顶点上，但整视口矩形里查不到 '
@@ -448,14 +459,18 @@ void main() {
         isTrue,
         reason: '相机没能移到湖泊「${lk.name}」');
     await wait(tester, 500);
-    final lakeHits =
-        await ctl!.queryRenderedFeaturesInRect(viewRect, ['lakes-fill'], null);
+    // 同上：在线河网就绪后本地 lakes-fill 会被隐藏，所以同时查 hydro-water
+    final lakeHits = await ctl!
+        .queryRenderedFeaturesInRect(viewRect, _lakeLayers, null);
+    final lakeHitLayers = lakeHits.isEmpty
+        ? '-'
+        : lakeHits.map((h) => '${(h as Map)['layerId']}').toSet();
     // ignore: avoid_print
     print('[TEST] lake="${lk.name}" center=${lakeB.lat},${lakeB.lng} '
-        'hits=${lakeHits.length}');
+        'hits=${lakeHits.length} layers=$lakeHitLayers');
     expect(lakeHits, isNotEmpty,
-        reason: '湖泊「${lk.name}」在视野里查不到 lakes-fill 要素，'
-            '蓝色水面没渲染出来');
+        reason: '湖泊「${lk.name}」在视野里查不到蓝色水面要素'
+            '（本地 lakes-fill 或在线 hydro-water），水面没渲染出来');
 
     // ---------------------------------------------------------------- 6. 钓点能命中且 id 对得上
     final spots = await SpotService.fetchSpots();
