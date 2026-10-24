@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' show Point;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show Factory;
 import 'package:flutter/gestures.dart';
@@ -378,13 +380,20 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   ///
   /// 高德是 GCJ-02 必须纠偏，否则叠加物整体偏移 300~500 米；
   /// 星图地球 / 天地图未加偏，原样输出。
-  List<List<double>> _ring(List<ll.LatLng> pts) {
+  ///
+  /// ★ [close] 必须对河流传 false。
+  ///   旧写法对**所有**要素都补一个「回到首点」的闭合点，河流是折线不是环，
+  ///   于是长江从入海口（121°E）被一条直线拉回源头（91°E），
+  ///   地图上会横着多出一条穿越整个中国的假蓝线。
+  ///   这也是「河道看起来不对 / 像是乱画」的来源之一。
+  List<List<double>> _ring(List<ll.LatLng> pts, {bool close = true}) {
     final out = <List<double>>[];
     for (final p in pts) {
       final q = _tile.project(p);
       out.add([q.longitude, q.latitude]);
     }
-    if (out.isNotEmpty &&
+    if (close &&
+        out.length > 2 &&
         (out.first[0] != out.last[0] || out.first[1] != out.last[1])) {
       out.add(out.first);
     }
@@ -431,23 +440,63 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     }
   }
 
+  /// 业务图层 id 清单
+  ///
+  /// ★ 用来做「加了没真的加上」的校验。旧代码的 `_safeLayer` 把
+  ///   addLayer 的异常全部吞掉，即使**一个都没加成**也照样把 `_layersReady`
+  ///   置为 true —— 表现就是「图层开关只有底图那两个有用，下面几个点了没反应」。
+  ///   现在加完必须回读 `getLayerIds()` 逐个确认，缺一个就重试。
+  static const List<String> _bizLayers = [
+    'lakes-fill',
+    'lakes-line',
+    'rivers-casing',
+    'rivers-line',
+    'zones-fill',
+    'zones-line',
+    'spots-pin',
+  ];
+
+  /// 随缩放插值的数值属性（MapLibre 表达式）
+  ///
+  /// [stops] 是 [zoom1, value1, zoom2, value2, ...]。
+  /// 用它而不是固定像素宽度，是因为全国视野（z4）和街道视野（z16）
+  /// 需要的线宽差 10 倍以上：固定 4.5px 在 z4 细得看不见，
+  /// 在 z16 又细得像根头发 —— 用户就会觉得「河道图层没生效」。
+  dynamic _zNum(List<num> stops) {
+    final out = <dynamic>[
+      'interpolate',
+      ['linear'],
+      ['zoom'],
+    ];
+    for (var i = 0; i + 1 < stops.length; i += 2) {
+      out.add(stops[i]);
+      out.add(stops[i + 1]);
+    }
+    return out;
+  }
+
   Future<void> _renderLayers() async {
     final c = _map;
     if (c == null || !_styleReady || _layersReady || _rendering) return;
     _rendering = true;
     try {
+      // ---------------- 水域 ----------------
       final lakes = <Map<String, dynamic>>[];
       final rivers = <Map<String, dynamic>>[];
       for (final w in _waters) {
-        final coords = _ring(w.geometry);
-        if (coords.length < 2) continue;
         if (w.isRiver) {
-          rivers.add(_feature('LineString', coords, const {}));
-        } else if (coords.length >= 4) {
-          lakes.add(_feature('Polygon', [coords], const {}));
+          // ★ 河流是折线，不能闭合（见 _ring 注释）
+          final coords = _ring(w.geometry, close: false);
+          if (coords.length < 2) continue;
+          rivers.add(_feature('LineString', coords, {'n': w.name}));
+        } else {
+          final coords = _ring(w.geometry);
+          if (coords.length < 4) continue;
+          lakes.add(_feature('Polygon', [coords], {'n': w.name}));
         }
       }
 
+      // ---------------- 禁钓区 ----------------
       final zones = <Map<String, dynamic>>[];
       for (final z in _zones.zones) {
         if (!z.onMap || z.rings.isEmpty) continue;
@@ -459,78 +508,127 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         }));
       }
 
+      // ---------------- 钓点图标 ----------------
+      // 红色定位针 + 白色鱼形，运行时用 Canvas 画成 PNG 交给原生层当 icon
+      await _ensureSpotIcon();
+
+      // ---------------- 湖泊：蓝色水面 ----------------
       await _safeSource('lakes', _fc(lakes));
       await _safeLayer(
           'lakes',
           'lakes-fill',
-          FillLayerProperties(
-              fillColor: '#1E88E5',
-              fillOpacity: _layers.lakes ? 0.32 : 0.0),
-          // 全国视角下几十个湖泊只是几个像素点，画了也看不见，
-          // 却要占着原生层的绘制批次；6 级以下交给地图瓦片自带的蓝色水面。
-          minzoom: 6);
+          const FillLayerProperties(
+              fillColor: '#2E9BF0',
+              // ★ 不再把传 opacity 设成 0 —— 见 _applyLayerToggles 注释
+              fillOpacity: 0.45),
+          minzoom: 3);
       await _safeLayer(
           'lakes',
           'lakes-line',
-          LineLayerProperties(
-              lineColor: '#1565C0',
-              lineWidth: 1.2,
-              lineOpacity: _layers.lakes ? 0.85 : 0.0),
-          minzoom: 6);
+          const LineLayerProperties(
+              lineColor: '#0B4FA8', lineWidth: 1.6, lineOpacity: 0.9),
+          minzoom: 3);
 
+      // ---------------- 河流：双层水面带 ----------------
+      // 深蓝描边在下、亮蓝芯在上，合成「一条有边界的水面」，
+      // 也就是参考图里那种河道渲染色；单根半透明细线在卫星图上基本看不见。
       await _safeSource('rivers', _fc(rivers));
+      await _safeLayer(
+          'rivers',
+          'rivers-casing',
+          LineLayerProperties(
+            lineColor: '#0B4FA8',
+            lineWidth: _zNum([3, 1.2, 6, 2.4, 9, 5.0, 12, 10.5, 15, 18.0]),
+            lineOpacity: 0.95,
+            lineCap: 'round',
+            lineJoin: 'round',
+          ),
+          minzoom: 3);
       await _safeLayer(
           'rivers',
           'rivers-line',
           LineLayerProperties(
-              lineColor: '#1E88E5',
-              lineWidth: 4.5,
-              lineOpacity: _layers.rivers ? 0.5 : 0.0),
-          minzoom: 6);
+            lineColor: '#3FA9F5',
+            lineWidth: _zNum([3, 0.9, 6, 1.6, 9, 3.6, 12, 8.0, 15, 14.0]),
+            lineOpacity: 0.95,
+            lineCap: 'round',
+            lineJoin: 'round',
+          ),
+          minzoom: 3);
 
+      // ---------------- 禁钓区：红色 ----------------
       await _safeSource('zones', _fc(zones));
       await _safeLayer(
           'zones',
           'zones-fill',
-          FillLayerProperties(
-              fillColor: '#E5484D',
-              fillOpacity: _layers.noFishingZones ? 0.14 : 0.0),
-          minzoom: 5);
+          const FillLayerProperties(
+            fillColor: '#E53935',
+            // 正在禁渔期（active=true）的红得更实，已过期的淡一档
+            fillOpacity: [
+              'case',
+              ['==', ['get', 'active'], true],
+              0.34,
+              0.20,
+            ],
+          ),
+          minzoom: 3);
       await _safeLayer(
           'zones',
           'zones-line',
-          LineLayerProperties(
-              lineColor: '#E5484D',
-              lineWidth: 1.4,
-              lineDasharray: const [3, 2],
-              lineOpacity: _layers.noFishingZones ? 0.85 : 0.0),
-          minzoom: 5);
+          const LineLayerProperties(
+            lineColor: '#C62828',
+            lineWidth: 2.2,
+            lineOpacity: 1.0,
+            lineJoin: 'round',
+          ),
+          minzoom: 3);
 
+      // ---------------- 钓点：红色定位图标 ----------------
       await _safeSource('spots', _fc(_spotFeatures()));
       await _safeLayer(
           'spots',
-          'spots-circle',
-          CircleLayerProperties(
-              circleColor: '#E5484D',
-              circleRadius: 5.5,
-              circleStrokeColor: '#FFFFFF',
-              circleStrokeWidth: 2,
-              circleOpacity: _layers.spots ? 1.0 : 0.0),
-          minzoom: 4);
+          'spots-pin',
+          SymbolLayerProperties(
+            iconImage: 'spot-pin',
+            // 目标显示尺寸约 25×32（z11），随缩放微调
+            iconSize: _zNum([
+              4, 0.46 * _iconUnit,
+              8, 0.55 * _iconUnit,
+              11, 0.62 * _iconUnit,
+              15, 0.78 * _iconUnit,
+            ]),
+            // 针尖对准坐标点，而不是图标中心
+            iconAnchor: 'bottom',
+            iconAllowOverlap: true,
+            iconIgnorePlacement: true,
+            iconPadding: 0,
+          ),
+          minzoom: 0);
+
+      // ---------------- 校验：真的加上了才算成功 ----------------
+      final ids =
+          (await c.getLayerIds()).map((e) => e.toString()).toSet();
+      final missing = _bizLayers.where((e) => !ids.contains(e)).toList();
+      if (missing.isNotEmpty) {
+        throw StateError('图层未生效: $missing');
+      }
 
       _layersReady = true;
       _renderAttempt = 0;
+      // 首次加完后按当前开关状态应用一次显隐（否则默认关掉的图层仍会显示）
+      await _applyLayerToggles();
       await _drawMe();
+      _updateScale();
       // 集成测试：图层全部加完后回调一次，断言 6 个图层真的存在
       SpotMapGlScreen.debugOnLayersReady?.call(c);
     } catch (_) {
       // 原生层刚 ready 的一瞬间可能还没把 style 状态同步好，addLayer 会抛异常。
       // 旧写法吞掉就再也不重试 → 表现就是「图层整个不生效」。
-      // 这里退避重试，最多 3 次（配合 _safeSource/_safeLayer，重试是幂等的）。
+      // 这里退避重试，最多 5 次（配合 _safeSource/_safeLayer，重试是幂等的）。
       _layersReady = false;
-      if (_renderAttempt < 3) {
+      if (_renderAttempt < 5) {
         _renderAttempt++;
-        Future.delayed(const Duration(milliseconds: 400), () {
+        Future.delayed(const Duration(milliseconds: 350), () {
           if (mounted) _renderLayers();
         });
       }
@@ -539,25 +637,230 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     }
   }
 
+  // ------------------------------------------------------------ 钓点图标
+
+  bool _spotIconReady = false;
+
+  /// 图标「像素 → 显示单位」的换算系数
+  ///
+  /// 两端的解码方式不一样，必须换算，否则同一份 iconSize 在 Android 上会大 3 倍：
+  ///   · iOS：插件用 `UIImage(data:scale: UIScreen.main.scale)`，
+  ///     120px 的图在 3x 屏上 = **40pt**；
+  ///   · Android：`BitmapFactory.decodeByteArray` 解出的 bitmap 不带 density，
+  ///     MapLibre 按 1px = 1dp 处理，120px = **120dp**。
+  /// 差一个 devicePixelRatio，所以 Android 侧除以它即可对齐视觉尺寸。
+  double get _iconUnit {
+    if (Platform.isIOS) return 1.0;
+    final views = WidgetsBinding.instance.platformDispatcher.views;
+    final dpr = views.isEmpty ? 1.0 : views.first.devicePixelRatio;
+    return dpr > 0 ? 1.0 / dpr : 1.0;
+  }
+
+  /// 把「红色定位针 + 白色鱼形」画成 PNG 交给原生层
+  ///
+  /// 为什么运行时画而不是放 png 资源：
+  ///   1. 不用多打包一份 3x 图，省体积；
+  ///   2. 颜色跟 App 主题（红色）保持一致，改主题不用重新出图；
+  ///   3. MapLibre 的 icon 只吃「图片像素」，画大一点再缩小显示更清晰。
+  Future<void> _ensureSpotIcon() async {
+    final c = _map;
+    if (c == null || _spotIconReady) return;
+    final bytes = await _buildPinIcon();
+    if (bytes == null) return;
+    try {
+      await c.addImage('spot-pin', bytes);
+    } catch (_) {
+      // 同名已存在：直接用
+    }
+    _spotIconReady = true;
+  }
+
+  Future<Uint8List?> _buildPinIcon() async {
+    const double w = 120;
+    const double h = 156;
+    const double cx = 60; // 圆心 x
+    const double cy = 56; // 圆心 y
+    const double r = 40; // 圆半径
+    const double tipY = 148; // 针尖 y
+
+    final rec = ui.PictureRecorder();
+    final canvas = Canvas(rec, const Rect.fromLTWH(0, 0, w, h));
+
+    // 水滴形：圆 + 下方收成尖
+    final head = Path()
+      ..addOval(Rect.fromCircle(center: const Offset(cx, cy), radius: r));
+    final tail = Path()
+      ..moveTo(cx - r * 0.62, cy + r * 0.62)
+      ..quadraticBezierTo(cx - r * 0.32, cy + r * 1.28, cx, tipY)
+      ..quadraticBezierTo(cx + r * 0.32, cy + r * 1.28, cx + r * 0.62, cy + r * 0.62)
+      ..close();
+    final pin = Path.combine(PathOperation.union, head, tail);
+
+    // 白色描边：卫星影像背景很花，没有白边会糊成一团
+    canvas.drawPath(
+        pin,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 9
+          ..strokeJoin = StrokeJoin.round);
+    canvas.drawPath(pin, Paint()..color = const Color(0xFFE53935));
+
+    // 白色鱼形：椭圆鱼身 + 三角尾鳍
+    final body = Path()
+      ..addOval(Rect.fromCenter(
+          center: const Offset(cx + 3, cy - 2), width: 42, height: 26));
+    final fin = Path()
+      ..moveTo(cx - 16, cy - 2)
+      ..lineTo(cx - 30, cy - 14)
+      ..lineTo(cx - 30, cy + 10)
+      ..close();
+    canvas.drawPath(
+        Path.combine(PathOperation.union, body, fin),
+        Paint()..color = Colors.white);
+    // 鱼眼（挖回红色）
+    canvas.drawCircle(
+        const Offset(cx + 16, cy - 7), 3.4, Paint()..color = const Color(0xFFE53935));
+
+    final img = await rec.endRecording().toImage(w.round(), h.round());
+    final bd = await img.toByteData(format: ui.ImageByteFormat.png);
+    img.dispose();
+    return bd?.buffer.asUint8List();
+  }
+
   Future<void> _setVis(String layer, bool on) async {
     try {
       await _map?.setLayerVisibility(layer, on);
     } catch (_) {}
   }
 
+  /// 业务图层是否都真的存在于原生层
+  Future<bool> _bizLayersExist() async {
+    final c = _map;
+    if (c == null) return false;
+    try {
+      final ids = (await c.getLayerIds()).map((e) => e.toString()).toSet();
+      return _bizLayers.every(ids.contains);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 应用图层显隐
+  ///
+  /// ★ 只切 visibility，**不改 opacity**。
+  ///   旧写法把「开/关」编码进了 addLayer 时的 `fillOpacity: _layers.x ? a : 0.0`，
+  ///   于是图层一旦以「关」的状态被创建，opacity 就永久是 0 ——
+  ///   之后再 `setLayerVisibility(true)` 也还是全透明，看起来就是「开关失灵」。
+  ///   现在一律按「开」的样子建层，显隐只由 visibility 决定。
   Future<void> _applyLayerToggles() async {
-    if (!_layersReady) return;
     await _setVis('sat', _layers.satellite);
     await _setVis('vec', !_layers.satellite);
     // 矢量路网图本身自带地名，再叠注记等于白跑一倍瓦片却看不出差别；
     // 只有卫星模式才需要注记层。
     await _setVis('cia', _layers.roadLabels && _layers.satellite);
+
+    if (!_layersReady) {
+      // 业务图层还没真正加成（原生层刚起时 addLayer 可能被拒）：
+      // 现场自愈，别让用户点了开关毫无反应
+      if (await _bizLayersExist()) {
+        _layersReady = true;
+      } else {
+        _renderAttempt = 0;
+        _renderLayers();
+        return;
+      }
+    }
     await _setVis('lakes-fill', _layers.lakes);
     await _setVis('lakes-line', _layers.lakes);
+    await _setVis('rivers-casing', _layers.rivers);
     await _setVis('rivers-line', _layers.rivers);
     await _setVis('zones-fill', _layers.noFishingZones);
     await _setVis('zones-line', _layers.noFishingZones);
-    await _setVis('spots-circle', _layers.spots);
+    await _setVis('spots-pin', _layers.spots);
+  }
+
+  // ------------------------------------------------------------ 比例尺
+
+  /// 当前视野的「米 / 像素」，由 onCameraIdle 更新
+  ///
+  /// 不能用 `cameraPosition.zoom` 算 —— 为了性能我们关掉了
+  /// `trackCameraPosition`，那个值根本不会更新（一直是建图时的 zoom）。
+  /// 改成从 `getVisibleRegion()` 反算：视野东西向跨度的实地距离 ÷ 视图宽度。
+  double? _mpp;
+
+  Future<void> _updateScale() async {
+    final c = _map;
+    final size = _mapSize;
+    if (c == null || size == null || size.width < 40) return;
+    try {
+      final b = await c.getVisibleRegion();
+      final sw = b.southwest;
+      final ne = b.northeast;
+      final midLat = (sw.latitude + ne.latitude) / 2;
+      final meters = const ll.Distance().as(
+        ll.LengthUnit.Meter,
+        ll.LatLng(midLat, sw.longitude),
+        ll.LatLng(midLat, ne.longitude),
+      );
+      final mpp = meters / size.width;
+      if (!mpp.isFinite || mpp <= 0) return;
+      if (!mounted) return;
+      final old = _mpp;
+      // 变化小于 2% 不重建，避免拖动时每帧 setState
+      if (old != null && (old - mpp).abs() / mpp < 0.02) return;
+      setState(() => _mpp = mpp);
+    } catch (_) {}
+  }
+
+  /// 左下角比例尺（在原授权文字上方）
+  Widget _buildScaleBar() {
+    final mpp = _mpp;
+    if (mpp == null) return const SizedBox.shrink();
+    const maxW = 76.0;
+    const steps = <double>[
+      5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000,
+      10000, 20000, 25000, 50000, 100000, 200000, 500000, 1000000, 2000000,
+    ];
+    var pick = steps.first;
+    for (final s in steps) {
+      if (s <= mpp * maxW) {
+        pick = s;
+      } else {
+        break;
+      }
+    }
+    final wpx = pick / mpp;
+    final label = pick >= 1000
+        ? '${(pick / 1000).toStringAsFixed(pick % 1000 == 0 ? 0 : 1)} 公里'
+        : '${pick.round()} 米';
+    const lineColor = Color(0xE6000000);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label,
+            style: const TextStyle(
+              fontSize: 9.5,
+              height: 1.1,
+              fontWeight: FontWeight.w600,
+              color: Color(0xE6000000),
+              shadows: [Shadow(color: Colors.white, blurRadius: 3)],
+            )),
+        const SizedBox(height: 2),
+        Container(
+          width: wpx.clamp(8.0, maxW),
+          height: 6,
+          decoration: const BoxDecoration(
+            border: Border(
+              left: BorderSide(color: lineColor, width: 1.6),
+              right: BorderSide(color: lineColor, width: 1.6),
+              bottom: BorderSide(color: lineColor, width: 1.6),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   // ---------------------------------------------------------------- 定位
@@ -639,6 +942,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       if (!mounted || seq != _landSeq) return;
       if (await _cameraNear(lat, lng)) {
         _pendingMove = null;
+        _updateScale(); // 镜头到位后刷新比例尺
         return;
       }
       debugPrint('[SpotMapGL] 镜头未到位，重试第 ${i + 1} 轮');
@@ -724,13 +1028,12 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     } catch (_) {}
   }
 
-  /// 点地图：命中钓点圆圈就进详情
+  /// 点地图：命中钓点图标就进详情
   ///
-  /// GeoJSON 加进去的 circle 图层没有 onCircleTapped（那是 AnnotationManager
-  /// 才有的回调），只能 queryRenderedFeatures 按屏幕坐标查。
+  /// GeoJSON 加进去的图层没有 onLayerTapped，只能 queryRenderedFeatures 按屏幕坐标查。
   ///
   /// ★ 用 44×44 的矩形查询，不是单点查询。
-  ///   钓点圆直径只有 5.5×2 + 描边 2×2 = 15 px，手指点偏几个像素就查不到，
+  ///   图标显示尺寸约 40×52，但手指点偏几个像素就查不到，
   ///   用户体验上就是「点了没反应、进不去详情」。44pt 是 iOS/Android
   ///   一致的最小可点区域标准，正好让命中率接近 100%。
   Future<void> _onMapClick(Point<double> point) async {
@@ -744,10 +1047,10 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         point.x - half, point.y - half, point.x + half, point.y + half);
     List feats = const [];
     try {
-      feats = await c.queryRenderedFeaturesInRect(rect, ['spots-circle'], null);
+      feats = await c.queryRenderedFeaturesInRect(rect, ['spots-pin'], null);
       if (feats.isEmpty) {
         // 某些平台实现矩形查询不稳定，退回单点再试一次
-        feats = await c.queryRenderedFeatures(point, ['spots-circle'], null);
+        feats = await c.queryRenderedFeatures(point, ['spots-pin'], null);
       }
     } catch (_) {
       return;
@@ -850,10 +1153,13 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                   // 样式重载后旧的 source/layer 全部消失，要重新加
                   _layersReady = false;
                   _meAdded = false;
+                  _spotIconReady = false; // 图标也要重新 addImage
                   _styleReady = true;
                   _flushPendingMove();
                   _renderLayers();
                 },
+                // 相机停下后重算比例尺（拖动过程中不算，省性能）
+                onCameraIdle: _updateScale,
                 onMapClick: (point, latlng) => _onMapClick(point),
               )
             : Container(
@@ -865,6 +1171,13 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                   child: CircularProgressIndicator(strokeWidth: 2.4),
                 ),
               ),
+      ),
+
+      // 比例尺（在授权文字上方）
+      Positioned(
+        left: 10,
+        bottom: 21,
+        child: IgnorePointer(child: _buildScaleBar()),
       ),
 
       // 版权行（合规必须显示）
