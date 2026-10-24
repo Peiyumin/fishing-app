@@ -123,7 +123,7 @@ Future<({List hits, Point<num> at, int onScreen})> _probeRiver(
   // 主判据：整个视口矩形里查河流图层
   //
   // ★ 要同时查本地和在线两套：在线河网（hydro）加载成功之后，
-  //   App 会把本地 rivers-casing / rivers-line 关掉（否则长江会被画两遍），
+  //   App 会把本地 rivers-line 关掉（否则长江会被画两遍），
   //   而 queryRenderedFeatures 对不可见图层返回空 —— 只查 rivers-line 会假阴性。
   final rect = Rect.fromLTWH(
     2,
@@ -159,7 +159,6 @@ Future<({List hits, Point<num> at, int onScreen})> _probeRiver(
 /// 否则「在线数据好了」反而让测试变红。
 const List<String> _riverLayers = [
   'rivers-line',
-  'rivers-casing',
   'hydro-river-line',
   'hydro-water',
 ];
@@ -291,7 +290,6 @@ void main() {
       // 本地兜底数据
       'lakes-fill',
       'lakes-line',
-      'rivers-casing',
       'rivers-line',
       'zones-fill',
       'zones-line',
