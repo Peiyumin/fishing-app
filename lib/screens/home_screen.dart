@@ -160,16 +160,27 @@ class _HomeScreenState extends State<HomeScreen>
   ///
   /// 并发保护：多个入口同时触发时排队执行，绝不并发调用
   /// requestPermission（并发会把 iOS 的系统权限框顶掉）。
+  ///
+  /// ★ 排队等待有上限，定位本身也有超时。
+  ///   室内 / 地铁 / 电梯里 GPS 可能几十秒都锁不上，旧写法会一直卡在
+  ///   这个 while 里，下拉刷新就永远转圈（用户反馈的现象）。
   Future<void> _loadPlace({bool refresh = false}) async {
-    while (_locatingPlace) {
+    var waited = 0;
+    // 最多等 6 秒（50 × 120ms），等不到就跳过这一次，别把调用方拖死
+    while (_locatingPlace && waited < 50) {
       await Future<void>.delayed(const Duration(milliseconds: 120));
+      waited++;
       if (!mounted) return;
     }
+    if (_locatingPlace) return; // 另一个定位还在跑，这次直接放过
     _locatingPlace = true;
     if (mounted) setState(() {});
     try {
-      final p = await GeoPlace.current(refresh: refresh);
+      final p = await GeoPlace.current(refresh: refresh)
+          .timeout(const Duration(seconds: 6));
       if (mounted && p != null) setState(() => _place = p);
+    } catch (_) {
+      // 定位超时 / 失败：保留原来的地名，不影响其它内容刷新
     } finally {
       _locatingPlace = false;
       if (mounted) setState(() {});
@@ -309,13 +320,25 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   /// 手动下拉刷新：顺带重新定位一次，保证「附近钓点」距离是新的
+  ///
+  /// ★ 定位不参与 await（v2.1.19）。
+  ///   下拉刷新必须「点了就一定会停」，不能因为 GPS 在室内锁不上
+  ///   就一直转圈 —— 这是用户反馈的「刷新图标一直转，刷新不出来」。
+  ///   现在：定位放后台跑（自己会 setState），内容刷新有硬超时兜底。
   Future<void> _onRefresh() async {
-    await Future.wait([
-      _loadFeed(),
-      _loadWeather(),
-      _loadPlace(refresh: true),
-    ]);
-    await _loadSpots();
+    // 定位先发起，不等它。它回来后会自己刷新地名和钓点距离
+    _loadPlace(refresh: true);
+    try {
+      await Future.wait([
+        _loadFeed(),
+        _loadWeather(),
+      ]).timeout(const Duration(seconds: 10));
+    } catch (_) {
+      // 超时 / 网络失败也照常收起刷新圈，不能把用户晾在转圈里
+    }
+    try {
+      await _loadSpots().timeout(const Duration(seconds: 6));
+    } catch (_) {}
     if (mounted) setState(() => _lastUpdated = DateTime.now());
   }
 
