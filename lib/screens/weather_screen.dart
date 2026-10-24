@@ -372,7 +372,11 @@ class _WeatherScreenState extends State<WeatherScreen> {
         ),
         _HourTable(
           rows: rows,
-          nowHour: dayIdx == 0 ? DateTime.now().hour : null,
+          // ★ 与顶部「当前」卡片同一口径：高亮 bundle 锚定的整点，
+          //   而不是 DateTime.now().hour —— 否则卡片写 18:00、表里却亮 19:00
+          nowHour: dayIdx == 0
+              ? (b.curHour?.hour ?? DateTime.now().hour)
+              : null,
           mode: mode,
           lat: _lat,
           lng: _lng,
@@ -979,16 +983,18 @@ class _NowCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 取与当前时刻最近的一小时，作为水温/水氧与评分的依据
-    int best = -1;
-    var bestDiff = 1 << 30;
+    // ★ 时段统一（v2.1.20）：必须以 bundle 自己的「当前整点」为锚，
+    //   不能再用 DateTime.now() 重新算最近的整点 ——
+    //   bundle 是 18:20 拉的（curHour=18:00），页面在 18:40 渲染时重新算会得到
+    //   19:00，但温度/湿度/气压仍是 18:00 的值，于是出现「标签写 19:00、
+    //   数据是 18:00」的错位，用户对比首页卡（18:00）就发现两边不一样。
     final now = DateTime.now();
-    for (var i = 0; i < bundle.hours.length; i++) {
-      final d = bundle.hours[i].time.difference(now).inMinutes.abs();
-      if (d < bestDiff) {
-        bestDiff = d;
-        best = i;
-      }
+    var best = -1;
+    final cur = bundle.curHour;
+    if (cur != null) {
+      best = bundle.hours.indexWhere((x) => x.time == cur);
     }
+    if (best < 0) best = bundle.indexOfHourNear(now);
     final h = best >= 0 ? bundle.hours[best] : null;
     final w = best >= 0 ? metrics[best] : WaterMetrics(bundle.curTemp, 7.0);
     final prev = best > 0 ? bundle.hours[best - 1] : null;
