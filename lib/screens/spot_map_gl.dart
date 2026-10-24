@@ -8,6 +8,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show Factory;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart' as ll;
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:path_provider/path_provider.dart';
@@ -610,6 +611,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       //   和 245 个水体面 —— 这才是「不管大小河都有蓝色」。
       //   只取 water（水体面）和 waterway（河流中心线）两个图层，
       //   其他图层（building/road/poi）一个都不渲染，性能可控。
+      // ★ 先不等结果地把 TileJSON 拉起来：画图标那点时间足够它回来，
+      //   等 _safeVecSource 真正需要时基本是命中缓存，不会干等网络。
+      unawaited(_resolveHydroTiles());
       await _ensureWaterIcon();
       await _safeVecSource();
       // 水体面：河 / 湖 / 水库 / 池塘，都是真实水面宽度
@@ -1108,11 +1112,20 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
 
   /// 在线河网矢量瓦片（OpenFreeMap / OpenMapTiles，全球免费、无需 key）
   ///
-  /// ★ 用 TileJSON 的 `url`，不要写死
-  ///   `.../planet/20261018_080001_pt/{z}/{x}/{y}.pbf`：
+  /// ★ 不写死 `.../planet/20261018_080001_pt/{z}/{x}/{y}.pbf`：
   ///   他们的构建版本号每天变，写死的话过几天整层就空了。
-  ///   交给 MapLibre 自己去拉 TileJSON，永远拿当前版本。
+  /// ★ 也不靠原生层去拉 TileJSON（`VectorSourceProperties(url:)`）：
+  ///   iOS 集成测试实测——图层全建出来了，可 querySourceFeatures 等了 90 秒
+  ///   一条要素都没有，而同一台机器上的 Dart HTTP 是通的。原生层拉 TileJSON
+  ///   失败是**静默**的，日志里什么都看不到，排查全靠猜。
+  ///   改成：Dart 先拉 TileJSON，拿到当前版本的 tiles 模板，再显式交给原生层。
+  ///   拉失败就打印原因，本地数据兜底，行为可观测。
   static const String _hydroTileJson = 'https://tiles.openfreemap.org/planet';
+
+  /// 已解析的瓦片模板（{z}/{x}/{y}.pbf），一次会话只拉一次
+  ///
+  /// 缓存的是 Future 而不是结果：并发调用（预热 + 建源）只会真的发一次请求。
+  static Future<List<String>?>? _hydroTilesFuture;
 
   /// 在线河网是否真的可用（有瓦片数据落进来）
   ///
@@ -1124,17 +1137,61 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   Future<void> _safeVecSource() async {
     final c = _map;
     if (c == null) return;
+    final tiles = await _resolveHydroTiles();
+    if (tiles == null) {
+      // 拉不到 TileJSON：不建源，_hydroReady 保持 false → 本地数据继续顶着
+      return;
+    }
     try {
       await c.addSource(
         'hydro',
-        const VectorSourceProperties(
-          url: _hydroTileJson,
+        VectorSourceProperties(
+          tiles: tiles,
+          minzoom: 0,
           maxzoom: 14,
           attribution: '水系数据 © OpenStreetMap 贡献者',
         ),
       );
     } catch (_) {
       // 已存在：重试时会走到这里，忽略
+    }
+  }
+
+  /// 拉 TileJSON，取出 `tiles` 里的瓦片模板
+  ///
+  /// 返回 null 表示拉不到（离线 / 域名不通 / 返回体不对），调用方走本地兜底。
+  Future<List<String>?> _resolveHydroTiles() {
+    return _hydroTilesFuture ??= _fetchHydroTiles();
+  }
+
+  Future<List<String>?> _fetchHydroTiles() async {
+    try {
+      final resp = await http
+          .get(Uri.parse(_hydroTileJson))
+          .timeout(const Duration(seconds: 8));
+      if (resp.statusCode != 200) {
+        debugPrint('[MAP] hydro tilejson HTTP ${resp.statusCode}');
+        return null;
+      }
+      final j = jsonDecode(resp.body);
+      if (j is! Map) {
+        debugPrint('[MAP] hydro tilejson 不是对象');
+        return null;
+      }
+      final raw = (j['tiles'] as List?) ?? const [];
+      final tiles = raw
+          .map((e) => e.toString())
+          .where((e) => e.contains('{z}') && e.contains('{x}'))
+          .toList();
+      if (tiles.isEmpty) {
+        debugPrint('[MAP] hydro tilejson 里没有 {z}/{x}/{y} 模板');
+        return null;
+      }
+      debugPrint('[MAP] hydro tiles = ${tiles.first}');
+      return tiles;
+    } catch (e) {
+      debugPrint('[MAP] hydro tilejson 失败: $e');
+      return null;
     }
   }
 
