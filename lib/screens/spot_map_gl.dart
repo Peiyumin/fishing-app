@@ -490,6 +490,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     'hydro-river-casing',
     'hydro-river-line',
     'hydro-lake-icon',
+    'hydro-pond-icon',
     // 本地精选数据（兜底：离线 / 瓦片失败时仍能看到大江大河）
     'lakes-fill',
     'lakes-line',
@@ -800,30 +801,53 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           'tunnel'
         ],
       );
-      // 水库 / 湖泊 / 池塘的图标标记（用户明确要求「水库池塘要有图标」）
+      // 湖泊 / 水库的图标标记（用户明确要求「水库池塘要有图标」）
+      // ★ 为什么用 water_name 而不是 water：
+      //   大湖（阳澄湖）在 OSM 里被切成十几块多边形，按多边形打图标会在一
+      //   个湖上打出十几个图标，实测截图就是一片糊。water_name 里每个湖
+      //   只有一个 Point 锚点，天然「一湖一图标」。
+      // ★ 为什么关掉 allow-overlap：
+      //   一个湖跨两个瓦片会有两个同坐标锚点，允许重叠就会叠成一双；
+      //   关掉之后由碰撞检测自动去重，只会留一个。
       await _safeLayer(
         'hydro',
         'hydro-lake-icon',
         SymbolLayerProperties(
           iconImage: 'water-icon',
           iconSize: _zNum([
-            9, 0.42 * _iconUnit,
-            12, 0.55 * _iconUnit,
-            15, 0.70 * _iconUnit,
+            11, 0.38 * _iconUnit,
+            14, 0.44 * _iconUnit,
+            17, 0.52 * _iconUnit,
           ]),
-          iconAllowOverlap: true,
-          iconIgnorePlacement: true,
+          iconAllowOverlap: false,
+          iconIgnorePlacement: false,
+          iconPadding: 6,
+        ),
+        sourceLayer: 'water_name',
+        minzoom: 11,
+        filter: [
+          '==',
+          ['geometry-type'],
+          'Point'
+        ],
+      );
+      // 池塘 / 鱼塘：OSM 里绝大多数没有名字，只能按水面多边形打图标；
+      // 15 级起才标 —— 再低苏州城外的鱼塘会把整屏铺满图标。
+      await _safeLayer(
+        'hydro',
+        'hydro-pond-icon',
+        SymbolLayerProperties(
+          iconImage: 'water-icon',
+          iconSize: _zNum([
+            15, 0.32 * _iconUnit,
+            17, 0.44 * _iconUnit,
+          ]),
+          iconAllowOverlap: false,
+          iconIgnorePlacement: false,
         ),
         sourceLayer: 'water',
-        minzoom: 9,
-        filter: [
-          'in',
-          ['get', 'class'],
-          [
-            'literal',
-            ['lake', 'reservoir', 'pond']
-          ]
-        ],
+        minzoom: 15,
+        filter: ['==', ['get', 'class'], 'pond'],
       );
 
       // ---------------- 湖泊：蓝色水面 ----------------
@@ -1212,8 +1236,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     await _setVis('hydro-water-line', _layers.rivers && hydro);
     await _setVis('hydro-river-casing', _layers.rivers && hydro);
     await _setVis('hydro-river-line', _layers.rivers && hydro);
-    // 水库 / 池塘图标归「湖泊水库」开关（用户点的是这个）
+    // 水库 / 湖泊 / 池塘图标归「湖泊水库」开关（用户点的是这个）
     await _setVis('hydro-lake-icon', _layers.lakes && hydro);
+    await _setVis('hydro-pond-icon', _layers.lakes && hydro);
 
     await _setVis('lakes-fill', _layers.lakes && !hydro);
     await _setVis('lakes-line', _layers.lakes && !hydro);
