@@ -140,6 +140,17 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   bool _aiBusy = false;
   bool _aiDataAdded = false;
 
+  /// 要素顶层 id → 钓点 id
+  ///
+  /// ★ iOS / Android 原生「点中要素」时只回传 feature.identifier，
+  ///   **不回传 properties**；而 MapLibre 的 identifier 只认 GeoJSON 顶层的
+  ///   `id` 字段。所以给每个钓点要素编个号写进顶层 id，再靠这张表还原成
+  ///   真正的钓点 id —— 比拿坐标反查最近点更准（密集钓点区不会选错）。
+  Map<int, String> _spotNumToId = const {};
+
+  /// 要素顶层 id → AI 推荐结果下标
+  Map<int, int> _aiNumToIdx = const {};
+
   /// 业务图层（河湖/禁钓/钓点）是否已经加过一轮
   bool _layersReady = false;
   bool _rendering = false;
@@ -241,6 +252,8 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   @override
   void dispose() {
     _guard?.cancel();
+    // 摘掉要素点击回调，避免 controller 生命周期比页面长时回调打到已销毁的 State
+    _map?.onFeatureTapped.remove(_onFeatureTap);
     widget.controller?.unbind();
     // 不要在这里 dispose controller：
     // MapLibreMap 自己的 State.dispose() 会 dispose 同一个 controller
@@ -433,10 +446,25 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   /// 生成路径 —— 两边各写一遍很容易出现「新增的点漏了坐标纠偏」这类不一致。
   List<Map<String, dynamic>> _spotFeatures() {
     final feats = <Map<String, dynamic>>[];
+    final idx = <int, String>{};
+    var n = 0;
     for (final s in _spots) {
       final q = _tile.project(ll.LatLng(s.lat, s.lng));
-      feats.add(_feature('Point', [q.longitude, q.latitude], {'id': s.id}));
+      n++;
+      idx[n] = s.id;
+      feats.add({
+        'type': 'Feature',
+        // ★ 顶层 id 会成为 MapLibre 的 feature.identifier —— 点击命中时
+        //   原生层只把这个值送回 Dart，没有它就取不到是哪条钓点。
+        'id': n,
+        'properties': {'id': s.id},
+        'geometry': {
+          'type': 'Point',
+          'coordinates': [q.longitude, q.latitude]
+        },
+      });
     }
+    _spotNumToId = idx;
     return feats;
   }
 
@@ -486,9 +514,10 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   ///   现在加完必须回读 `getLayerIds()` 逐个确认，缺一个就重试。
   static const List<String> _bizLayers = [
     // 在线河网（OSM 矢量瓦片）：覆盖所有有名字的河流、水体面
+    // ★ 河道只保留「一层浅蓝」：深蓝描边 hydro-river-casing 已删除，
+    //   原来 casing(深蓝宽) + line(浅蓝细) 叠在一起，看起来像两条河。
     'hydro-water',
     'hydro-water-line',
-    'hydro-river-casing',
     'hydro-river-line',
     'hydro-lake-icon',
     'hydro-pond-icon',
@@ -617,24 +646,14 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       await _ensureWaterIcon();
       await _safeVecSource();
       // 水体面：河 / 湖 / 水库 / 池塘，都是真实水面宽度
+      // ★ 统一浅蓝：原来 river/lake 用 #2E8FD0 深蓝，配上深蓝描边后
+      //   和浅蓝中心线叠成「深浅两层」——用户要的是一条浅蓝色的河。
       await _safeLayer(
         'hydro',
         'hydro-water',
         const FillLayerProperties(
-          fillColor: [
-            'match',
-            ['get', 'class'],
-            'river',
-            '#2E8FD0',
-            'lake',
-            '#2E8FD0',
-            'reservoir',
-            '#2E7FC8',
-            'pond',
-            '#3A9BDC',
-            '#2E8FD0',
-          ],
-          fillOpacity: 0.55,
+          fillColor: '#4FAEE8',
+          fillOpacity: 0.5,
         ),
         sourceLayer: 'water',
         minzoom: 4,
@@ -649,9 +668,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         'hydro',
         'hydro-water-line',
         const LineLayerProperties(
-          lineColor: '#0B4FA8',
-          lineWidth: 1.1,
-          lineOpacity: 0.85,
+          lineColor: '#3FA9F5',
+          lineWidth: 0.8,
+          lineOpacity: 0.6,
         ),
         sourceLayer: 'water',
         minzoom: 6,
@@ -664,11 +683,13 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       // 河流中心线：给没有水面多边形的窄河补一条蓝线。
       // 宽度按 class 分档（河 > 运河 > 溪流），再随缩放放大 ——
       // 全国视野下不糊成一片，街道视野下也看得见。
+      // ★ 已经合并掉原来的深蓝 casing，所以这里直接用 casing 那一档宽度，
+      //   否则窄河会细成一半、跟水面接不上。
       await _safeLayer(
         'hydro',
-        'hydro-river-casing',
+        'hydro-river-line',
         const LineLayerProperties(
-          lineColor: '#0B4FA8',
+          lineColor: '#3FA9F5',
           lineWidth: [
             'interpolate',
             ['linear'],
@@ -722,83 +743,13 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
               9.0
             ],
           ],
-          lineOpacity: 0.75,
+          lineOpacity: 0.8,
           lineCap: 'round',
           lineJoin: 'round',
         ),
         sourceLayer: 'waterway',
         minzoom: 6,
         // 隧道段不画（会在地面拉出一条莫名其妙的蓝线）
-        filter: [
-          '!=',
-          ['get', 'brunnel'],
-          'tunnel'
-        ],
-      );
-      await _safeLayer(
-        'hydro',
-        'hydro-river-line',
-        const LineLayerProperties(
-          lineColor: '#3FA9F5',
-          lineWidth: [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            6,
-            [
-              'match',
-              ['get', 'class'],
-              'river',
-              1.2,
-              'canal',
-              0.9,
-              'stream',
-              0.5,
-              0.6
-            ],
-            10,
-            [
-              'match',
-              ['get', 'class'],
-              'river',
-              3.0,
-              'canal',
-              2.2,
-              'stream',
-              1.0,
-              1.2
-            ],
-            14,
-            [
-              'match',
-              ['get', 'class'],
-              'river',
-              9.0,
-              'canal',
-              6.5,
-              'stream',
-              2.6,
-              3.2
-            ],
-            17,
-            [
-              'match',
-              ['get', 'class'],
-              'river',
-              17.0,
-              'canal',
-              12.0,
-              'stream',
-              4.5,
-              5.5
-            ],
-          ],
-          lineOpacity: 0.9,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        sourceLayer: 'waterway',
-        minzoom: 6,
         filter: [
           '!=',
           ['get', 'brunnel'],
@@ -1344,7 +1295,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
 
     await _setVis('hydro-water', _layers.rivers && hydroOn);
     await _setVis('hydro-water-line', _layers.rivers && hydroOn);
-    await _setVis('hydro-river-casing', _layers.rivers && hydroOn);
+    // hydro-river-casing 已合并进 hydro-river-line（不再有深蓝描边层）
     await _setVis('hydro-river-line', _layers.rivers && hydroOn);
     // 水库 / 湖泊 / 池塘图标归「湖泊水库」开关（用户点的是这个）
     await _setVis('hydro-lake-icon', _layers.lakes && hydroOn);
@@ -1653,14 +1604,22 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     final c = _map;
     if (c == null || !_styleReady) return;
     final feats = <Map<String, dynamic>>[];
+    final idx = <int, int>{};
     for (var i = 0; i < _aiSpots.length; i++) {
       final s = _aiSpots[i];
       final q = _tile.project(ll.LatLng(s.lat, s.lng));
-      feats.add(_feature('Point', [q.longitude, q.latitude], {
-        'n': '${i + 1}',
-        'id': s.id,
-      }));
+      idx[i + 1] = i;
+      feats.add({
+        'type': 'Feature',
+        'id': i + 1, // 与地图上的橙色序号一致，点击时靠它反查
+        'properties': {'n': '${i + 1}', 'id': s.id},
+        'geometry': {
+          'type': 'Point',
+          'coordinates': [q.longitude, q.latitude]
+        },
+      });
     }
+    _aiNumToIdx = idx;
     try {
       if (_aiDataAdded) {
         await c.setGeoJsonSource('ai-spots', _fc(feats));
@@ -2003,6 +1962,45 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     }
   }
 
+  /// 点中地图上的要素（钓点图钉 / AI 推荐圆标）
+  ///
+  /// ★ 必须接这里，不能只接 onMapClick：
+  ///   iOS 与 Android 原生层都是「先做一次图层要素命中」，命中就发
+  ///   `feature#onTap`，**只有没命中任何要素才发 `map#onMapClick`**。
+  ///   之前只监听了 onMapClick，所以手指点在图钉上时那个回调根本不会来，
+  ///   用户体验就是「点标记没反应、进不去详情」。
+  void _onFeatureTap(
+      dynamic id, dynamic point, dynamic latLng, dynamic layerId) {
+    final lid = layerId?.toString() ?? '';
+    final numId = id is num ? id.toInt() : int.tryParse('$id');
+
+    // AI 推荐圆标：先飞过去，如果这条对应某个钓友共享钓点，再进详情
+    if (lid.startsWith('ai-spot')) {
+      final i = numId == null ? null : _aiNumToIdx[numId];
+      if (i == null || i < 0 || i >= _aiSpots.length) return;
+      final s = _aiSpots[i];
+      _landCamera(s.lat, s.lng);
+      final sid = s.spotId;
+      if (sid == null) return;
+      final spot = _spotById[sid];
+      if (spot != null && mounted) {
+        Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => SpotDetailScreen(spot: spot)));
+      }
+      return;
+    }
+
+    // 钓点图钉
+    if (lid == 'spots-pin') {
+      final sid = numId == null ? null : _spotNumToId[numId];
+      final s = sid == null ? null : _spotById[sid];
+      if (s != null && mounted) {
+        Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => SpotDetailScreen(spot: s)));
+      }
+    }
+  }
+
   // ---------------------------------------------------------------- UI
 
   /// 建图时的初始镜头
@@ -2072,6 +2070,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                 attributionButtonPosition: AttributionButtonPosition.bottomRight,
                 onMapCreated: (c) {
                   _map = c;
+                  // ★ 要素点击走独立通道（见 _onFeatureTap 注释）：
+                  //   原生层命中图层要素时只发 feature#onTap，不发 onMapClick。
+                  c.onFeatureTapped.add(_onFeatureTap);
                   SpotMapGlScreen.debugOnControllerCreated?.call(c);
                   // 定位若比原生 View 先到（几乎总是如此），在这里补上镜头移动
                   _flushPendingMove();
