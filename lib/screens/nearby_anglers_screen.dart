@@ -4,13 +4,13 @@ import '../app_theme.dart';
 import '../models/nearby_angler.dart';
 import '../services/follow_service.dart';
 import '../services/location_service.dart';
-import '../services/member_service.dart';
 import '../services/nearby_service.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/member_gate.dart';
 import '../widgets/user_avatar.dart';
 import 'chat_screen.dart';
 
-/// 附近钓友（v27）：按定位由近到远，需开通会员；互相关注后可私信
+/// 附近钓友：所有登录用户可用；按定位由近到远，列表含头像/名字/签名/关注/私信/距离
 class NearbyAnglersScreen extends StatefulWidget {
   const NearbyAnglersScreen({super.key});
 
@@ -21,7 +21,6 @@ class NearbyAnglersScreen extends StatefulWidget {
 class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
   List<NearbyAngler> _list = const [];
   bool _loading = true;
-  bool _isMember = false;
   String? _error;
 
   @override
@@ -36,17 +35,6 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
       _error = null;
     });
     try {
-      final info = await MemberService.info();
-      if (!mounted) return;
-      if (!info.active) {
-        setState(() {
-          _isMember = false;
-          _loading = false;
-        });
-        return;
-      }
-      setState(() => _isMember = true);
-
       final pos = await LocationService.determinePosition();
       if (!mounted) return;
       final list = await NearbyService.anglers(
@@ -54,8 +42,13 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
         lng: pos.longitude,
       );
       if (!mounted) return;
+      // 用后端返回的关注关系初始化本地关注集合
+      final following = <String>{for (final a in list) if (a.followed) a.userId};
       setState(() {
         _list = list;
+        _following
+          ..clear()
+          ..addAll(following);
         _loading = false;
       });
     } catch (e) {
@@ -101,9 +94,13 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
   }
 
   Future<void> _chat(NearbyAngler a) async {
-    await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => ChatScreen(peerId: a.userId, nickname: a.nickname),
-    ));
+    // 私信是会员专属功能：非会员先引导开通会员
+    if (await ensureMember(context)) {
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => ChatScreen(peerId: a.userId, nickname: a.nickname),
+      ));
+    }
   }
 
   @override
@@ -128,9 +125,6 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
       return const Center(
           child: CircularProgressIndicator(color: AppTheme.primary));
     }
-    if (!_isMember) {
-      return _memberGate();
-    }
     if (_error != null) {
       return _errorView();
     }
@@ -142,62 +136,6 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
       itemCount: _list.length,
       separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (_, i) => _card(_list[i]),
-    );
-  }
-
-  Widget _memberGate() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(30),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 74,
-              height: 74,
-              decoration: BoxDecoration(
-                color: AppTheme.primaryLight,
-                shape: BoxShape.circle,
-              ),
-              alignment: Alignment.center,
-              child: const Icon(Icons.workspace_premium,
-                  size: 36, color: AppTheme.primary),
-            ),
-            const SizedBox(height: 16),
-            const Text('附近钓友是会员专属功能',
-                style: TextStyle(
-                    fontSize: 15.5, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 8),
-            const Text(
-              '开通会员后即可发现身边的钓友，按距离由近到远排序，互相关注还能互发私信。',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  fontSize: 12.5,
-                  color: AppTheme.textSecondary,
-                  height: 1.5),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primary,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 34, vertical: 12),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(22)),
-              ),
-              onPressed: () async {
-                await Navigator.of(context).pushNamed('/member-center');
-                _init();
-              },
-              child: const Text('去开通会员',
-                  style: TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w800)),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -250,6 +188,7 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
   }
 
   Widget _card(NearbyAngler a) {
+    final followed = _following.contains(a.userId);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
       decoration: BoxDecoration(
@@ -270,12 +209,41 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(a.nickname.isEmpty ? '钓友' : a.nickname,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 3),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Text(a.nickname.isEmpty ? '钓友' : a.nickname,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 14, fontWeight: FontWeight.w700)),
+                    ),
+                    if (a.member)
+                      Container(
+                        margin: const EdgeInsets.only(left: 6),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryLight,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text('会员',
+                            style: TextStyle(
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w800,
+                                color: AppTheme.primaryDark)),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                if (a.bio.isNotEmpty)
+                  Text(a.bio,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 11.5, color: AppTheme.textSecondary)),
+                const SizedBox(height: 4),
                 Row(
                   children: [
                     const Icon(Icons.place_outlined,
@@ -297,8 +265,12 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
           ),
           _miniBtn('私信', Icons.chat_bubble_outline, () => _chat(a)),
           const SizedBox(width: 8),
-          _miniBtn('关注', Icons.person_add_alt_outlined, () => _follow(a),
-              filled: true),
+          _miniBtn(
+            followed ? '已关注' : '关注',
+            followed ? Icons.check : Icons.person_add_alt_outlined,
+            () => _follow(a),
+            filled: !followed,
+          ),
         ],
       ),
     );
