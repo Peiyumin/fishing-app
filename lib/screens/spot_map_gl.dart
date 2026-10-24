@@ -219,25 +219,40 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     }
   }
 
-  /// 把一批钓点并进现有集合（只增不删），然后只更新 GeoJSON source
+  /// 把一批钓点并进现有集合，然后只更新 GeoJSON source
   ///
   /// 用 `setGeoJsonSource` 而不是重建图层：重建会让整层闪一下，
   /// 而且 addLayer 在同名图层已存在时会直接抛异常。
+  ///
+  /// ★ v2.1.21：去掉了「没有新钓点就直接 return」这条短路。
+  ///   它原本是为了省一次无意义的 source 重写，实际副作用是 —— 后台改了
+  ///   钓点名称 / 位置，或者钓点数变少（被后台下架），宿主页点「刷新」
+  ///   拿到的数据根本进不了地图，看着就是刷新没生效。现在只要数据有变化
+  ///   就整体重写 source；完全没变化时也只是多写一次，代价可忽略。
   Future<void> _mergeSpots(List<FishingSpot> incoming) async {
-    if (incoming.isEmpty) return;
+    if (!mounted) return;
     final map = <String, FishingSpot>{for (final s in _spots) s.id: s};
-    var added = 0;
+    if (incoming.isEmpty) {
+      // 后端确实返回了空列表（比如全部被下架）：地图也该跟着清空，
+      // 否则会一直显示上一次的快照、点了还进详情。
+      if (map.isEmpty) return;
+      setState(() {
+        _spots = const [];
+        _spotById = const {};
+      });
+      await _updateSpotsSource();
+      return;
+    }
     for (final s in incoming) {
       if (s.lat == 0 && s.lng == 0) continue;
-      if (!map.containsKey(s.id)) added++;
-      map[s.id] = s; // 覆盖成最新数据（名称/简介可能在后台改过）
+      map[s.id] = s; // 覆盖成最新数据（名称 / 坐标 / 简介可能在后台改过）
     }
-    if (added == 0) return; // 没有新钓点，没必要惊动原生层
-    if (!mounted) return;
+    if (map.isEmpty) return;
     setState(() {
       _spots = map.values.toList();
       _spotById = map;
     });
+    // 数据没变也照样重写一次：刷新按钮要让用户看到"确实重新画了一遍"
     await _updateSpotsSource();
   }
 
@@ -522,9 +537,10 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     'hydro-lake-icon',
     'hydro-pond-icon',
     // 本地精选数据（兜底：离线 / 瓦片失败时仍能看到大江大河）
+    // ★ 本地河流只有 rivers-line 一层：深蓝更宽的 rivers-casing 已删除
+    //   （两层叠在一起会被看成"河道画了两条"，v2.1.21）
     'lakes-fill',
     'lakes-line',
-    'rivers-casing',
     'rivers-line',
     'zones-fill',
     'zones-line',
@@ -822,30 +838,23 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
               lineColor: '#0B4FA8', lineWidth: 1.6, lineOpacity: 0.9),
           minzoom: 3);
 
-      // ---------------- 河流：双层水面带 ----------------
-      // 深蓝描边在下、亮蓝芯在上，合成「一条有边界的水面」。
-      // 宽度按「真实大河在中倍视野下的视觉宽度」定：z12 时约 1px≈24m，
-      // 长江/黄河一类河道几百米到两公里，屏幕上就该是 15~30px 的一条带，
-      // 而不是旧版那根 4.5px 的半透明细线（在卫星影像上根本看不见）。
+      // ---------------- 河流：单层浅蓝水面带 ----------------
+      // ★★ 为什么只留一层（v2.1.21）：
+      //   原来是「深蓝描边在下(rivers-casing, #0B4FA8, 更宽) +
+      //   亮蓝芯在上(rivers-line, #2E8FD0, 稍窄)」两层叠出来的水面带。
+      //   设计意图是"有边界的水面"，但在真机上看到的效果就是**河道画了两条**：
+      //   深色那条更宽、从浅色两边露出来，像两条平行的河。再叠上在线河网
+      //   (hydro-*) 之后更明显。用户明确要求"只留浅蓝色那一层"。
+      //   现在：只画一层，色值与在线河网统一成 #3FA9F5，宽度沿用原外层那档
+      //   （直接删掉外层而留着细芯，河道会细成一根头发，等于把图层弄没了）。
       await _safeSource('rivers', _fc(_riverFeatures()));
-      await _safeLayer(
-          'rivers',
-          'rivers-casing',
-          LineLayerProperties(
-            lineColor: '#0B4FA8',
-            lineWidth: _zNum([3, 1.4, 6, 3.0, 9, 6.5, 12, 16.0, 15, 30.0]),
-            lineOpacity: 0.9,
-            lineCap: 'round',
-            lineJoin: 'round',
-          ),
-          minzoom: 3);
       await _safeLayer(
           'rivers',
           'rivers-line',
           LineLayerProperties(
-            lineColor: '#2E8FD0',
-            lineWidth: _zNum([3, 1.0, 6, 2.2, 9, 4.8, 12, 12.0, 15, 24.0]),
-            lineOpacity: 0.92,
+            lineColor: '#3FA9F5',
+            lineWidth: _zNum([3, 1.4, 6, 3.0, 9, 6.5, 12, 16.0, 15, 30.0]),
+            lineOpacity: 0.8,
             lineCap: 'round',
             lineJoin: 'round',
           ),
@@ -1306,7 +1315,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
 
     await _setVis('lakes-fill', _layers.lakes && !hydro);
     await _setVis('lakes-line', _layers.lakes && !hydro);
-    await _setVis('rivers-casing', _layers.rivers && !hydro);
+    // rivers-casing 已删除（只留单层浅蓝 rivers-line）
     await _setVis('rivers-line', _layers.rivers && !hydro);
     await _setVis('zones-fill', _layers.noFishingZones);
     await _setVis('zones-line', _layers.noFishingZones);
