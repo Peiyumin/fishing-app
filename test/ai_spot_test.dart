@@ -1,3 +1,4 @@
+import 'package:fishing_app/models/fishing_species.dart';
 import 'package:fishing_app/models/water_body.dart';
 import 'package:fishing_app/models/weather_forecast.dart';
 import 'package:fishing_app/services/ai_spot_service.dart';
@@ -163,7 +164,7 @@ void main() {
   });
 
   group('天气时段统一', () {
-    test('indexOfHourNear 取绝对时间最近的一小时', () {
+    test('indexOfHourNear 取绝对时间最近的一小时（20:35 → 21:00）', () {
       final b = _fakeBundle();
       final i = b.indexOfHourNear(DateTime.now());
       expect(i, greaterThanOrEqualTo(0));
@@ -173,18 +174,36 @@ void main() {
           lessThanOrEqualTo(31));
     });
 
+    test('indexOfCurrentHour 取"现在所在"的那一小时（20:35 → 20:00）', () {
+      // ★ 这是 v2.1.21 新增的口径：「当前时段」不能是还没到的下一小时。
+      final b = _fakeBundle();
+      final now = DateTime.now();
+      final i = b.indexOfCurrentHour(now);
+      expect(i, greaterThanOrEqualTo(0));
+      expect(b.hours[i].time.hour, now.hour,
+          reason: '当前时段必须是现在所处的整点，跨半点也不能跳到下一小时');
+      expect(b.hours[i].time.day, now.day);
+    });
+
     test('首页天气卡与天气页用同一小时的温度/天气/指数', () {
       final b = _fakeBundle(temp: 23.4);
       final w = FishingWeather.fromBundle(b);
       final now = DateTime.now();
-      final h = b.hourNear(now)!;
-      expect(w.temperature, h.temp, reason: '温度必须来自最近整点');
+      final h = b.hourCurrent(now)!;
+      expect(w.temperature, h.temp, reason: '温度必须来自当前整点');
       expect(w.humidity, h.humidity, reason: '湿度必须来自同一小时');
       expect(w.windSpeed, h.windSpeed);
       expect(w.weatherCode, h.weatherCode);
       expect(w.atLabel, '${h.time.hour.toString().padLeft(2, '0')}:00',
           reason: '必须带时段标签，用户才知道是哪一小时');
       expect(w.score, inInclusiveRange(0, 100));
+      // 与天气页顶部卡同引擎同小时 → 指数必须一致
+      final mode = FishingMode.all.first;
+      final sp = FishingSpecies.all.first;
+      final metrics = WaterMetrics.derive(b.hours);
+      final idx = b.indexOfCurrentHour(now);
+      expect(w.score, Bite.score(h: h, w: metrics[idx], sp: sp, mode: mode),
+          reason: '首页卡与天气页当前卡的垂钓指数必须同源同值');
     });
 
     test('缓存反序列化能带上分数与时段', () {
