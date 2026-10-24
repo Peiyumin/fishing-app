@@ -63,6 +63,58 @@ class ChatMessage {
       );
 }
 
+/// 私信发送资格（后端 /messages/can-chat 返回）
+///
+/// 规则：会员 + 已关注对方 +（互相关注 或 单向关注未满 6 条）才能发送。
+class ChatCan {
+  final bool iFollow;    // 我是否关注了对方
+  final bool heFollows;  // 对方是否关注了我
+  final bool mutual;     // 是否互相关注
+  final bool iMember;    // 我是否会员
+  final bool heMember;   // 对方是否会员
+  final bool canSend;    // 当前是否允许发送
+  final String reason;   // 不能发送的原因码：need_member / need_follow / oneway_limit
+  final int sentCount;   // 我单方面已发条数
+  final int limit;       // 单向关注上限
+
+  const ChatCan({
+    this.iFollow = false,
+    this.heFollows = false,
+    this.mutual = false,
+    this.iMember = false,
+    this.heMember = false,
+    this.canSend = false,
+    this.reason = '',
+    this.sentCount = 0,
+    this.limit = 6,
+  });
+
+  factory ChatCan.fromJson(Map<String, dynamic> j) => ChatCan(
+        iFollow: j['iFollow'] == true,
+        heFollows: j['heFollows'] == true,
+        mutual: j['mutual'] == true,
+        iMember: j['iMember'] == true,
+        heMember: j['heMember'] == true,
+        canSend: j['canSend'] == true,
+        reason: (j['reason'] ?? '').toString(),
+        sentCount: (j['sentCount'] as num?)?.toInt() ?? 0,
+        limit: (j['limit'] as num?)?.toInt() ?? 6,
+      );
+
+  /// 人类可读的限制说明（配合 reason 使用）
+  String get limitHint =>
+      '（已发 $sentCount/$limit 条，互相关注后可继续）';
+}
+
+/// 私信发送失败（携带业务 code，便于前端区分会员/关注/单向限制）
+class ChatSendException implements Exception {
+  final String code;
+  final String msg;
+  ChatSendException(this.code, this.msg);
+  @override
+  String toString() => msg;
+}
+
 /// 通知（系统 / 评论 / 回复 / 点赞）
 class NoticeItem {
   final String id;
