@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:provider/provider.dart';
 
 import 'app_theme.dart';
@@ -12,6 +14,7 @@ import 'screens/member_center_screen.dart';
 import 'screens/message_center_screen.dart';
 import 'screens/nearby_anglers_screen.dart';
 import 'screens/notify_settings_screen.dart';
+import 'screens/permission_check_screen.dart';
 import 'screens/post_detail_screen.dart';
 import 'screens/signin_screen.dart';
 import 'screens/startup/preview_pager_screen.dart';
@@ -34,9 +37,42 @@ import 'widgets/update_dialog.dart';
 /// 全局导航 key：用于「新消息」顶部弹条在任意页面悬浮展示
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
+/// 老安卓（Android 5.x / API 22 及以下）系统证书库缺失三张现代根证书：
+///   - ISRG Root X1      （Let's Encrypt / open-meteo 天气）
+///   - DigiCert Global Root G2（星图地球 / bigdatacloud 定位反查）
+///   - GTS Root R4       （Google Trust Services / openfreemap 在线河网）
+/// 缺它们时 Dart HTTP 与现代 HTTPS 全部报 CERTIFICATE_VERIFY_FAILED，
+/// 表现就是「安卓天气报错、定位反查失败」。
+///
+/// 注意：Android 5.x 不支持 network_security_config 注入自定义 CA，
+/// 只能在 Dart 层把根证书塞进默认 SecurityContext，绕开系统证书库。
+/// 这一步只管 Dart HTTP（天气/定位反查等）；原生 MapLibre SDK 拉瓦片的
+/// HTTPS 不归这里管，那个走后端 /tile-proxy 代理（见 spot_map_gl）。
+Future<void> _injectRootCerts() async {
+  const certs = [
+    'assets/certs/isrg_root_x1.pem',
+    'assets/certs/digicert_global_root_g2.pem',
+    'assets/certs/gts_root_r4.pem',
+  ];
+  try {
+    final ctx = SecurityContext.defaultContext;
+    for (final path in certs) {
+      final data = await rootBundle.load(path);
+      ctx.setTrustedCertificatesBytes(data.buffer.asUint8List());
+    }
+    debugPrint('[certs] 已注入 ${certs.length} 张根证书');
+  } catch (e) {
+    // 注入失败不应阻断启动：现代系统本来就有这些根证书
+    debugPrint('[certs] 注入根证书失败（可忽略）：$e');
+  }
+}
+
 void main() async {
   // Flutter 绑定初始化（必须在 async main 开头调用）
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 注入老安卓缺失的现代根证书（必须在任何 HTTPS 请求之前完成）
+  await _injectRootCerts();
 
   // 图片解码缓存限制：默认 100MB / 1000 张，地图瓦片一屏几十张很容易顶满，
   // 在 2GB 内存的老机型上会被系统直接杀掉（表现为「打开地图闪退」）。
@@ -308,6 +344,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         '/nearby-anglers': (_) => const NearbyAnglersScreen(),
         '/spot-map': (_) => const SpotMapScreen(),
         '/notify-settings': (_) => const NotifySettingsScreen(),
+        '/permission-check': (_) => const PermissionCheckScreen(),
       },
     );
   }
