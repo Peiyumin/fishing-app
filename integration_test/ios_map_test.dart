@@ -120,14 +120,18 @@ Future<({List hits, Point<num> at, int onScreen})> _probeRiver(
     }
   }
 
-  // 主判据：整个视口矩形里查 rivers-line
+  // 主判据：整个视口矩形里查河流图层
+  //
+  // ★ 要同时查本地和在线两套：在线河网（hydro）加载成功之后，
+  //   App 会把本地 rivers-casing / rivers-line 关掉（否则长江会被画两遍），
+  //   而 queryRenderedFeatures 对不可见图层返回空 —— 只查 rivers-line 会假阴性。
   final rect = Rect.fromLTWH(
     2,
     2,
     (mapSize.width - 4).clamp(1.0, double.infinity),
     (mapSize.height - 4).clamp(1.0, double.infinity),
   );
-  final hits = await ctl.queryRenderedFeaturesInRect(rect, ['rivers-line'], null);
+  final hits = await ctl.queryRenderedFeaturesInRect(rect, _riverLayers, null);
   if (hits.isNotEmpty) return (hits: hits, at: nearest, onScreen: onScreen);
 
   // 兜底 1：中心附近 44x44（万一线太细、视口边缘被裁）
@@ -137,17 +141,28 @@ Future<({List hits, Point<num> at, int onScreen})> _probeRiver(
     height: 44,
   );
   final cHits =
-      await ctl.queryRenderedFeaturesInRect(cRect, ['rivers-line'], null);
+      await ctl.queryRenderedFeaturesInRect(cRect, _riverLayers, null);
   if (cHits.isNotEmpty) return (hits: cHits, at: nearest, onScreen: onScreen);
 
   // 兜底 2：相机中心就是折线顶点，所以屏幕正中心必然压在这条线上
   final centerHits = await ctl.queryRenderedFeatures(
     Point<double>(mapSize.width / 2, mapSize.height / 2),
-    ['rivers-line'],
+    _riverLayers,
     null,
   );
   return (hits: centerHits, at: nearest, onScreen: onScreen);
 }
+
+/// 河流相关的全部图层：本地兜底 + 在线河网
+///
+/// 在线河网就绪后本地那两层会被隐藏，所以两条链路都要查，
+/// 否则「在线数据好了」反而让测试变红。
+const List<String> _riverLayers = [
+  'rivers-line',
+  'rivers-casing',
+  'hydro-river-line',
+  'hydro-water',
+];
 
 /// 确保相机真的停在目标点附近，返回是否成功
 ///
@@ -336,11 +351,12 @@ void main() {
     final probe = await _probeRiver(tester, ctl!, river, mapSize);
     // ignore: avoid_print
     print('[TEST] river="${river.name}" hits=${probe.hits.length} '
+        'layers=${probe.hits.isEmpty ? "-" : probe.hits.map((h) => h.layerId).toSet()} '
         'onScreenVerts=${probe.onScreen} nearest=$probe.at');
     expect(probe.hits, isNotEmpty,
         reason: '相机已停在「${river.name}」折线顶点上，但整视口矩形里查不到 '
-            'rivers-line 要素（视口内顶点数=${probe.onScreen}），'
-            '说明河流图层没真正渲染出来');
+            '河流要素（本地 rivers-line 或在线 hydro-river-line / hydro-water '
+            '都算，视口内顶点数=${probe.onScreen}），说明河流图层没真正渲染出来');
 
     // ---------------------------------------------------------------- 5.5 在线河网在当前视野画出蓝色
     // 这条才是用户真正要的：站在长江边，屏幕上必须能看到蓝色的水体/河道，
