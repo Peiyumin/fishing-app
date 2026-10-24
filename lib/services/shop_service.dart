@@ -1,3 +1,4 @@
+import '../models/my_order.dart';
 import '../models/shop_product.dart';
 import '../models/shop_review.dart';
 import '../models/user_profile.dart';
@@ -242,17 +243,54 @@ class ShopService {
 
   /// 我的订单（积分兑换 / 现金登记）
   /// 老后端没有该接口时返回空列表，页面显示「暂无订单」而不是报错
-  static Future<List<Map<String, dynamic>>> fetchMyOrders() async {
+  static Future<List<MyOrder>> fetchMyOrders() async {
     if (_demo || ApiClient.token == null) return const [];
     try {
       final data = await ApiClient.get('/shop/orders');
       if (data is List) {
         return data
             .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
+            .map((e) => MyOrder.fromJson(Map<String, dynamic>.from(e)))
             .toList();
       }
     } catch (_) {}
     return const [];
+  }
+
+  /// 取消订单（仅「待处理」可取消；积分单会原路退回积分）
+  static Future<({bool ok, String msg, int pointsBack})> cancelOrder(
+      String orderId) async {
+    try {
+      final data = await ApiClient.post('/shop/orders/$orderId/cancel', const {});
+      final m = (data is Map) ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      return (
+        ok: true,
+        msg: (m['message'] ?? '订单已取消').toString(),
+        pointsBack: (m['points_back'] as num?)?.toInt() ?? 0,
+      );
+    } catch (e) {
+      return (ok: false, msg: _msgOf(e), pointsBack: 0);
+    }
+  }
+
+  /// 确认收货（仅「已发货」可确认）
+  static Future<({bool ok, String msg})> confirmOrder(String orderId) async {
+    try {
+      final data = await ApiClient.post('/shop/orders/$orderId/confirm', const {});
+      final m = (data is Map) ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      return (ok: true, msg: (m['message'] ?? '已确认收货').toString());
+    } catch (e) {
+      return (ok: false, msg: _msgOf(e));
+    }
+  }
+
+  /// 从 Exception / 其它异常里取出后端返回的中文提示
+  /// （api_client 抛的是 Exception('已发货的订单不能取消')，toString 会带前缀）
+  static String _msgOf(Object e) {
+    final s = e.toString();
+    for (final p in ['ApiException: ', 'Exception: ']) {
+      if (s.startsWith(p)) return s.substring(p.length).trim();
+    }
+    return '操作失败，请稍后重试';
   }
 }
