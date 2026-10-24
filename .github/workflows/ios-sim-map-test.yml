@@ -35,6 +35,21 @@ jobs:
       - name: 拉取依赖
         run: flutter pub get
 
+      - name: 网络自检（在线河网瓦片源能不能通）
+        run: |
+          set +e
+          echo "== TileJSON =="
+          curl -sS -m 20 -o /tmp/tj.json -w "http=%{http_code} time=%{time_total}s size=%{size_download}\n" \
+            https://tiles.openfreemap.org/planet
+          head -c 400 /tmp/tj.json; echo
+          TILE=$(python3 -c "import json;d=json.load(open('/tmp/tj.json'));print(d['tiles'][0])" 2>/dev/null)
+          echo "tile template = $TILE"
+          if [ -n "$TILE" ]; then
+            ZXY=$(echo "$TILE" | sed 's#{z}#13#; s#{x}#6840#; s#{y}#3350#')
+            echo "== 单块瓦片 $ZXY =="
+            curl -sS -m 30 -o /tmp/t.pbf -w "http=%{http_code} time=%{time_total}s size=%{size_download}\n" "$ZXY"
+          fi
+
       - name: 启动 iOS 模拟器
         id: sim
         run: |
