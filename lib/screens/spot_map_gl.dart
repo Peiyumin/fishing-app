@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' show Point;
+import 'dart:math' show Point, pi, sin;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -18,6 +18,7 @@ import '../models/no_fishing_zone.dart';
 import '../models/water_body.dart';
 import '../services/location_service.dart';
 import '../services/map_config_service.dart';
+import '../services/ai_spot_service.dart';
 import '../services/map_data_service.dart';
 import '../services/map_tile_source.dart';
 import '../services/spot_service.dart';
@@ -129,6 +130,14 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   double? _myLat;
   double? _myLng;
   bool _locating = false;
+
+  // ------------------------------------------------------------ AI 推荐钓点
+  //
+  // 按钮在地图底部中间，点一下按当下的温度/气压/水氧 + 水体类型
+  // 算出一批值得去的位置，按「离我由近到远」排序，同时标到地图上。
+  List<AiSpot> _aiSpots = const [];
+  bool _aiBusy = false;
+  bool _aiDataAdded = false;
 
   /// 业务图层（河湖/禁钓/钓点）是否已经加过一轮
   bool _layersReady = false;
@@ -445,13 +454,24 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   }
 
   /// 幂等加图层：已存在则跳过（属性由 _applyLayerToggles 控制显隐）
+  ///
+  /// [sourceLayer] / [filter] 是给矢量瓦片（在线河网）用的：
+  /// 同一个 source 里有很多图层（water / waterway / building…），
+  /// 必须指明要哪一层，再用 filter 排除海洋等不需要的要素。
   Future<void> _safeLayer(
       String source, String layer, LayerProperties props,
-      {double? minzoom}) async {
+      {double? minzoom,
+      double? maxzoom,
+      String? sourceLayer,
+      dynamic filter}) async {
     final c = _map;
     if (c == null) return;
     try {
-      await c.addLayer(source, layer, props, minzoom: minzoom);
+      await c.addLayer(source, layer, props,
+          minzoom: minzoom,
+          maxzoom: maxzoom,
+          sourceLayer: sourceLayer,
+          filter: filter);
     } catch (_) {
       // 已存在：不重建（重建会闪一下），显隐交给 _applyLayerToggles
     }
@@ -464,6 +484,13 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   ///   置为 true —— 表现就是「图层开关只有底图那两个有用，下面几个点了没反应」。
   ///   现在加完必须回读 `getLayerIds()` 逐个确认，缺一个就重试。
   static const List<String> _bizLayers = [
+    // 在线河网（OSM 矢量瓦片）：覆盖所有有名字的河流、水体面
+    'hydro-water',
+    'hydro-water-line',
+    'hydro-river-casing',
+    'hydro-river-line',
+    'hydro-lake-icon',
+    // 本地精选数据（兜底：离线 / 瓦片失败时仍能看到大江大河）
     'lakes-fill',
     'lakes-line',
     'rivers-casing',
@@ -573,6 +600,232 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       // 红色定位针 + 白色鱼形，运行时用 Canvas 画成 PNG 交给原生层当 icon
       await _ensureSpotIcon();
 
+      // ---------------- 在线河网：所有有名字的河 ----------------
+      // ★ 为什么要有这一层：
+      //   本地 waters.json 只有 43 条大江 + 44 个湖（长江、黄河这个量级），
+      //   城市里的市河、支流（胥江、上塘河、外城河、吴淞江…）根本不在里面。
+      //   用户打开钓点地图看到的就是「开关全开了，可地图上只有一条大江」。
+      //   OSM 的矢量瓦片里，苏州一个 z13 瓦片就有 19 条**有名字**的河
+      //   和 245 个水体面 —— 这才是「不管大小河都有蓝色」。
+      //   只取 water（水体面）和 waterway（河流中心线）两个图层，
+      //   其他图层（building/road/poi）一个都不渲染，性能可控。
+      await _ensureWaterIcon();
+      await _safeVecSource();
+      // 水体面：河 / 湖 / 水库 / 池塘，都是真实水面宽度
+      await _safeLayer(
+        'hydro',
+        'hydro-water',
+        const FillLayerProperties(
+          fillColor: [
+            'match',
+            ['get', 'class'],
+            'river',
+            '#2E8FD0',
+            'lake',
+            '#2E8FD0',
+            'reservoir',
+            '#2E7FC8',
+            'pond',
+            '#3A9BDC',
+            '#2E8FD0',
+          ],
+          fillOpacity: 0.55,
+        ),
+        sourceLayer: 'water',
+        minzoom: 4,
+        // 海洋不画（不然沿海会整片变蓝，把海图盖掉）
+        filter: [
+          '!=',
+          ['get', 'class'],
+          'ocean'
+        ],
+      );
+      await _safeLayer(
+        'hydro',
+        'hydro-water-line',
+        const LineLayerProperties(
+          lineColor: '#0B4FA8',
+          lineWidth: 1.1,
+          lineOpacity: 0.85,
+        ),
+        sourceLayer: 'water',
+        minzoom: 6,
+        filter: [
+          '!=',
+          ['get', 'class'],
+          'ocean'
+        ],
+      );
+      // 河流中心线：给没有水面多边形的窄河补一条蓝线。
+      // 宽度按 class 分档（河 > 运河 > 溪流），再随缩放放大 ——
+      // 全国视野下不糊成一片，街道视野下也看得见。
+      await _safeLayer(
+        'hydro',
+        'hydro-river-casing',
+        const LineLayerProperties(
+          lineColor: '#0B4FA8',
+          lineWidth: [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            6,
+            [
+              'match',
+              ['get', 'class'],
+              'river',
+              2.0,
+              'canal',
+              1.5,
+              'stream',
+              0.8,
+              1.0
+            ],
+            10,
+            [
+              'match',
+              ['get', 'class'],
+              'river',
+              5.0,
+              'canal',
+              3.6,
+              'stream',
+              1.6,
+              2.0
+            ],
+            14,
+            [
+              'match',
+              ['get', 'class'],
+              'river',
+              16.0,
+              'canal',
+              11.0,
+              'stream',
+              4.0,
+              5.0
+            ],
+            17,
+            [
+              'match',
+              ['get', 'class'],
+              'river',
+              30.0,
+              'canal',
+              20.0,
+              'stream',
+              7.0,
+              9.0
+            ],
+          ],
+          lineOpacity: 0.75,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        sourceLayer: 'waterway',
+        minzoom: 6,
+        // 隧道段不画（会在地面拉出一条莫名其妙的蓝线）
+        filter: [
+          '!=',
+          ['get', 'brunnel'],
+          'tunnel'
+        ],
+      );
+      await _safeLayer(
+        'hydro',
+        'hydro-river-line',
+        const LineLayerProperties(
+          lineColor: '#3FA9F5',
+          lineWidth: [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            6,
+            [
+              'match',
+              ['get', 'class'],
+              'river',
+              1.2,
+              'canal',
+              0.9,
+              'stream',
+              0.5,
+              0.6
+            ],
+            10,
+            [
+              'match',
+              ['get', 'class'],
+              'river',
+              3.0,
+              'canal',
+              2.2,
+              'stream',
+              1.0,
+              1.2
+            ],
+            14,
+            [
+              'match',
+              ['get', 'class'],
+              'river',
+              9.0,
+              'canal',
+              6.5,
+              'stream',
+              2.6,
+              3.2
+            ],
+            17,
+            [
+              'match',
+              ['get', 'class'],
+              'river',
+              17.0,
+              'canal',
+              12.0,
+              'stream',
+              4.5,
+              5.5
+            ],
+          ],
+          lineOpacity: 0.9,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        sourceLayer: 'waterway',
+        minzoom: 6,
+        filter: [
+          '!=',
+          ['get', 'brunnel'],
+          'tunnel'
+        ],
+      );
+      // 水库 / 湖泊 / 池塘的图标标记（用户明确要求「水库池塘要有图标」）
+      await _safeLayer(
+        'hydro',
+        'hydro-lake-icon',
+        SymbolLayerProperties(
+          iconImage: 'water-icon',
+          iconSize: _zNum([
+            9, 0.42 * _iconUnit,
+            12, 0.55 * _iconUnit,
+            15, 0.70 * _iconUnit,
+          ]),
+          iconAllowOverlap: true,
+          iconIgnorePlacement: true,
+        ),
+        sourceLayer: 'water',
+        minzoom: 9,
+        filter: [
+          'in',
+          ['get', 'class'],
+          [
+            'literal',
+            ['lake', 'reservoir', 'pond']
+          ]
+        ],
+      );
+
       // ---------------- 湖泊：蓝色水面 ----------------
       await _safeSource('lakes', _fc(_lakeFeatures()));
       await _safeLayer(
@@ -668,6 +921,46 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           ),
           minzoom: 0);
 
+      // ---------------- AI 推荐钓点（点按钮后才有数据） ----------------
+      // 空数据先建好图层：点「AI 找钓点」时只 setGeoJsonSource，
+      // 不用现场 addLayer（那种时机最容易失败）
+      await _safeSource('ai-spots', _fc(const []));
+      await _safeLayer(
+        'ai-spots',
+        'ai-spot-halo',
+        CircleLayerProperties(
+          circleColor: '#FF8A00',
+          circleRadius: _zNum([8, 15, 14, 20]),
+          circleOpacity: 0.25,
+          circleBlur: 1.2,
+        ),
+        minzoom: 0,
+      );
+      await _safeLayer(
+        'ai-spots',
+        'ai-spot-circle',
+        CircleLayerProperties(
+          circleColor: '#FF8A00',
+          circleRadius: _zNum([8, 10, 14, 13]),
+          circleStrokeColor: '#FFFFFF',
+          circleStrokeWidth: 2.4,
+        ),
+        minzoom: 0,
+      );
+      await _safeLayer(
+        'ai-spots',
+        'ai-spot-label',
+        const SymbolLayerProperties(
+          textField: ['get', 'n'],
+          textSize: 11.5,
+          textColor: '#FFFFFF',
+          textAllowOverlap: true,
+          textIgnorePlacement: true,
+          textAnchor: 'center',
+        ),
+        minzoom: 0,
+      );
+
       // ---------------- 校验：真的加上了才算成功 ----------------
       final ids =
           (await c.getLayerIds()).map((e) => e.toString()).toSet();
@@ -743,6 +1036,111 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     _spotIconReady = true;
   }
 
+  // ------------------------------------------------------------ 水库 / 池塘图标
+
+  bool _waterIconReady = false;
+
+  Future<void> _ensureWaterIcon() async {
+    final c = _map;
+    if (c == null || _waterIconReady) return;
+    final bytes = await _buildWaterIcon();
+    if (bytes == null) return;
+    try {
+      await c.addImage('water-icon', bytes);
+    } catch (_) {
+      // 同名已存在
+    }
+    _waterIconReady = true;
+  }
+
+  /// 蓝色圆底 + 白色双水波：一眼看出是「水体」而不是钓点
+  Future<Uint8List?> _buildWaterIcon() async {
+    const double s = 64;
+    final rec = ui.PictureRecorder();
+    final canvas = Canvas(rec, const Rect.fromLTWH(0, 0, s, s));
+    // 白色外圈：卫星影像背景很花，没有白边会糊成一团
+    canvas.drawCircle(const Offset(32, 32), 29, Paint()..color = Colors.white);
+    canvas.drawCircle(
+        const Offset(32, 32), 25.5, Paint()..color = const Color(0xFF1E6FC4));
+    final wave = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4.2
+      ..strokeCap = StrokeCap.round;
+    for (final dy in const [-6.5, 6.0]) {
+      final p = Path()..moveTo(15, 32 + dy);
+      for (double x = 15; x <= 49; x += 1.5) {
+        p.lineTo(x, 32 + dy + 3.6 * sin((x - 15) / 34 * 2 * pi));
+      }
+      canvas.drawPath(p, wave);
+    }
+    final img = await rec.endRecording().toImage(s.round(), s.round());
+    final bd = await img.toByteData(format: ui.ImageByteFormat.png);
+    img.dispose();
+    return bd?.buffer.asUint8List();
+  }
+
+  // ------------------------------------------------------------ 在线河网源
+
+  /// 在线河网矢量瓦片（OpenFreeMap / OpenMapTiles，全球免费、无需 key）
+  ///
+  /// ★ 用 TileJSON 的 `url`，不要写死
+  ///   `.../planet/20261018_080001_pt/{z}/{x}/{y}.pbf`：
+  ///   他们的构建版本号每天变，写死的话过几天整层就空了。
+  ///   交给 MapLibre 自己去拉 TileJSON，永远拿当前版本。
+  static const String _hydroTileJson = 'https://tiles.openfreemap.org/planet';
+
+  /// 在线河网是否真的可用（有瓦片数据落进来）
+  ///
+  /// 用它决定「用 OSM 的数据」还是「退回本地那 43 条大江」：
+  /// 离线或瓦片被墙时本地数据仍然能兜住，不至于整层空白。
+  bool _hydroReady = false;
+  int _hydroProbe = 0;
+
+  Future<void> _safeVecSource() async {
+    final c = _map;
+    if (c == null) return;
+    try {
+      await c.addSource(
+        'hydro',
+        const VectorSourceProperties(
+          url: _hydroTileJson,
+          maxzoom: 14,
+          attribution: '水系数据 © OpenStreetMap 贡献者',
+        ),
+      );
+    } catch (_) {
+      // 已存在：重试时会走到这里，忽略
+    }
+  }
+
+  /// 探针：地图停下来后问原生层「hydro 源里到底有没有要素」
+  ///
+  /// 有 → 说明瓦片加载成功，可以关掉本地那套简化数据（否则长江会被
+  ///      本地宽带和 OSM 真实水面画两遍，看起来有重影）
+  /// 没有 → 1.2 秒后重试，最多 5 次，全程不打扰用户
+  Future<void> _probeHydro() async {
+    if (_hydroReady) return;
+    final c = _map;
+    if (c == null) return;
+    try {
+      final feats =
+          await c.querySourceFeatures('hydro', 'waterway', null);
+      if (feats.isNotEmpty) {
+        _hydroReady = true;
+        _hydroProbe = 0;
+        await _applyLayerToggles();
+        return;
+      }
+    } catch (_) {}
+    if (_hydroProbe < 5 && mounted) {
+      _hydroProbe++;
+      Future.delayed(const Duration(milliseconds: 1200), () {
+        if (mounted) _probeHydro();
+      });
+    }
+  }
+
   Future<Uint8List?> _buildPinIcon() async {
     const w = SpotPinPainter.unitW;
     const h = SpotPinPainter.unitH;
@@ -799,16 +1197,40 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         return;
       }
     }
-    await _setVis('lakes-fill', _layers.lakes);
-    await _setVis('lakes-line', _layers.lakes);
-    await _setVis('rivers-casing', _layers.rivers);
-    await _setVis('rivers-line', _layers.rivers);
+    // ★ 在线河网优先，本地数据兜底
+    //
+    // hydro（OSM 矢量瓦片）覆盖所有有名字的河流，本地 waters.json 只有
+    // 43 条大江 —— 两者同时开会把长江画两遍（宽带 + 真实水面），出现重影。
+    // 所以一旦确认瓦片真的加载成功，就关掉本地那套；离线或被墙时
+    // _hydroReady 一直是 false，本地数据继续顶着，不会整层空白。
+    //
+    // 高德底图是 GCJ-02 加偏坐标，矢量瓦片没法逐要素纠偏（会整体偏
+    // 300~500 米），这种情况只能用本地数据（本地坐标走 _tile.project 纠偏）。
+    final hydro = _hydroReady && !_tile.isGcj02;
+
+    await _setVis('hydro-water', _layers.rivers && hydro);
+    await _setVis('hydro-water-line', _layers.rivers && hydro);
+    await _setVis('hydro-river-casing', _layers.rivers && hydro);
+    await _setVis('hydro-river-line', _layers.rivers && hydro);
+    // 水库 / 池塘图标归「湖泊水库」开关（用户点的是这个）
+    await _setVis('hydro-lake-icon', _layers.lakes && hydro);
+
+    await _setVis('lakes-fill', _layers.lakes && !hydro);
+    await _setVis('lakes-line', _layers.lakes && !hydro);
+    await _setVis('rivers-casing', _layers.rivers && !hydro);
+    await _setVis('rivers-line', _layers.rivers && !hydro);
     await _setVis('zones-fill', _layers.noFishingZones);
     await _setVis('zones-line', _layers.noFishingZones);
     await _setVis('spots-pin', _layers.spots);
   }
 
   // ------------------------------------------------------------ 比例尺
+
+  /// 相机停下：刷新比例尺 + 探一下在线河网有没有到数据
+  void _onCameraIdle() {
+    _updateScale();
+    _probeHydro();
+  }
 
   /// 当前视野的「米 / 像素」，由 onCameraIdle 更新
   ///
@@ -842,6 +1264,87 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   }
 
   /// 左下角比例尺（在原授权文字上方）
+  /// 底部中间的「AI 找钓点」按钮
+  ///
+  /// 深绿渐变胶囊 + 高亮 ✨，压在地图底部中间、全局「+」发布按钮上方。
+  /// 计算中把图标换成转圈，并禁用重复点击（一次分析要拉天气，别连点）。
+  Widget _buildAiButton() {
+    return GestureDetector(
+      onTap: _findAiSpots,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.fromLTRB(16, 9, 18, 9),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF0B3026), Color(0xFF0F7A53)],
+          ),
+          borderRadius: BorderRadius.circular(26),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x33000000),
+              blurRadius: 10,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_aiBusy)
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation(Color(0xFFB6F36A)),
+                ),
+              )
+            else
+              const Icon(Icons.auto_awesome,
+                  size: 19, color: Color(0xFFB6F36A)),
+            const SizedBox(width: 9),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_aiBusy ? '正在分析…' : 'AI 找钓点',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        height: 1.15,
+                        fontWeight: FontWeight.w700)),
+                const Text('AI SPOT',
+                    style: TextStyle(
+                        color: Color(0x99FFFFFF),
+                        fontSize: 8,
+                        height: 1.2,
+                        letterSpacing: 1.4)),
+              ],
+            ),
+            if (_aiSpots.isNotEmpty && !_aiBusy) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF8A00),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text('${_aiSpots.length}',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildScaleBar() {
     final mpp = _mpp;
     if (mpp == null) return const SizedBox.shrink();
@@ -1003,6 +1506,266 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     } catch (_) {
       return null;
     }
+  }
+
+  // ------------------------------------------------------------ AI 推荐钓点
+
+  /// 把推荐结果画到地图上（编号 1..N，与底部列表一一对应）
+  Future<void> _renderAiSpots() async {
+    final c = _map;
+    if (c == null || !_styleReady) return;
+    final feats = <Map<String, dynamic>>[];
+    for (var i = 0; i < _aiSpots.length; i++) {
+      final s = _aiSpots[i];
+      final q = _tile.project(ll.LatLng(s.lat, s.lng));
+      feats.add(_feature('Point', [q.longitude, q.latitude], {
+        'n': '${i + 1}',
+        'id': s.id,
+      }));
+    }
+    try {
+      if (_aiDataAdded) {
+        await c.setGeoJsonSource('ai-spots', _fc(feats));
+      } else {
+        await c.addGeoJsonSource('ai-spots', _fc(feats));
+        _aiDataAdded = true;
+      }
+    } catch (_) {}
+  }
+
+  /// 点「AI 找钓点」：定位 → 结合天气与水体分析 → 标注 + 弹出由近到远列表
+  Future<void> _findAiSpots() async {
+    if (_aiBusy) return;
+    setState(() => _aiBusy = true);
+    try {
+      var lat = _myLat;
+      var lng = _myLng;
+      if (lat == null || lng == null) {
+        final pos = await LocationService.determinePosition()
+            .timeout(const Duration(seconds: 8));
+        lat = pos.latitude;
+        lng = pos.longitude;
+        if (mounted) {
+          setState(() {
+            _myLat = lat;
+            _myLng = lng;
+          });
+        }
+        await _drawMe();
+      }
+      final list = await AiSpotService.recommend(
+        lat: lat,
+        lng: lng,
+        spots: _spots,
+        waters: _waters,
+      );
+      if (!mounted) return;
+      setState(() => _aiSpots = list);
+      await _renderAiSpots();
+      if (!mounted) return;
+      if (list.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('附近 60 公里内没找到合适的水域，换个位置再试')));
+        return;
+      }
+      _showAiSheet(list);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('定位失败，请检查定位权限后再试')));
+      }
+    } finally {
+      if (mounted) setState(() => _aiBusy = false);
+    }
+  }
+
+  /// 推荐结果面板：按距离由近到远，点一条就直接飞过去
+  void _showAiSheet(List<AiSpot> list) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        final h = MediaQuery.of(ctx).size.height;
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: h * 0.64),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 10),
+                Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0x22000000),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 30,
+                        height: 30,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFFFF1E0),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.auto_awesome,
+                            size: 17, color: Color(0xFFFF8A00)),
+                      ),
+                      const SizedBox(width: 10),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('AI 推荐钓点',
+                              style: TextStyle(
+                                  fontSize: 15.5,
+                                  fontWeight: FontWeight.bold)),
+                          Text(
+                              '按离你由近到远排序 · 共 ${list.length} 个 · '
+                              '${list.first.score >= 60 ? '当前条件不错' : '当前条件一般'}',
+                              style: const TextStyle(
+                                  fontSize: 11.5,
+                                  color: AppTheme.textSecondary)),
+                        ],
+                      ),
+                      const Spacer(),
+                      InkWell(
+                        onTap: () => Navigator.of(ctx).pop(),
+                        child: const Padding(
+                          padding: EdgeInsets.all(4),
+                          child: Icon(Icons.close,
+                              size: 20, color: AppTheme.textSecondary),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1, color: AppTheme.divider),
+                Flexible(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+                    itemCount: list.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (_, i) {
+                      final s = list[i];
+                      return GestureDetector(
+                        onTap: () {
+                          Navigator.of(ctx).pop();
+                          _landCamera(s.lat, s.lng);
+                        },
+                        behavior: HitTestBehavior.opaque,
+                        child: Container(
+                          padding: const EdgeInsets.all(11),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primarySoft,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: AppTheme.border),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // 序号：与地图上的橙色圆标一致
+                              Container(
+                                width: 26,
+                                height: 26,
+                                alignment: Alignment.center,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFFFF8A00),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Text('${i + 1}',
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w700)),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Flexible(
+                                          child: Text(s.name,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight:
+                                                      FontWeight.w600)),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                            '${AiSpotService.kmText(s.km)} · ${s.kind}',
+                                            style: const TextStyle(
+                                                fontSize: 11,
+                                                color:
+                                                    AppTheme.textSecondary)),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(s.reason,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            fontSize: 11.5,
+                                            height: 1.35,
+                                            color: AppTheme.textSecondary)),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: _aiScoreColor(s.score)
+                                      .withOpacity(0.14),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Column(
+                                  children: [
+                                    Text('${s.score}',
+                                        style: TextStyle(
+                                            fontSize: 14,
+                                            height: 1.1,
+                                            fontWeight: FontWeight.w700,
+                                            color: _aiScoreColor(s.score))),
+                                    Text(s.grade,
+                                        style: TextStyle(
+                                            fontSize: 9,
+                                            color: _aiScoreColor(s.score))),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  static Color _aiScoreColor(int s) {
+    if (s >= 80) return const Color(0xFF2E9E5B);
+    if (s >= 60) return const Color(0xFFD9A02B);
+    if (s >= 40) return const Color(0xFFE07A29);
+    return const Color(0xFFD9534F);
   }
 
   Future<void> _locate({bool silent = false}) async {
@@ -1187,7 +1950,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                   _renderLayers();
                 },
                 // 相机停下后重算比例尺（拖动过程中不算，省性能）
-                onCameraIdle: _updateScale,
+                onCameraIdle: _onCameraIdle,
                 onMapClick: (point, latlng) => _onMapClick(point),
               )
             : Container(
@@ -1199,6 +1962,14 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                   child: CircularProgressIndicator(strokeWidth: 2.4),
                 ),
               ),
+      ),
+
+      // AI 找钓点：底部中间（压在全局「+」发布按钮上方，两者不重叠）
+      Positioned(
+        left: 0,
+        right: 0,
+        bottom: 88,
+        child: Center(child: _buildAiButton()),
       ),
 
       // 比例尺（在授权文字上方）
@@ -1215,7 +1986,10 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         right: 90,
         child: IgnorePointer(
           child: Text(
-            '${_tile.attribution} · 禁钓数据据政府公开通告整理',
+            // OSM 数据（在线河网）必须署名，这是 ODbL 的硬要求
+            '${_tile.attribution} · 水系©OpenStreetMap · 禁钓数据来自政府通告',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 9.5, color: Color(0x99000000)),
           ),
         ),
