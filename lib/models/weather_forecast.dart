@@ -293,6 +293,12 @@ class WeatherBundle {
   final double curPrecip;
   final int curCode;
   final int curPrecipProb; // 当前小时降雨概率 %
+
+  /// 「当前」这一组数据对应的整点时刻（如 2026-10-24 13:00）。
+  ///
+  /// 页面上要把这个时间显示出来，用户才知道看到的是哪一小时的数据；
+  /// 也为空表示没有逐时数据、退化成了 current 实况。
+  final DateTime? curHour;
   // 全部逐小时（7×24）与 7 天日报
   final List<HourPoint> hours;
   final List<DaySummary> days;
@@ -308,6 +314,7 @@ class WeatherBundle {
     required this.curPrecip,
     required this.curCode,
     required this.curPrecipProb,
+    this.curHour,
     required this.hours,
     required this.days,
   });
@@ -361,6 +368,32 @@ class WeatherBundle {
     dayHours.sort((a, b) =>
         (a.time.hour - refHour).abs().compareTo((b.time.hour - refHour).abs()));
     return dayHours.first;
+  }
+
+  /// 「当前时段」的唯一定义：与给定时刻绝对时间最近的那一小时。
+  ///
+  /// 首页天气卡和天气页顶部卡都必须用这一小时，否则会出现
+  /// 「首页 26.3℃ / 指数 78」而「天气页 25.8℃ / 指数 82」这种自相矛盾 ——
+  /// 因为过去首页用 current 实况、天气页指数用逐时整点，两个数据源混着用。
+  /// 返回下标（配 metrics 用），找不到返回 -1。
+  int indexOfHourNear(DateTime at) {
+    if (hours.isEmpty) return -1;
+    var best = -1;
+    var bestDiff = 1 << 30;
+    for (var i = 0; i < hours.length; i++) {
+      final d = hours[i].time.difference(at).inMinutes.abs();
+      if (d < bestDiff) {
+        bestDiff = d;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  /// 与 [indexOfHourNear] 配套：直接取那一小时的数据
+  HourPoint? hourNear(DateTime at) {
+    final i = indexOfHourNear(at);
+    return i >= 0 ? hours[i] : null;
   }
 
   /// 第二模型（CMA）逐时序列 → {时间: [气温, 气压]}
@@ -564,8 +597,8 @@ class WeatherBundle {
       }
       if (nearest != null) {
         curCodeV = WeatherCodeFix.adjust(
-          code: curCodeV,
-          precipMm: curPrecipV,
+          code: nearest.weatherCode,
+          precipMm: nearest.precip,
           cloudCover: nearest.cloudCover,
         );
       }
@@ -578,17 +611,32 @@ class WeatherBundle {
         (cur?['pressure_msl'] as num?)?.toDouble() ??
         0;
 
+    // ★ 时段统一（v2.1.19）：所有「当前」字段一律取自同一个整点 [nearest]。
+    //
+    // 之前只有气温和气压取了整点，湿度 / 风速 / 风向 / 降水概率 / 天气现象
+    // 仍在用 current（分钟级实况），结果同一张「当前」卡里混了两个时段：
+    // 卡上写「小雨、湿度 88%、风 12km/h」，而垂钓指数是按那一小时的
+    // 「多云、湿度 76%、风 8km/h」算的 —— 用户看到的天气和分数对不上。
+    // 现在全部对齐到同一小时，天气页顶部卡、首页天气卡、逐时表高亮行
+    // 和垂钓指数用的是同一组数字。
     return WeatherBundle(
       lat: lat,
       lng: lng,
       curTemp: curTempV,
-      curHumidity: (cur?['relative_humidity_2m'] as num?)?.round() ?? 0,
+      curHumidity: nearest?.humidity ??
+          (cur?['relative_humidity_2m'] as num?)?.round() ??
+          0,
       curPressure: curPresV,
-      curWindSpeed: (cur?['wind_speed_10m'] as num?)?.toDouble() ?? 0,
-      curWindDir: (cur?['wind_direction_10m'] as num?)?.round() ?? 0,
-      curPrecip: curPrecipV,
+      curWindSpeed: nearest?.windSpeed ??
+          (cur?['wind_speed_10m'] as num?)?.toDouble() ??
+          0,
+      curWindDir: nearest?.windDir ??
+          (cur?['wind_direction_10m'] as num?)?.round() ??
+          0,
+      curPrecip: nearest?.precip ?? curPrecipV,
       curCode: curCodeV,
-      curPrecipProb: curPrecipProbV,
+      curPrecipProb: nearest?.precipProb ?? curPrecipProbV,
+      curHour: nearest?.time,
       hours: hours,
       days: days,
     );
