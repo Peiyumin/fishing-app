@@ -260,6 +260,13 @@ void main() {
       'sat',
       'vec',
       'cia',
+      // 在线河网（OSM）：所有有名字的河流、水体面、水库池塘图标
+      'hydro-water',
+      'hydro-water-line',
+      'hydro-river-casing',
+      'hydro-river-line',
+      'hydro-lake-icon',
+      // 本地兜底数据
       'lakes-fill',
       'lakes-line',
       'rivers-casing',
@@ -270,6 +277,28 @@ void main() {
     ]) {
       expect(layers, contains(id), reason: '缺图层 $id');
     }
+
+    // ---------------------------------------------------------------- 3.5 在线河网真的加载了
+    // 图层存在 ≠ 有数据。这里直接问原生层：hydro 源里的 waterway 要素有没有进来。
+    // 空数组说明矢量瓦片没下载成功（离线 / 域名不通），此时 App 会退回本地数据。
+    var hydroFeats = const [];
+    final hydroOk = await until(tester, () async {
+      hydroFeats = await ctl!.querySourceFeatures('hydro', 'waterway', null);
+      return hydroFeats.isNotEmpty;
+    }, timeoutMs: 90000);
+    // ignore: avoid_print
+    print('[TEST] hydro waterway features = ${hydroFeats.length} '
+        'loaded=$hydroOk');
+    expect(hydroOk, isTrue,
+        reason: '在线河网（OSM 矢量瓦片）一条要素都没加载到，'
+            '说明 tiles.openfreemap.org 拉不到数据，小河仍然不会显示');
+
+    // 水库 / 池塘图标层必须能查到水体面
+    final waterFeats = await ctl!.querySourceFeatures('hydro', 'water', null);
+    // ignore: avoid_print
+    print('[TEST] hydro water features = ${waterFeats.length}');
+    expect(waterFeats, isNotEmpty,
+        reason: 'hydro 源里没有 water 面要素，水库池塘图标没有可标注的对象');
 
     // ---------------------------------------------------------------- 4. 河湖开关能切
     // 图层存在但 setLayerVisibility 在 iOS 上抛错的话，用户点开关没反应。
@@ -311,6 +340,24 @@ void main() {
         reason: '相机已停在「${river.name}」折线顶点上，但整视口矩形里查不到 '
             'rivers-line 要素（视口内顶点数=${probe.onScreen}），'
             '说明河流图层没真正渲染出来');
+
+    // ---------------------------------------------------------------- 5.5 在线河网在当前视野画出蓝色
+    // 这条才是用户真正要的：站在长江边，屏幕上必须能看到蓝色的水体/河道，
+    // 而且来自 OSM 那一层（不是本地那 43 条兜底数据）。
+    final viewAll = Rect.fromLTWH(
+        2, 2, mapSize.width - 4, mapSize.height - 4);
+    var hydroHits = const [];
+    final hydroRendered = await until(tester, () async {
+      hydroHits = await ctl!.queryRenderedFeaturesInRect(
+          viewAll, ['hydro-river-line', 'hydro-water'], null);
+      return hydroHits.isNotEmpty;
+    }, timeoutMs: 90000);
+    // ignore: avoid_print
+    print('[TEST] hydro rendered in view = ${hydroHits.length} '
+        'ok=$hydroRendered');
+    expect(hydroRendered, isTrue,
+        reason: '在线河网图层在当前视野里没有渲染出任何要素 —— '
+            '数据加载到了但图层没显示（可能是开关联动把它关了）');
 
     // ---------------------------------------------------------------- 5b. 禁钓区 / 湖泊真的画出来了
     //
