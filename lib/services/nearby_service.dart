@@ -1,7 +1,7 @@
 import '../models/nearby_angler.dart';
 import 'api_client.dart';
 
-/// 附近钓友（会员专属）
+/// 附近钓友（所有登录用户可用）
 class NearbyService {
   /// 附近钓友列表（由近到远）
   static Future<List<NearbyAngler>> anglers({
