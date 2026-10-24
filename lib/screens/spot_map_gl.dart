@@ -22,6 +22,7 @@ import '../services/map_config_service.dart';
 import '../services/ai_spot_service.dart';
 import '../services/map_data_service.dart';
 import '../services/map_tile_source.dart';
+import '../services/geo_bounds.dart';
 import '../services/spot_service.dart';
 import '../widgets/spot_pin.dart';
 import 'spot_detail_screen.dart';
@@ -338,16 +339,66 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     return ['1', '2', '3'].map((i) => s.replaceAll('{s}', i)).toList();
   }
 
+  // ------------------------------------------------------------ 高清范围
+
+  /// 高清瓦片覆盖半径（公里）
+  ///
+  /// 用户要的加载策略：首屏先把定位点周围 50km 的高清影像准备好，
+  /// 更远处只留低清概览（省流量、首屏也更快）；在这 50km 内拖动或放大，
+  /// 瓦片会按视口自动加载对应级别的高清图。
+  static const double hdRadiusKm = 50;
+
+  /// 当前高清范围 [w, s, e, n]
+  ///
+  /// null = 还没拿到定位点，此时不给高清层加 bounds（全图都按高清走）。
+  /// 宁可不省流量，也不要让用户在「不限制范围就糊」和「限制了范围结果
+  /// 自己站在圈外一片糊」之间二选一。
+  List<double>? _hdBounds;
+
+  /// 记下定位点，供 [_buildStyle] 算高清圈
+  ///
+  /// 只在样式生成之前调用才有意义：MapLibre 的 raster source 的 `bounds`
+  /// 不能原地修改，换范围只能重建样式，而 0.22.0 的控制器没有 setStyle。
+  void _setHdCenter(double lat, double lng) {
+    if (lat == 0 && lng == 0) return;
+    _hdBounds = boundsAroundKm(lat, lng, hdRadiusKm);
+  }
+
   String _buildStyle() {
+    final hd = _hdBounds;
     return jsonEncode(<String, dynamic>{
       'version': 8,
       'sources': {
+        // ---------------- 低清概览层：全球铺底 ----------------
+        // 最高只到 z8。z9 以上它靠「放大 z8 瓦片」呈现 ——
+        // 这正好就是用户要的「定位点 50km 之外模糊显示」，
+        // 而且每屏只多 1~4 块瓦片（一块 z8 抵 256 块 z16），开销可以忽略。
+        // ★ 为什么定 z8 而不是 z12：低清层如果太清晰，缩小到 100km 视野时
+        //   圈内圈外一样清楚，用户根本看不出「50 公里边界」在哪，
+        //   分级加载就成了看不见的摆设。
+        'sat-low': {
+          'type': 'raster',
+          'tiles': _urls(_tile.satelliteTemplate),
+          'tileSize': 256,
+          'maxzoom': 8,
+          'attribution': _tile.attribution,
+        },
+        // ---------------- 高清层：只在定位点周围 50km ----------------
+        // ★ bounds 是这里的关键：MapLibre 文档明确写了
+        //   「设了 bounds 之后，范围外的瓦片一律不请求」。
+        //   所以高清瓦片只会在那 50km 里被拉下来，范围外由上面的低清层顶住。
+        // ★ maxzoom 必须等于瓦片源真实最大级别（星图 18）。
+        //   之前相机允许缩放到 22 级，超过 18 后 MapLibre 不再请求新瓦片，
+        //   只是把 18 级瓦片放大 16 倍 —— 用户看到的就是「放大后不加载、
+        //   一片模糊」。现在相机上限也一起压到 18（见 minMaxZoomPreference）。
         'sat': {
           'type': 'raster',
           'tiles': _urls(_tile.satelliteTemplate),
           'tileSize': 256,
+          // z9 起接管（z9 的视野正好约 100km，能一眼看到 50km 那个圈）
+          'minzoom': 9,
           'maxzoom': _tile.maxNativeZoom,
-          'attribution': _tile.attribution,
+          if (hd != null) 'bounds': hd,
         },
         'vec': {
           'type': 'raster',
@@ -371,6 +422,12 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         // raster-fade-duration: 0 —— 关掉瓦片淡入动画。
         // 默认 300ms 的淡入会让原生层在瓦片刚到时反复重绘，
         // 快速拖动时叠加上一层重绘，是掉帧的隐形大头。
+        {
+          'id': 'sat-low',
+          'type': 'raster',
+          'source': 'sat-low',
+          'paint': {'raster-fade-duration': 0},
+        },
         {
           'id': 'sat',
           'type': 'raster',
@@ -531,8 +588,13 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     // 在线河网（OSM 矢量瓦片）：覆盖所有有名字的河流、水体面
     // ★ 河道只保留「一层浅蓝」：深蓝描边 hydro-river-casing 已删除，
     //   原来 casing(深蓝宽) + line(浅蓝细) 叠在一起，看起来像两条河。
+    // ★ v2.1.22：中心线拆成两层 ——
+    //   hydro-river-major 只有 z6~10（低缩放撑走向），
+    //   hydro-river-line 只画溪流/沟渠且是细线。
+    //   原来单层在 z17 画 30px 实心线，就是用户说的「那根很粗的蓝色」。
     'hydro-water',
     'hydro-water-line',
+    'hydro-river-major',
     'hydro-river-line',
     'hydro-lake-icon',
     'hydro-pond-icon',
@@ -696,80 +758,101 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           'ocean'
         ],
       );
-      // 河流中心线：给没有水面多边形的窄河补一条蓝线。
-      // 宽度按 class 分档（河 > 运河 > 溪流），再随缩放放大 ——
-      // 全国视野下不糊成一片，街道视野下也看得见。
-      // ★ 已经合并掉原来的深蓝 casing，所以这里直接用 casing 那一档宽度，
-      //   否则窄河会细成一半、跟水面接不上。
+      // ---------------- 河流中心线（按 class 拆两层）----------------
+      // ★★ 用户截图里那根「很粗的蓝色」就是这里来的（v2.1.22 修）：
+      //   原来只有一层，z14 画 16px、z17 画 30px —— 本意是给**没有水面多边形**
+      //   的窄河补一条线。但 OSM 里 river / canal 在 z11 以上基本都有水面多边形，
+      //   水面已经被 hydro-water 填成浅蓝（opacity 0.5），再在上面盖一条 30px、
+      //   不透明度 0.8 的实心线，观感就是「浅蓝水面下压着一根粗蓝条」，
+      //   而且把整条河劈成了深浅两半。
+      //   现在按 class 拆开：
+      //     ① hydro-river-major：河 / 运河 —— 只在 z6~10 画。
+      //        低缩放时水面面积极小、只是一小块色斑，必须靠线撑出河道走向；
+      //        z11 起水面多边形已经能表达真实宽度，粗线彻底退场。
+      //     ② hydro-river-line：溪流 / 沟渠 / 排水沟 —— 它们在 OSM 里通常
+      //        没有水面多边形，只能靠线画出来，所以任何缩放都保留，但只给细线。
       await _safeLayer(
         'hydro',
-        'hydro-river-line',
+        'hydro-river-major',
         const LineLayerProperties(
-          lineColor: '#3FA9F5',
+          lineColor: '#4FAEE8',
           lineWidth: [
             'interpolate',
             ['linear'],
             ['zoom'],
             6,
-            [
-              'match',
-              ['get', 'class'],
-              'river',
-              2.0,
-              'canal',
-              1.5,
-              'stream',
-              0.8,
-              1.0
-            ],
+            ['match', ['get', 'class'], 'river', 1.6, 1.2],
             10,
-            [
-              'match',
-              ['get', 'class'],
-              'river',
-              5.0,
-              'canal',
-              3.6,
-              'stream',
-              1.6,
-              2.0
-            ],
-            14,
-            [
-              'match',
-              ['get', 'class'],
-              'river',
-              16.0,
-              'canal',
-              11.0,
-              'stream',
-              4.0,
-              5.0
-            ],
-            17,
-            [
-              'match',
-              ['get', 'class'],
-              'river',
-              30.0,
-              'canal',
-              20.0,
-              'stream',
-              7.0,
-              9.0
-            ],
+            ['match', ['get', 'class'], 'river', 3.2, 2.4],
           ],
-          lineOpacity: 0.8,
+          lineOpacity: 0.85,
           lineCap: 'round',
           lineJoin: 'round',
         ),
         sourceLayer: 'waterway',
         minzoom: 6,
+        // ★ 关键就是这一行：z11 起不再画粗线，河道只由浅蓝水面表达
+        maxzoom: 11,
         // 隧道段不画（会在地面拉出一条莫名其妙的蓝线）
         filter: [
-          '!=',
-          ['get', 'brunnel'],
-          'tunnel'
+          'all',
+          [
+            '!=',
+            ['get', 'brunnel'],
+            'tunnel'
+          ],
+          [
+            'any',
+            [
+              '==',
+              ['get', 'class'],
+              'river'
+            ],
+            [
+              '==',
+              ['get', 'class'],
+              'canal'
+            ],
+          ],
+        ],
+      );
+      await _safeLayer(
+        'hydro',
+        'hydro-river-line',
+        LineLayerProperties(
+          lineColor: '#4FAEE8',
+          lineWidth: _zNum([6, 0.55, 10, 0.75, 14, 1.2, 17, 1.8]),
+          lineOpacity: 0.85,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        sourceLayer: 'waterway',
+        minzoom: 6,
+        filter: [
+          'all',
+          [
+            '!=',
+            ['get', 'brunnel'],
+            'tunnel'
+          ],
+          [
+            'any',
+            [
+              '==',
+              ['get', 'class'],
+              'stream'
+            ],
+            [
+              '==',
+              ['get', 'class'],
+              'ditch'
+            ],
+            [
+              '==',
+              ['get', 'class'],
+              'drain'
+            ],
+          ],
         ],
       );
       // 湖泊 / 水库的图标标记（用户明确要求「水库池塘要有图标」）
@@ -853,8 +936,12 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           'rivers-line',
           LineLayerProperties(
             lineColor: '#3FA9F5',
-            lineWidth: _zNum([3, 1.4, 6, 3.0, 9, 6.5, 12, 16.0, 15, 30.0]),
-            lineOpacity: 0.8,
+            // ★ v2.1.22：宽度档整体收窄（原来 z12=16px / z15=30px，
+            //   是一根很粗的实心蓝带，和在线那层是同一个观感问题）。
+            //   本地这张表只是「离线兜底」，没有水面填充可依靠，
+            //   所以保留线，但让它看起来像河，而不是像一根色块。
+            lineWidth: _zNum([3, 1.4, 6, 2.4, 9, 3.8, 12, 5.4, 15, 7.5]),
+            lineOpacity: 0.85,
             lineCap: 'round',
             lineJoin: 'round',
           ),
@@ -1265,6 +1352,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   ///   之后再 `setLayerVisibility(true)` 也还是全透明，看起来就是「开关失灵」。
   ///   现在一律按「开」的样子建层，显隐只由 visibility 决定。
   Future<void> _applyLayerToggles() async {
+    // ★ sat-low 必须跟 sat 同开关，否则切到「路网」底图时
+    //   低清卫星层还铺在下面，从路网图的透明缝隙里透出来。
+    await _setVis('sat-low', _layers.satellite);
     await _setVis('sat', _layers.satellite);
     await _setVis('vec', !_layers.satellite);
     // 矢量路网图本身自带地名，再叠注记等于白跑一倍瓦片却看不出差别；
@@ -1304,7 +1394,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
 
     await _setVis('hydro-water', _layers.rivers && hydroOn);
     await _setVis('hydro-water-line', _layers.rivers && hydroOn);
-    // hydro-river-casing 已合并进 hydro-river-line（不再有深蓝描边层）
+    // hydro-river-casing 已合并掉（不再有深蓝描边层）
+    // v2.1.22：大河粗线（z6~10）+ 窄河细线（全缩放）分两个图层
+    await _setVis('hydro-river-major', _layers.rivers && hydroOn);
     await _setVis('hydro-river-line', _layers.rivers && hydroOn);
     // 水库 / 湖泊 / 池塘图标归「湖泊水库」开关（用户点的是这个）
     await _setVis('hydro-lake-icon', _layers.lakes && hydroOn);
@@ -1508,6 +1600,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
 
   void _moveTo(double lat, double lng) {
     _pendingMove = (lat: lat, lng: lng);
+    // 高清圈以定位点为心（±50km）。这一步必须在样式生成之前 ——
+    // raster source 的 bounds 不能原地改，晚到就只能等下次进页面。
+    _setHdCenter(lat, lng);
     // 宿主页定位成功也会走这条路径（controller 补发），
     // 顺手记下「我的位置」，好把蓝点画上 —— 否则镜头对了但看不到自己在哪
     if (_myLat != lat || _myLng != lng) {
@@ -2052,6 +2147,16 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
             ? MapLibreMap(
                 styleString: _stylePath ?? '',
                 initialCameraPosition: _initialCamera,
+                // ★★ 缩放上限必须等于瓦片源的真实最大级别（星图 18）。
+                //   不设的话原生默认允许到 22 级，而瓦片只到 18 级 ——
+                //   超过 18 之后 MapLibre **不会再请求任何新瓦片**，
+                //   只是把 18 级图放大 2 的 4 次方 = 16 倍，
+                //   表现就是你看到的「越放大越糊、而且一直在转圈不加载」。
+                //   压到 18 之后，镜头会停在"最后一级真图"上，永远是清晰的。
+                minMaxZoomPreference: MinMaxZoomPreference(
+                  3.0,
+                  _tile.maxNativeZoom.toDouble(),
+                ),
                 compassEnabled: false,
                 rotateGesturesEnabled: false,
                 tiltGesturesEnabled: false,
