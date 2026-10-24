@@ -160,6 +160,8 @@ Future<({List hits, Point<num> at, int onScreen})> _probeRiver(
 const List<String> _riverLayers = [
   'rivers-line',
   'hydro-river-line',
+  // v2.1.22：大河中心线单独成层，只在 z6~10 出现（z11 起交给 hydro-water）
+  'hydro-river-major',
   'hydro-water',
 ];
 
@@ -284,6 +286,7 @@ void main() {
       // 在线河网（OSM）：所有有名字的河流、水体面、水库池塘图标
       'hydro-water',
       'hydro-water-line',
+      'hydro-river-major',
       'hydro-river-line',
       'hydro-lake-icon',
       'hydro-pond-icon',
