@@ -22,6 +22,7 @@ import '../services/map_config_service.dart';
 import '../services/ai_spot_service.dart';
 import '../services/map_data_service.dart';
 import '../services/map_tile_source.dart';
+import '../services/api_config.dart';
 import '../services/geo_bounds.dart';
 import '../services/spot_service.dart';
 import '../widgets/spot_pin.dart';
@@ -326,17 +327,45 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
 
   // ---------------------------------------------------------------- 样式
 
+  /// 把瓦片 URL 改写成「后端代理」地址
+  ///
+  /// 老安卓（5.x）系统证书库缺现代根证书，原生 MapLibre 直连 HTTPS 瓦片源
+  /// 会 CERTIFICATE_VERIFY_FAILED → 整层空白。改走后端 HTTP 代理中转
+  /// （服务端现代 TLS 抓取后纯 HTTP 回传），双端取图链路一致、安卓也能出图。
+  ///
+  /// 关键点：内层 URL 的 {z}/{x}/{y} 占位符必须保留不编码，留给 MapLibre 替换；
+  /// 其余部分（协议/主机/路径前缀、query 串）整体编码进代理参数。
+  String _proxyWrap(String url) {
+    final base = ApiConfig.tileProxyBase; // …/api/index.php?r=/tile-proxy&url=
+    final open = url.indexOf('{');
+    if (open < 0) return '$base${Uri.encodeComponent(url)}';
+    final close = url.lastIndexOf('}');
+    final head = url.substring(0, open);
+    final mid = url.substring(open, close + 1); // {z}/{x}/{y}
+    final tail = url.substring(close + 1); // ?format=…&token=…（需编码）
+    return '$base${Uri.encodeComponent(head)}$mid${Uri.encodeComponent(tail)}';
+  }
+
   /// 把模板里的占位符替换成真实地址
   ///
   /// MapLibre 的 raster source **不支持 {s} 子域占位符**，
   /// 必须展开成 tiles1/2/3 三条 URL 交给原生层轮询。
+  ///
+  /// 每条直连地址都额外在前面放一条「后端代理」地址：优先走代理（修老安卓 +
+  /// 双端一致），代理不可用时回退直连（iOS / 现代安卓更快）。
   List<String> _urls(String tpl) {
     var s = tpl;
     _tile.additionalOptions.forEach((k, v) {
       s = s.replaceAll('{$k}', v);
     });
-    if (!s.contains('{s}')) return [s];
-    return ['1', '2', '3'].map((i) => s.replaceAll('{s}', i)).toList();
+    List<String> direct;
+    if (!s.contains('{s}')) {
+      direct = [s];
+    } else {
+      direct = ['1', '2', '3'].map((i) => s.replaceAll('{s}', i)).toList();
+    }
+    final proxied = direct.map(_proxyWrap).toList();
+    return [...proxied, ...direct];
   }
 
   // ------------------------------------------------------------ 高清范围
@@ -1244,6 +1273,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       final tiles = raw
           .map((e) => e.toString())
           .where((e) => e.contains('{z}') && e.contains('{x}'))
+          .map((e) => _proxyWrap(e)) // 在线河网也走代理（原生层直连 GTS R4 会失败）
           .toList();
       if (tiles.isEmpty) {
         debugPrint('[MAP] hydro tilejson 里没有 {z}/{x}/{y} 模板');
