@@ -4,6 +4,7 @@ import '../app_theme.dart';
 import '../models/my_order.dart';
 import '../services/shop_service.dart';
 import '../widgets/center_toast.dart';
+import 'mall_screen.dart';
 
 /// 我的订单：商城（积分兑换 / 现金登记）的完整订单中心
 ///
@@ -244,7 +245,13 @@ class _MyOrdersScreenState extends State<MyOrdersScreen>
               title: '还没有订单',
               body: '去商城看看，积分可以兑换实物装备',
               action: '去商城逛逛',
-              onAction: () => Navigator.of(context).pop(),
+              // ★ 这里原来只写了 Navigator.pop() —— 只把订单页关掉，人还停在
+              //   「我的」页面，看起来就是"点了没反应"。改成直接把订单页换成
+              //   商城页（pushReplacement）：从商城返回时回到「我的」，
+              //   不会再退回到一个空订单页。
+              onAction: () => Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (_) => const MallScreen()),
+              ),
             ),
           ],
         ),
