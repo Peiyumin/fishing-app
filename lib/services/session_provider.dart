@@ -37,6 +37,17 @@ class SessionProvider extends ChangeNotifier {
 
   bool get isLoggedIn => _token != null;
   String? get userId => _userId;
+
+  /// 当前登录用户是否为有效会员（等级 > 0 且未过期）
+  bool get isMember {
+    if (_vipLevel <= 0) return false;
+    if (_vipExpire.isEmpty) return true;
+    try {
+      return DateTime.parse(_vipExpire).isAfter(DateTime.now());
+    } catch (_) {
+      return true;
+    }
+  }
   String? get nickname => _nickname;
   String? get avatar => _avatar;
   String? get bio => _bio;
