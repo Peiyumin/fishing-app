@@ -578,7 +578,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           'lakes',
           'lakes-fill',
           const FillLayerProperties(
-              fillColor: '#2E9BF0',
+              fillColor: '#2E8FD0',
               // ★ 不再把传 opacity 设成 0 —— 见 _applyLayerToggles 注释
               fillOpacity: 0.45),
           minzoom: 3);
@@ -590,16 +590,18 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           minzoom: 3);
 
       // ---------------- 河流：双层水面带 ----------------
-      // 深蓝描边在下、亮蓝芯在上，合成「一条有边界的水面」，
-      // 也就是参考图里那种河道渲染色；单根半透明细线在卫星图上基本看不见。
+      // 深蓝描边在下、亮蓝芯在上，合成「一条有边界的水面」。
+      // 宽度按「真实大河在中倍视野下的视觉宽度」定：z12 时约 1px≈24m，
+      // 长江/黄河一类河道几百米到两公里，屏幕上就该是 15~30px 的一条带，
+      // 而不是旧版那根 4.5px 的半透明细线（在卫星影像上根本看不见）。
       await _safeSource('rivers', _fc(_riverFeatures()));
       await _safeLayer(
           'rivers',
           'rivers-casing',
           LineLayerProperties(
             lineColor: '#0B4FA8',
-            lineWidth: _zNum([3, 1.2, 6, 2.4, 9, 5.0, 12, 10.5, 15, 18.0]),
-            lineOpacity: 0.95,
+            lineWidth: _zNum([3, 1.4, 6, 3.0, 9, 6.5, 12, 16.0, 15, 30.0]),
+            lineOpacity: 0.9,
             lineCap: 'round',
             lineJoin: 'round',
           ),
@@ -608,9 +610,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           'rivers',
           'rivers-line',
           LineLayerProperties(
-            lineColor: '#3FA9F5',
-            lineWidth: _zNum([3, 0.9, 6, 1.6, 9, 3.6, 12, 8.0, 15, 14.0]),
-            lineOpacity: 0.95,
+            lineColor: '#2E8FD0',
+            lineWidth: _zNum([3, 1.0, 6, 2.2, 9, 4.8, 12, 12.0, 15, 24.0]),
+            lineOpacity: 0.92,
             lineCap: 'round',
             lineJoin: 'round',
           ),
