@@ -3,21 +3,27 @@ class NearbyAngler {
   final String userId;
   final String nickname;
   final String avatar;
+  final String bio; // 个人签名
   final int vipLevel;
   final int level;
   final int distance; // 米
   final double distanceKm;
   final String geoAt;
+  final bool followed; // 我是否已关注对方（后端返回）
+  final bool member; // 对方是否为会员
 
   const NearbyAngler({
     required this.userId,
     this.nickname = '',
     this.avatar = '',
+    this.bio = '',
     this.vipLevel = 0,
     this.level = 1,
     this.distance = 0,
     this.distanceKm = 0,
     this.geoAt = '',
+    this.followed = false,
+    this.member = false,
   });
 
   String get distanceText {
@@ -33,10 +39,13 @@ class NearbyAngler {
         userId: (j['userId'] ?? '').toString(),
         nickname: (j['nickname'] ?? '').toString(),
         avatar: (j['avatar'] ?? '').toString(),
+        bio: (j['bio'] ?? '').toString(),
         vipLevel: (j['vipLevel'] as num?)?.toInt() ?? 0,
         level: (j['level'] as num?)?.toInt() ?? 1,
         distance: (j['distance'] as num?)?.toInt() ?? 0,
         distanceKm: (j['distanceKm'] as num?)?.toDouble() ?? 0,
         geoAt: (j['geoAt'] ?? '').toString(),
+        followed: (j['followed'] as bool?) ?? false,
+        member: (j['member'] as bool?) ?? false,
       );
 }
