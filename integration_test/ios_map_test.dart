@@ -266,6 +266,7 @@ void main() {
       'hydro-river-casing',
       'hydro-river-line',
       'hydro-lake-icon',
+      'hydro-pond-icon',
       // 本地兜底数据
       'lakes-fill',
       'lakes-line',
