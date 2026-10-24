@@ -182,12 +182,17 @@ class _PostCardState extends State<PostCard> {
       final ratio = _aspectOf(urls.first).clamp(0.6, 2.0);
       const h = 112.0;
       final w = (h * ratio).clamp(96.0, width * 0.62);
-      return ClipRoundedRectangle(
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: SizedBox(
-            width: w,
-            height: h,
+      // ★ 圆角框必须**贴着图片**，不能包在外面那层 Align 上。
+      //   包在 Align 上时裁剪区域 = 整行宽度（图片只占左边一段），
+      //   于是只有贴着左上/左下角的两个角被裁圆，右边两个角是直角 ——
+      //   这就是用户截图里「一边有圆角一边没有」。
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: SizedBox(
+          width: w,
+          height: h,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(ClipRoundedRectangle.radius),
             child: _image(urls.first, width: w, height: h, fit: BoxFit.cover),
           ),
         ),
@@ -591,12 +596,18 @@ class _PostCardState extends State<PostCard> {
 }
 
 /// 圆角裁剪小工具
+///
+/// 圆角只做「一点点」：信息流里的缩略图本来就小，10px 已经显得像药丸，
+/// 6px 跟卡片、图片按钮的圆角是一个层级。
 class ClipRoundedRectangle extends StatelessWidget {
+  /// 统一圆角半径，单图和九宫格共用，避免两者看起来不是一套组件
+  static const double radius = 6;
+
   final Widget child;
   const ClipRoundedRectangle({super.key, required this.child});
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(borderRadius: BorderRadius.circular(10), child: child);
+    return ClipRRect(borderRadius: BorderRadius.circular(radius), child: child);
   }
 }
