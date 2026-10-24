@@ -146,6 +146,7 @@ class PostService {
     int offset = 0,
     String? tab,
     String? city,
+    String? keyword,
   }) async {
     if (_demo) {
       await Future.delayed(const Duration(milliseconds: 300));
@@ -177,6 +178,8 @@ class PostService {
         'size': '$limit',
         if (tab != null) 'tab': tab,
         if (city != null && city.isNotEmpty) 'city': city,
+        // 后端 /posts 支持 keyword：按 标题 / 正文 模糊匹配
+        if (keyword != null && keyword.isNotEmpty) 'keyword': keyword,
       }) as List;
       var list = data.map((row) => _fromApi(row as Map)).toList();
       // 本地兜底过滤：老后端（未部署 Phase G）会忽略 tab/city 参数返回全量，
