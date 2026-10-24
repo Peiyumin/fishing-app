@@ -304,6 +304,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
     final day = b.days[dayIdx];
     final dayHours = b.hoursOf(day.date);
 
+    // 「现在」那一行的高亮，与顶部卡同一个下标（见 _currentHourIndex）
+    final nowIdx = _currentHourIndex(b);
+
     final rows = <_HourRow>[];
     for (final h in dayHours) {
       final i = idxOf[h.time] ?? -1;
@@ -372,10 +375,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
         ),
         _HourTable(
           rows: rows,
-          // ★ 与顶部「当前」卡片同一口径：高亮 bundle 锚定的整点，
-          //   而不是 DateTime.now().hour —— 否则卡片写 18:00、表里却亮 19:00
-          nowHour: dayIdx == 0
-              ? (b.curHour?.hour ?? DateTime.now().hour)
+          // ★ 与顶部「当前」卡片同一口径：高亮「真·当前整点」那一行
+          nowHour: dayIdx == 0 && nowIdx >= 0
+              ? b.hours[nowIdx].time.hour
               : null,
           mode: mode,
           lat: _lat,
@@ -960,6 +962,31 @@ class _LocationBar extends StatelessWidget {
 // ============================================================
 // 当前实况卡（顶部显示当前时间天气）
 // ============================================================
+/// 「当前时段」的唯一口径（v2.1.21）
+///
+/// ★★ 必须用「绝对时间上离现在最近的那个整点」，**不能锚 bundle.curHour**。
+///
+///   上一版（v2.1.20）为了修「首页 14:00 / 天气页 15:00」，把这里锚成了
+///   `bundle.curHour` —— 那是**拉数据那一刻**的整点。问题在于 bundle 会被缓存：
+///   18:20 拉到的包，20:40 打开天气页时仍锚在 18:00，而首页卡用的是
+///   `DateTime.now()`（20:00）。于是两边又对不上了，而且这次更糟 ——
+///   天气页显示的是两小时前的气温/湿度/风，垂钓指数也是按 18:00 算的。
+///   用户看到的就是「首页准、天气页的当前时间不准，风力和湿度也对不上」。
+///
+///   逐时序列本身覆盖 7 天，任何时刻都能取到"现在"那个整点，所以锚回真·当前
+///   小时既不会越界，也不会出现"标签写 20:00、数据是 18:00"的错位。
+///   首页 `FishingWeather.fromBundle` 用的就是 indexOfHourNear(now)，两处同源。
+int _currentHourIndex(WeatherBundle b) {
+  // ★ 用 indexOfCurrentHour（20:35 → 20:00），不是 indexOfHourNear
+  //   （那个在 20:30 之后会跳到 21:00，一个还没到的时段）。
+  final i = b.indexOfCurrentHour(DateTime.now());
+  if (i >= 0) return i;
+  // 兜底：逐时序列缺失时才退回 bundle 自带的整点
+  final cur = b.curHour;
+  if (cur == null) return -1;
+  return b.hours.indexWhere((x) => x.time == cur);
+}
+
 class _NowCard extends StatelessWidget {
   final WeatherBundle bundle;
   final List<WaterMetrics> metrics;
@@ -983,24 +1010,34 @@ class _NowCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 取与当前时刻最近的一小时，作为水温/水氧与评分的依据
-    // ★ 时段统一（v2.1.20）：必须以 bundle 自己的「当前整点」为锚，
-    //   不能再用 DateTime.now() 重新算最近的整点 ——
-    //   bundle 是 18:20 拉的（curHour=18:00），页面在 18:40 渲染时重新算会得到
-    //   19:00，但温度/湿度/气压仍是 18:00 的值，于是出现「标签写 19:00、
-    //   数据是 18:00」的错位，用户对比首页卡（18:00）就发现两边不一样。
+    // ★ 时段统一（v2.1.21）：见 _currentHourIndex 的注释 —— 必须锚"真·当前整点"，
+    //   不能锚 bundle.curHour（那是拉包时刻，缓存后就会落后一两个小时）。
     final now = DateTime.now();
-    var best = -1;
-    final cur = bundle.curHour;
-    if (cur != null) {
-      best = bundle.hours.indexWhere((x) => x.time == cur);
-    }
-    if (best < 0) best = bundle.indexOfHourNear(now);
-    final h = best >= 0 ? bundle.hours[best] : null;
-    final w = best >= 0 ? metrics[best] : WaterMetrics(bundle.curTemp, 7.0);
+    final best = _currentHourIndex(bundle);
+    final h = best >= 0 && best < bundle.hours.length
+        ? bundle.hours[best]
+        : null;
+    final w = best >= 0 && best < metrics.length
+        ? metrics[best]
+        : WaterMetrics(bundle.curTemp, 7.0);
     final prev = best > 0 ? bundle.hours[best - 1] : null;
     final isSea = mode.name == '海钓';
     // 海钓：用当前定位 + 时间估算潮汐（潮高 / 涨退），替换水氧指标
     final tide = isSea ? TideService.at(lat, lng, h?.time ?? now) : null;
+    // ★★ 一次性把这几个「当前」值全部落到上面选中的那一小时 h 上（v2.1.21）
+    //
+    //   之前是"半新半旧"：时间标签用的是 h.hhmm，但温度、天气代码、气压、
+    //   风速风向全都在用 bundle.curTemp / curCode / curPressure / curWindSpeed ——
+    //   那是**拉包那一刻**的值。于是缓存一过整点，卡上就会出现「20:00 的标题 +
+    //   18:00 的温度/风力」，用户看到的正是"当前时间段不准、风力和湿度对不上"。
+    //   现在统一取 h，h 缺失时才回退到 bundle 自带值。
+    final temp = h?.temp ?? bundle.curTemp;
+    final code = h?.weatherCode ?? bundle.curCode;
+    final pres = h?.pressure ?? bundle.curPressure;
+    final wind = h?.windSpeed ?? bundle.curWindSpeed;
+    final windDir = h?.windDir ?? bundle.curWindDir;
+    final hum = h?.humidity ?? bundle.curHumidity;
+
     final score = h == null
         ? (FishScore.computeRaw(
             method: mode.name,
@@ -1018,9 +1055,7 @@ class _NowCard extends StatelessWidget {
             50)
         : Bite.score(h: h, w: w, sp: sp, mode: mode);
 
-    final pres = bundle.curPressure;
     final pDelta = prev == null ? 0.0 : pres - prev.pressure;
-    final wind = bundle.curWindSpeed;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12),
@@ -1034,8 +1069,8 @@ class _NowCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Wmo.icon(bundle.curCode, day: !isNight),
-                  size: 38, color: Wmo.color(bundle.curCode, day: !isNight)),
+              Icon(Wmo.icon(code, day: !isNight),
+                  size: 38, color: Wmo.color(code, day: !isNight)),
               const SizedBox(width: 10),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1044,7 +1079,7 @@ class _NowCard extends StatelessWidget {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text(bundle.curTemp.toStringAsFixed(1),
+                      Text(temp.toStringAsFixed(1),
                           style: const TextStyle(
                               color: _Pal.txt,
                               fontSize: 26,
@@ -1062,8 +1097,8 @@ class _NowCard extends StatelessWidget {
                   // 用户对照下面逐时表就能核对上（表里这一行也会高亮成「现在」）
                   Text(
                       h == null
-                          ? '当前 · ${Wmo.text(bundle.curCode)}'
-                          : '${h.hhmm} · ${Wmo.text(bundle.curCode)}',
+                          ? '当前 · ${Wmo.text(code)}'
+                          : '${h.hhmm} · ${Wmo.text(code)}',
                       style: const TextStyle(color: _Pal.muted, fontSize: 11)),
                 ],
               ),
@@ -1091,11 +1126,20 @@ class _NowCard extends StatelessWidget {
                             fontSize: 9.5,
                             fontWeight: FontWeight.w600)),
                   ),
+                  const SizedBox(height: 3),
+                  // 指数口径：同一小时、不同目标鱼/钓法分数本来就不同。
+                  // 标出来，用户才不会拿首页（固定鲫鱼·台钓）比出"数据错了"的错觉。
+                  Text('${sp.name} · ${mode.name}',
+                      style:
+                          const TextStyle(color: _Pal.muted, fontSize: 8.5)),
                 ],
               ),
             ],
           ),
           const SizedBox(height: 12),
+          // 第一行：和首页「实时天气」卡**同字段、同单位**（气压 / 风 / 湿度）
+          //   ★ 之前这里只有「气压 / 风(只写几级) / 水温 / 水氧」，没有湿度、
+          //     风也没有具体风速 —— 用户拿首页卡过来对照，自然会觉得"少了东西"。
           Row(
             children: [
               _Stat(
@@ -1104,9 +1148,20 @@ class _NowCard extends StatelessWidget {
                 extra: _trendText(pDelta, fontSize: 9),
               ),
               _Stat(
-                label: '风',
-                value: '${windDirText(bundle.curWindDir)} ${_beaufort(wind)}级',
+                label:
+                    '风 · ${windDirText(windDir)}${_beaufort(wind)}级',
+                value: '${wind.toStringAsFixed(0)}km/h',
               ),
+              _Stat(
+                label: '湿度 (%)',
+                value: '$hum',
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // 第二行：钓鱼专用指标（水温 + 水氧 / 海钓潮汐）
+          Row(
+            children: [
               _Stat(label: '水温', value: '${w.temp.toStringAsFixed(1)}℃'),
               if (isSea)
                 _Stat(label: '潮汐记录', value: tide!.display)
