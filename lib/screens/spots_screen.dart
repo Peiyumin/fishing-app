@@ -40,6 +40,7 @@ class _SpotsScreenState extends State<SpotsScreen>
   List<FishingSpot> _wild = []; // 野钓点（kind=wild）
   bool _loading = true;
   bool _locating = false; // 正在定位（按钮转圈，避免「点了没反应」的错觉）
+  bool _refreshing = false; // 正在手动刷新钓点（刷新按钮转圈）
   final List<String> _types = ['全部', '黑坑', '路亚', '野钓场', '海钓', '渔具店'];
   late String _type =
       _types.contains(widget.initialType) ? widget.initialType : '全部';
@@ -72,15 +73,45 @@ class _SpotsScreenState extends State<SpotsScreen>
     super.dispose();
   }
 
-  Future<void> _load() async {
-    final spots = await SpotService.fetchSpots();
-    if (!mounted) return;
-    setState(() {
-      _venues = spots.where((s) => s.kind == 'venue').toList();
-      _shops = spots.where((s) => s.kind == 'shop').toList();
-      _wild = spots.where((s) => s.kind == 'wild').toList();
-      _loading = false;
-    });
+  /// 拉钓点数据
+  ///
+  /// [feedback] = true 只给「用户手动点刷新」用：按钮转圈 + 结果 toast。
+  ///
+  /// ★★ 「刷新按钮点了没反应」的真因（不是点击没接上）：
+  ///   ① 数据没变化时，界面本来就不会有任何变化 —— 钓点数一样、地图上的点
+  ///      也一样，肉眼无从判断"到底刷没刷"；
+  ///   ② 整条链路（按钮 → 请求 → setState）全程没有任何 loading 或提示。
+  ///   两件事叠在一起，手感就等于"按钮坏了"。所以现在：按下立刻转圈、
+  ///   回来弹一句结果，哪怕一个点都没变，也能确认它真的跑了。
+  Future<void> _load({bool feedback = false}) async {
+    if (feedback && mounted) setState(() => _refreshing = true);
+    try {
+      final spots = await SpotService.fetchSpots();
+      if (!mounted) return;
+      final wild = spots.where((s) => s.kind == 'wild').toList();
+      setState(() {
+        _venues = spots.where((s) => s.kind == 'venue').toList();
+        _shops = spots.where((s) => s.kind == 'shop').toList();
+        _wild = wild;
+        _loading = false;
+      });
+      if (feedback && mounted) {
+        CenterToast.show(
+          context,
+          wild.isEmpty
+              ? '已刷新，暂时还没有钓友共享的钓点'
+              : '已刷新 · 共 ${wild.length} 个野钓钓点',
+          icon: Icons.refresh,
+        );
+      }
+    } catch (e) {
+      if (feedback && mounted) {
+        CenterToast.show(context, '刷新失败：$e',
+            icon: Icons.cloud_off_outlined);
+      }
+    } finally {
+      if (mounted && feedback) setState(() => _refreshing = false);
+    }
   }
 
   /// 获取当前位置（仅用于距离展示与地图居中）
@@ -478,22 +509,40 @@ class _SpotsScreenState extends State<SpotsScreen>
   }
 
   /// 竖排条里的「图标 + 中文」按钮
+  /// 竖排信息条里的小按钮
+  ///
+  /// ★ 外面必须包一层 `Material(type: transparency)`：父级 Container 有不透明
+  ///   底色，水波纹是画在**祖先 Material 上**的，会被这层底色整个盖住 ——
+  ///   于是按下去毫无反馈，看起来就像"按钮没反应"。包一层透明 Material 后，
+  ///   水波纹画在这层底色之上，点下去立刻有色块扩散。
   Widget _vAction(IconData icon, String label, Color color,
-      {required VoidCallback onTap}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 17, color: color),
-            const SizedBox(height: 2),
-            Text(label,
-                style: TextStyle(
-                    fontSize: 10.5, height: 1.1, color: color)),
-          ],
+      {required VoidCallback onTap, bool busy = false}) {
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: busy ? null : onTap,
+        borderRadius: BorderRadius.circular(8),
+        splashColor: color.withOpacity(0.14),
+        highlightColor: color.withOpacity(0.07),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (busy)
+                SizedBox(
+                  width: 17,
+                  height: 17,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: color),
+                )
+              else
+                Icon(icon, size: 17, color: color),
+              const SizedBox(height: 2),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 10.5, height: 1.1, color: color)),
+            ],
+          ),
         ),
       ),
     );
@@ -560,9 +609,10 @@ class _SpotsScreenState extends State<SpotsScreen>
                 const SizedBox(height: 8),
                 Container(width: 22, height: 1, color: const Color(0x14000000)),
                 const SizedBox(height: 8),
-                // 刷新（图标 + 中文）
+                // 刷新（图标 + 中文）：按下即转圈，回来弹「共 N 个」
                 _vAction(Icons.refresh, '刷新', AppTheme.textSecondary,
-                    onTap: _load),
+                    busy: _refreshing,
+                    onTap: () => _load(feedback: true)),
                 const SizedBox(height: 10),
                 // 标记（图标 + 中文，主入口）
                 _vAction(Icons.add_location_alt, '标记', AppTheme.danger,
@@ -571,25 +621,8 @@ class _SpotsScreenState extends State<SpotsScreen>
             ),
           ),
         ),
-        // 我的位置（右侧，避开底部 AI 胶囊）
-        Positioned(
-          right: 12,
-          bottom: 74,
-          child: FloatingActionButton.small(
-            heroTag: 'spots_locate',
-            backgroundColor: Colors.white,
-            foregroundColor: AppTheme.accent,
-            tooltip: '我的位置',
-            onPressed: () => _locate(),
-            child: _locating
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.my_location),
-          ),
-        ),
+        // ★ 右下角「我的位置」悬浮按钮已删除（用户反馈挡住地图、且与地图
+        //   右上角工具条里的「定位」圆按钮重复）。重新定位请点右上角「定位」。
       ],
     );
   }
