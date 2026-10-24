@@ -285,7 +285,6 @@ void main() {
       // 在线河网（OSM）：所有有名字的河流、水体面、水库池塘图标
       'hydro-water',
       'hydro-water-line',
-      'hydro-river-casing',
       'hydro-river-line',
       'hydro-lake-icon',
       'hydro-pond-icon',
