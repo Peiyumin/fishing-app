@@ -1344,10 +1344,13 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     final zt = ((_zoom - 3) / 13).clamp(0.0, 1.0);
     return _waters.where((w) => w.isRiver).map((w) {
       final pts = _tile.projectAll(w.geometry);
-      final base = w.level <= 1 ? 24.0 : 15.0;
+      // ★ v2.1.22：宽度档整体收窄（原来 base 24/15 在 z15 时约 29px，
+      //   就是用户说的「很粗的蓝色」）。这个内核是离线兜底、没有水面填充，
+      //   所以线要比原生那层略粗一点，但不能粗成色块。
+      final base = w.level <= 1 ? 9.0 : 6.0;
       return Polyline(
         points: pts,
-        strokeWidth: base * (0.35 + 0.85 * zt),
+        strokeWidth: base * (0.45 + 0.75 * zt),
         color: const Color(0xCC3FA9F5),
       );
     }).toList();
