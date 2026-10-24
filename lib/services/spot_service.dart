@@ -32,20 +32,33 @@ class SpotService {
   ];
 
   /// 返回全部钓点（演示模式会把报错数合并进对象）
-  static Future<List<FishingSpot>> fetchSpots() async {
+  static Future<List<FishingSpot>> fetchSpots({String keyword = ''}) async {
     if (!ApiConfig.enabled) {
       await Future.delayed(const Duration(milliseconds: 200));
-      final all = [..._userSpots, ...demoSpots];
+      var all = [..._userSpots, ...demoSpots];
+      if (keyword.isNotEmpty) {
+        all = all
+            .where((s) =>
+                s.name.contains(keyword) ||
+                s.address.contains(keyword) ||
+                s.description.contains(keyword))
+            .toList();
+      }
       return all
           .map((s) => s.copyWith(reportCount: _reportCounts[s.id] ?? 0))
           .toList();
     }
     try {
-      final data = await ApiClient.get('/spots') as List;
+      // 后端 /spots 支持 keyword：按 名称 / 简介 / 地址 模糊匹配
+      final data = await ApiClient.get('/spots',
+          keyword.isEmpty ? null : {'keyword': keyword}) as List;
       return data.map((row) => _fromApi(row as Map)).toList();
     } catch (_) {
       // 后端不可达：回落演示数据
-      final all = [..._userSpots, ...demoSpots];
+      var all = [..._userSpots, ...demoSpots];
+      if (keyword.isNotEmpty) {
+        all = all.where((s) => s.name.contains(keyword)).toList();
+      }
       return all
           .map((s) => s.copyWith(reportCount: _reportCounts[s.id] ?? 0))
           .toList();
