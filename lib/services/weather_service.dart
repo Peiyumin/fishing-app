@@ -216,6 +216,13 @@ class FishingWeather {
   final String fishIndex; // 爆护 / 有口 / 口弱 / 难开口
   final String fishAdvice; // 一句话建议
 
+  /// 垂钓指数（0-100）：与天气页同一个引擎（Bite.score）、同一小时算出来，
+  /// 首页直接显示这个数，不再自己另算一套，否则两页分数会互相打脸。
+  final int score;
+
+  /// 这组数据对应的整点，如 "13:00"；为空表示没有逐时数据
+  final String atLabel;
+
   const FishingWeather({
     required this.temperature,
     required this.humidity,
@@ -225,44 +232,62 @@ class FishingWeather {
     required this.description,
     required this.fishIndex,
     required this.fishAdvice,
+    this.score = 50,
+    this.atLabel = '',
   });
 
-  /// 由完整天气包构造：鱼情结论走与天气页完全相同的多维引擎，
-  /// 避免首页说「极佳」、天气页说「口弱」的两套口径。
+  /// 由完整天气包构造。
+  ///
+  /// ★ 时段统一（v2.1.19）：这里的气温 / 湿度 / 风 / 气压 / 天气现象 /
+  ///   垂钓指数，全部取自「与现在绝对时间最近的那一个整点」，
+  ///   和天气页顶部卡、逐时表里标「现在」的那一行是同一组数字。
   factory FishingWeather.fromBundle(WeatherBundle b) {
-    final hour = DateTime.now().hour;
-    final waterTemp = (b.curTemp * 0.8 + 4).clamp(2.0, 32.0);
-    final doSat = 14.652 -
-        0.41022 * waterTemp +
-        0.007991 * waterTemp * waterTemp -
-        0.000077774 * waterTemp * waterTemp * waterTemp;
-    final est = FishScore.computeRaw(
-      method: '台钓',
-      airTemp: b.curTemp,
-      pressure: b.curPressure,
-      windMs: b.curWindSpeed / 3.6,
-      waterTemp: waterTemp,
-      dissolvedOxygen: (doSat * 0.78).clamp(2.0, 14.0),
-      weatherCode: b.curCode,
-      precipProb: b.curPrecipProb,
-      hour: hour,
-      dayRange: b.today.tempRange,
-      sp: FishingSpecies.all.first, // 默认目标鱼：鲫鱼
-    );
+    final now = DateTime.now();
+    final i = b.indexOfHourNear(now);
+    final h = i >= 0 ? b.hours[i] : null;
+    // 与天气页同源的水温/水氧（热惯性模型），保证两页指数可对齐
+    final metrics = WaterMetrics.derive(b.hours);
+    final w = i >= 0 && i < metrics.length
+        ? metrics[i]
+        : WaterMetrics((b.curTemp * 0.8 + 4).clamp(2.0, 32.0), 7.0);
+
+    final mode = FishingMode.all.first;
+    final sp = FishingSpecies.all.first; // 默认目标鱼：鲫鱼
+
+    final est = h != null
+        ? Bite.compute(h: h, w: w, sp: sp, mode: mode)
+        : FishScore.computeRaw(
+            method: mode.name,
+            airTemp: b.curTemp,
+            pressure: b.curPressure,
+            windMs: b.curWindSpeed / 3.6,
+            waterTemp: w.temp,
+            dissolvedOxygen: w.oxygen,
+            weatherCode: b.curCode,
+            precipProb: b.curPrecipProb,
+            hour: now.hour,
+            dayRange: b.today.tempRange,
+            sp: sp,
+          );
     final score = est.indexScore ?? 50;
+
     return FishingWeather(
-      temperature: b.curTemp,
-      humidity: b.curHumidity,
-      windSpeed: b.curWindSpeed,
-      pressure: b.curPressure,
-      weatherCode: b.curCode,
-      description: FishingWeather._wmoText(b.curCode),
-      fishIndex: est.grade,
+      temperature: h?.temp ?? b.curTemp,
+      humidity: h?.humidity ?? b.curHumidity,
+      windSpeed: h?.windSpeed ?? b.curWindSpeed,
+      pressure: h?.pressure ?? b.curPressure,
+      weatherCode: h?.weatherCode ?? b.curCode,
+      description: FishingWeather._wmoText(h?.weatherCode ?? b.curCode),
+      fishIndex: Bite.label(score),
       fishAdvice: score >= 80
           ? '${est.positives.isEmpty ? '条件不错' : est.positives.first}，可以出钓'
           : (score >= 45
               ? '${est.negatives.isEmpty ? '条件一般' : est.negatives.first}，放低预期主攻早晚'
               : '${est.negatives.isEmpty ? '条件较差' : est.negatives.first}，建议改期'),
+      score: score,
+      atLabel: h == null
+          ? ''
+          : '${h.time.hour.toString().padLeft(2, '0')}:00',
     );
   }
 
@@ -275,6 +300,8 @@ class FishingWeather {
         'd': description,
         'fi': fishIndex,
         'fa': fishAdvice,
+        'sc': score,
+        'al': atLabel,
       };
 
   factory FishingWeather.fromJson(Map<String, dynamic> m) => FishingWeather(
@@ -286,6 +313,8 @@ class FishingWeather {
         description: (m['d'] ?? '').toString(),
         fishIndex: (m['fi'] ?? '').toString(),
         fishAdvice: (m['fa'] ?? '').toString(),
+        score: (m['sc'] as num?)?.round() ?? 50,
+        atLabel: (m['al'] ?? '').toString(),
       );
 
   // WMO 天气代码 → 中文描述
