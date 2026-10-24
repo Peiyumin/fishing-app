@@ -1008,6 +1008,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       }
       await _drawMe();
       _updateScale();
+      // 图层一建好就先探一次，不等 camera idle ——
+      // 有些场景（测试、冷启动后镜头本来就没动）根本不会触发 idle 事件
+      unawaited(_probeHydro());
       // 集成测试：图层全部加完后回调一次，断言 6 个图层真的存在
       SpotMapGlScreen.debugOnLayersReady?.call(c);
     } catch (_) {
@@ -1204,22 +1207,37 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     if (_hydroReady) return;
     final c = _map;
     if (c == null) return;
+    // 高德底图是加偏坐标，在线图层本来就不开，不用探
+    if (_tile.isGcj02) return;
     try {
-      final feats =
+      // waterway 是河流中心线；某些视野只有湖没有河，补问 water
+      final ways =
           await c.querySourceFeatures('hydro', 'waterway', null);
-      if (feats.isNotEmpty) {
-        _hydroReady = true;
-        _hydroProbe = 0;
-        await _applyLayerToggles();
+      if (ways.isNotEmpty) {
+        _markHydroReady();
+        return;
+      }
+      final water = await c.querySourceFeatures('hydro', 'water', null);
+      if (water.isNotEmpty) {
+        _markHydroReady();
         return;
       }
     } catch (_) {}
-    if (_hydroProbe < 5 && mounted) {
+    // 瓦片可能还没下完：1.2 秒后再问，最多 20 次（约 24 秒）
+    if (_hydroProbe < 20 && mounted) {
       _hydroProbe++;
       Future.delayed(const Duration(milliseconds: 1200), () {
         if (mounted) _probeHydro();
       });
     }
+  }
+
+  void _markHydroReady() {
+    if (_hydroReady) return;
+    _hydroReady = true;
+    _hydroProbe = 0;
+    debugPrint('[MAP] hydro 在线瓦片确认可用，本地兜底退场');
+    unawaited(_applyLayerToggles());
   }
 
   Future<Uint8List?> _buildPinIcon() async {
@@ -1287,15 +1305,27 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     //
     // 高德底图是 GCJ-02 加偏坐标，矢量瓦片没法逐要素纠偏（会整体偏
     // 300~500 米），这种情况只能用本地数据（本地坐标走 _tile.project 纠偏）。
-    final hydro = _hydroReady && !_tile.isGcj02;
+    // ★ 在线图层只看「用户开关」，**不能再 && _hydroReady**
+    //
+    //   踩过的坑：一开始写成 `_layers.rivers && _hydroReady`，于是探针
+    //   还没确认有数据时先把图层设成 visibility=none —— 而 MapLibre
+    //   **不会为全隐源的源请求瓦片**，瓦片永远不来，querySourceFeatures
+    //   永远 0，_hydroReady 永远是 false，图层永远隐藏，形成死锁。
+    //   表现就是同一份代码在两轮 CI 里一次 68 条要素、一次 0 条（谁先跑）。
+    //   现在：源在、瓦片到就画；画不出来时图层是空的不影响观感，
+    //   本地兜底图层（rivers-*/lakes-*）继续顶住大江大河。
+    final hydroOn = !_tile.isGcj02;
 
-    await _setVis('hydro-water', _layers.rivers && hydro);
-    await _setVis('hydro-water-line', _layers.rivers && hydro);
-    await _setVis('hydro-river-casing', _layers.rivers && hydro);
-    await _setVis('hydro-river-line', _layers.rivers && hydro);
+    await _setVis('hydro-water', _layers.rivers && hydroOn);
+    await _setVis('hydro-water-line', _layers.rivers && hydroOn);
+    await _setVis('hydro-river-casing', _layers.rivers && hydroOn);
+    await _setVis('hydro-river-line', _layers.rivers && hydroOn);
     // 水库 / 湖泊 / 池塘图标归「湖泊水库」开关（用户点的是这个）
-    await _setVis('hydro-lake-icon', _layers.lakes && hydro);
-    await _setVis('hydro-pond-icon', _layers.lakes && hydro);
+    await _setVis('hydro-lake-icon', _layers.lakes && hydroOn);
+    await _setVis('hydro-pond-icon', _layers.lakes && hydroOn);
+
+    // 本地数据是兜底：在线瓦片确认可用后就退场，避免长江被画两遍（重影）
+    final hydro = _hydroReady && !_tile.isGcj02;
 
     await _setVis('lakes-fill', _layers.lakes && !hydro);
     await _setVis('lakes-line', _layers.lakes && !hydro);
