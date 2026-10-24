@@ -15,6 +15,12 @@ class ApiConfig {
   /// 后端是否可用（决定走真实接口还是演示模式）
   static bool get enabled => baseUrl.isNotEmpty && !baseUrl.contains('PLACEHOLDER');
 
+  /// 地图瓦片代理前缀（老安卓缺失现代根证书，原生 MapLibre 直连 HTTPS 瓦片会
+  /// CERTIFICATE_VERIFY_FAILED；改走后端 HTTP 代理中转，双端取图链路一致）。
+  /// 用法：tileProxyBase + Uri.encodeComponent(内层瓦片URL)，内层 URL 里的
+  /// {z}/{x}/{y} 占位符保留不编码，交给 MapLibre 替换。
+  static String get tileProxyBase => '$baseUrl/index.php?r=/tile-proxy&url=';
+
   /// 站点根地址：去掉 /api 后缀，保留 协议+主机+端口
   /// 例：http://106.54.193.199:8801
   static String get origin {
