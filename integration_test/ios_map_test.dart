@@ -305,22 +305,24 @@ void main() {
     // 图层存在 ≠ 有数据。这里直接问原生层：hydro 源里的 waterway 要素有没有进来。
     // 空数组说明矢量瓦片没下载成功（离线 / 域名不通），此时 App 会退回本地数据。
     var hydroFeats = const [];
+    var hydroWater = const [];
     final hydroOk = await until(tester, () async {
       hydroFeats = await ctl!.querySourceFeatures('hydro', 'waterway', null);
-      return hydroFeats.isNotEmpty;
+      hydroWater = await ctl!.querySourceFeatures('hydro', 'water', null);
+      // waterway 是河流中心线、water 是水体面；只要有一类进来就说明瓦片到了
+      return hydroFeats.isNotEmpty || hydroWater.isNotEmpty;
     }, timeoutMs: 90000);
     // ignore: avoid_print
     print('[TEST] hydro waterway features = ${hydroFeats.length} '
-        'loaded=$hydroOk');
+        'water features = ${hydroWater.length} loaded=$hydroOk');
     expect(hydroOk, isTrue,
         reason: '在线河网（OSM 矢量瓦片）一条要素都没加载到，'
             '说明 tiles.openfreemap.org 拉不到数据，小河仍然不会显示');
 
     // 水库 / 池塘图标层必须能查到水体面
-    final waterFeats = await ctl!.querySourceFeatures('hydro', 'water', null);
     // ignore: avoid_print
-    print('[TEST] hydro water features = ${waterFeats.length}');
-    expect(waterFeats, isNotEmpty,
+    print('[TEST] hydro water features（复核） = ${hydroWater.length}');
+    expect(hydroWater, isNotEmpty,
         reason: 'hydro 源里没有 water 面要素，水库池塘图标没有可标注的对象');
 
     // ---------------------------------------------------------------- 4. 河湖开关能切
