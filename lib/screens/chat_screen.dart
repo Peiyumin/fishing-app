@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
 import '../models/message.dart';
+import '../models/user_profile.dart';
+import '../services/follow_service.dart';
 import '../services/message_service.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
@@ -150,7 +152,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
   bool _loading = true;
-  bool _mutual = true;
+  ChatCan _can = const ChatCan();
+  bool _truncated = false;
+  bool _following = false; // 正在执行关注/取关
   bool _sending = false;
 
   @override
@@ -175,7 +179,8 @@ class _ChatScreenState extends State<ChatScreen> {
         _messages
           ..clear()
           ..addAll(r.messages);
-        _mutual = r.mutual;
+        _can = r.can;
+        _truncated = r.truncated;
         _loading = false;
       });
       _toBottom();
@@ -183,6 +188,26 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       setState(() => _loading = false);
       CenterToast.show(context, e.toString().replaceAll('Exception: ', ''));
+    }
+  }
+
+  /// 关注 / 取消关注对方，成功后刷新私信资格
+  Future<void> _toggleFollow() async {
+    if (_following) return;
+    setState(() => _following = true);
+    try {
+      await FollowService.toggleFollow(widget.peerId, _can.iFollow);
+      if (mounted) await _load();
+    } on FollowNotAvailableException {
+      if (mounted) {
+        CenterToast.show(context, '关注功能需升级后端后启用');
+      }
+    } catch (e) {
+      if (mounted) {
+        CenterToast.show(context, e.toString().replaceAll('Exception: ', ''));
+      }
+    } finally {
+      if (mounted) setState(() => _following = false);
     }
   }
 
@@ -196,20 +221,42 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _send() async {
     final text = _input.text.trim();
-    if (text.isEmpty || _sending) return;
+    if (text.isEmpty || _sending || !_can.canSend) return;
     setState(() => _sending = true);
     try {
       final msg = await MessageService.send(widget.peerId, text);
       if (!mounted) return;
       _input.clear();
       setState(() => _messages.add(msg));
-      _toBottom();
+      await _load(); // 刷新 sentCount / 资格，及时反映单向 6 条上限
+    } on ChatSendException catch (e) {
+      if (!mounted) return;
+      // 资格可能因服务端状态变化而失效，重新拉一次资格并提示
+      await _load();
+      _showGateHint(e.code);
     } catch (e) {
       if (mounted) {
         CenterToast.show(context, e.toString().replaceAll('Exception: ', ''));
       }
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  /// 发送被拒时，按原因给出对应引导
+  void _showGateHint(String code) {
+    switch (code) {
+      case 'need_member':
+        CenterToast.show(context, '只有会员才能使用私信，请先开通会员');
+        break;
+      case 'need_follow':
+        CenterToast.show(context, '请先关注对方后再私信');
+        break;
+      case 'oneway_limit':
+        CenterToast.show(context, '单向关注最多 6 条，互相关注后可继续');
+        break;
+      default:
+        CenterToast.show(context, '发送失败，请稍后再试');
     }
   }
 
@@ -224,7 +271,7 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
-          if (!_mutual) _mutualHint(),
+          ..._banners(),
           Expanded(
             child: _loading && _messages.isEmpty
                 ? const Center(
@@ -248,26 +295,82 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _mutualHint() => Container(
-        width: double.infinity,
-        margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-        decoration: BoxDecoration(
-          color: AppTheme.warningLight,
-          borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-        ),
-        child: const Row(
-          children: [
-            Icon(Icons.lock_outline, size: 15, color: AppTheme.warning),
-            SizedBox(width: 6),
-            Expanded(
-              child: Text('需要互相关注后才能发送消息',
-                  style: TextStyle(
-                      fontSize: 11.5, color: AppTheme.warning, height: 1.3)),
+  /// 顶部资格提示横幅（按当前私信资格展示不同引导）
+  List<Widget> _banners() {
+    final list = <Widget>[];
+    if (_loading) return list;
+    if (!_can.iMember) {
+      list.add(_banner(
+        Icons.lock_outline,
+        '私信功能仅对会员开放',
+        '去开通',
+        () => Navigator.of(context).pushNamed('/member-center'),
+      ));
+    } else if (!_can.iFollow) {
+      list.add(_banner(
+        Icons.person_add_alt_1_outlined,
+        '请先关注对方后再私信',
+        _following ? '处理中…' : '关注',
+        _following ? null : _toggleFollow,
+      ));
+    } else if (!_can.mutual && _can.sentCount >= _can.limit) {
+      list.add(_banner(
+        Icons.info_outline,
+        '单向关注最多 ${_can.limit} 条，互相关注后可继续',
+        '去互关',
+        _following ? null : _toggleFollow,
+      ));
+    }
+    if (_truncated) {
+      list.add(_banner(
+        Icons.lock_outline,
+        '仅显示前 6 条消息，开通会员查看全部',
+        '开通会员',
+        () => Navigator.of(context).pushNamed('/member-center'),
+      ));
+    }
+    return list;
+  }
+
+  Widget _banner(IconData icon, String text, String action, VoidCallback? onTap) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: AppTheme.warningLight,
+        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 15, color: AppTheme.warning),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(text,
+                style: const TextStyle(
+                    fontSize: 11.5, color: AppTheme.warning, height: 1.3)),
+          ),
+          if (onTap != null)
+            GestureDetector(
+              onTap: onTap,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppTheme.primary,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(action,
+                    style: const TextStyle(
+                        fontSize: 11.5,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700)),
+              ),
             ),
-          ],
-        ),
-      );
+        ],
+      ),
+    );
+  }
 
   Widget _bubble(ChatMessage m, bool mine) {
     return Align(
@@ -300,6 +403,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _inputBar() {
+    final canSend = _can.canSend;
+    final hint = !_can.iMember
+        ? '开通会员后才能私信'
+        : !_can.iFollow
+            ? '关注对方后才能私信'
+            : !_can.mutual && _can.sentCount >= _can.limit
+                ? '互相关注后可继续私信'
+                : '说点什么…';
     return SafeArea(
       top: false,
       child: Container(
@@ -315,10 +426,11 @@ class _ChatScreenState extends State<ChatScreen> {
                 controller: _input,
                 minLines: 1,
                 maxLines: 4,
+                enabled: canSend,
                 textInputAction: TextInputAction.send,
                 onSubmitted: (_) => _send(),
                 decoration: InputDecoration(
-                  hintText: _mutual ? '说点什么…' : '互相关注后才能发消息',
+                  hintText: hint,
                   hintStyle: const TextStyle(
                       fontSize: 13, color: AppTheme.textSecondary),
                   filled: true,
@@ -334,12 +446,12 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             const SizedBox(width: 8),
             GestureDetector(
-              onTap: _mutual ? _send : null,
+              onTap: canSend ? _send : null,
               child: Container(
                 width: 42,
                 height: 42,
                 decoration: BoxDecoration(
-                  color: _mutual ? AppTheme.primary : AppTheme.border,
+                  color: canSend ? AppTheme.primary : AppTheme.border,
                   borderRadius: BorderRadius.circular(21),
                 ),
                 alignment: Alignment.center,
