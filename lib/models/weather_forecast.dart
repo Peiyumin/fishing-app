@@ -396,6 +396,30 @@ class WeatherBundle {
     return i >= 0 ? hours[i] : null;
   }
 
+  /// 「当前所在的那一小时」下标（v2.1.21）
+  ///
+  /// ★★ 和 [indexOfHourNear] 不是一回事，别再混用：
+  ///   - indexOfHourNear = **绝对时间最近**：20:35 会挑到 21:00 —— 一个**还没发生**
+  ///     的时段，卡上就会写「21:00」而外面明明才 20:35；
+  ///   - indexOfCurrentHour = **你所处的那一小时**：20:35 → 20:00。
+  ///
+  ///   跨整点前后半小时的错位，正是「首页和天气页各显示一个时段、数字对不上」
+  ///   的来源之一（两边一个用了 now、一个用了拉包时刻，再叠上这个偏移就彻底乱了）。
+  ///   现在首页卡和天气页当前卡统一走这个口径。
+  int indexOfCurrentHour(DateTime at) {
+    final t = DateTime(at.year, at.month, at.day, at.hour);
+    final exact = hours.indexWhere((h) => h.time == t);
+    if (exact >= 0) return exact;
+    // 序列里没有这一小时（数据缺行 / 时区差异）才退回"最近"
+    return indexOfHourNear(t);
+  }
+
+  /// 当前所在那一小时的数据（找不到返回 null）
+  HourPoint? hourCurrent(DateTime at) {
+    final i = indexOfCurrentHour(at);
+    return i >= 0 ? hours[i] : null;
+  }
+
   /// 第二模型（CMA）逐时序列 → {时间: [气温, 气压]}
   static Map<DateTime, List<double>> _seriesOf(Map<String, dynamic>? j) {
     final out = <DateTime, List<double>>{};
