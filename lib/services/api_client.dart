@@ -61,6 +61,21 @@ class ApiClient {
     return _decode(await res.transform(utf8.decoder).join());
   }
 
+  /// POST 但返回完整 JSON（不丢弃 ok/code/error），用于需要读取业务 code 的接口
+  /// （如私信发送失败要区分 need_member / need_follow / oneway_limit）。
+  static Future<Map<String, dynamic>> postRaw(
+      String path, Map<String, dynamic> data) async {
+    final req = await _http.postUrl(Uri.parse(_buildUrl(path)));
+    _setHeaders(req);
+    req.add(utf8.encode(jsonEncode(data)));
+    final res = await req.close();
+    final body = await res.transform(utf8.decoder).join();
+    if (body.isEmpty) throw Exception('服务器无响应');
+    final json = jsonDecode(body);
+    if (json is Map) return json.cast<String, dynamic>();
+    throw Exception('响应格式错误');
+  }
+
   /// 上传图片（multipart/form-data），返回服务器图片路径列表（绝对 URL）。
   /// 字段名用 file[]：PHP 对同名普通字段只保留一个，带 [] 才会聚合成数组。
   /// [watermark] = true 时带 ?wm=1，后端按后台水印配置自动叠加水印（头像上传不走这里）。
