@@ -133,6 +133,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   bool _layersReady = false;
   bool _rendering = false;
 
+  /// 建图层期间数据又更新过 —— 建完要再刷一次 source
+  bool _sourcesDirty = false;
+
   /// 图层添加失败的重试次数（原生层刚 ready 时偶尔会抛「style 未就绪」）
   int _renderAttempt = 0;
 
@@ -242,30 +245,43 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   // ---------------------------------------------------------------- 数据
 
   Future<void> _loadData() async {
+    // ① 水域 / 禁钓区：本地资源 + 一次轻量接口，先到位先上图
     try {
       final r = await Future.wait([
         MapDataService.waters(),
         MapDataService.zones(),
-        SpotService.fetchSpots(),
       ]);
       if (!mounted) return;
-      final spots = (r[2] as List<FishingSpot>)
-          .where((s) => s.lat != 0 && s.lng != 0)
-          .toList();
-      final map = <String, FishingSpot>{for (final s in spots) s.id: s};
-      for (final s in widget.extraSpots) {
-        map[s.id] = s;
-      }
       setState(() {
         _waters = r[0] as List<WaterBody>;
         _zones = r[1] as NoFishingData;
-        _spots = map.values.toList();
-        _spotById = map;
       });
-      await _renderLayers();
+      await _refreshSources();
     } catch (_) {
       // 数据拉不到不影响底图
     }
+
+    // ② 钓点：网络请求可能慢，单独来，回来再补一次 source 刷新
+    //
+    // ★ 旧写法把三份数据塞进同一个 Future.wait，**必须等最慢的钓点接口**
+    //   才会一起 setState —— 网络慢的时候河湖/禁钓区跟着一起空白，
+    //   用户看到的就是「图层全开但地图上什么都没有」。
+    try {
+      final spots = await SpotService.fetchSpots();
+      if (!mounted) return;
+      final map = <String, FishingSpot>{
+        for (final s in spots)
+          if (s.lat != 0 || s.lng != 0) s.id: s,
+      };
+      for (final s in widget.extraSpots) {
+        if (s.lat != 0 || s.lng != 0) map[s.id] = s;
+      }
+      setState(() {
+        _spots = map.values.toList();
+        _spotById = map;
+      });
+      await _refreshSources();
+    } catch (_) {}
   }
 
   // ---------------------------------------------------------------- 样式
@@ -475,45 +491,89 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     return out;
   }
 
+  /// 河流要素集合
+  List<Map<String, dynamic>> _riverFeatures() {
+    final feats = <Map<String, dynamic>>[];
+    for (final w in _waters) {
+      if (!w.isRiver) continue;
+      // ★ 河流是折线，不能闭合（见 _ring 注释）
+      final coords = _ring(w.geometry, close: false);
+      if (coords.length < 2) continue;
+      feats.add(_feature('LineString', coords, {'n': w.name}));
+    }
+    return feats;
+  }
+
+  /// 湖泊 / 水库要素集合
+  List<Map<String, dynamic>> _lakeFeatures() {
+    final feats = <Map<String, dynamic>>[];
+    for (final w in _waters) {
+      if (w.isRiver) continue;
+      final coords = _ring(w.geometry);
+      if (coords.length < 4) continue;
+      feats.add(_feature('Polygon', [coords], {'n': w.name}));
+    }
+    return feats;
+  }
+
+  /// 禁钓区要素集合
+  List<Map<String, dynamic>> _zoneFeatures() {
+    final feats = <Map<String, dynamic>>[];
+    for (final z in _zones.zones) {
+      if (!z.onMap || z.rings.isEmpty) continue;
+      final coords = _ring(z.rings.first);
+      if (coords.length < 4) continue;
+      feats.add(_feature('Polygon', [coords], {
+        'active': z.statusNow().active,
+        'name': z.name,
+      }));
+    }
+    return feats;
+  }
+
+  /// 数据到位后把四个 GeoJSON source 全量刷新一遍
+  ///
+  /// ★★ 这条修的是「图层开关只有前两个有用、河湖/禁钓区/钓点全都不显示」的真正原因：
+  ///   建图和数据加载是两路并行的 ——
+  ///     · 样式文件（本地磁盘）→ 地图创建 → onStyleLoaded → `_renderLayers()`
+  ///     · waters.json / 禁钓区（网络）/ 钓点（网络）→ `_loadData()`
+  ///   样式是本地文件，通常比网络快，于是 `_renderLayers()` 会**先**跑，
+  ///   此时 `_waters` / `_zones` / `_spots` 还是空的 →
+  ///   四个 source 全建成空 FeatureCollection → 图上什么也没有；
+  ///   而 `_layersReady` 已被置 true，`_loadData` 事后再调 `_renderLayers()`
+  ///   会被「已就绪」直接挡回去，**图层永远是空的**。
+  ///   表现完全就是用户看到的：开关全开、地图上干干净净。
+  Future<void> _refreshSources() async {
+    final c = _map;
+    if (c == null || !_styleReady) return;
+    if (!_layersReady) {
+      // 图层还没建好：记一笔「数据已更新」，等建好那一刻再补一次
+      _sourcesDirty = true;
+      await _renderLayers();
+      return;
+    }
+    try {
+      await c.setGeoJsonSource('lakes', _fc(_lakeFeatures()));
+      await c.setGeoJsonSource('rivers', _fc(_riverFeatures()));
+      await c.setGeoJsonSource('zones', _fc(_zoneFeatures()));
+      await c.setGeoJsonSource('spots', _fc(_spotFeatures()));
+      debugPrint('[SpotMapGL] source 刷新：河=${_waters.where((w) => w.isRiver).length} '
+          '湖=${_waters.where((w) => !w.isRiver).length} '
+          '禁钓=${_zones.zones.length} 钓点=${_spots.length}');
+    } catch (_) {}
+  }
+
   Future<void> _renderLayers() async {
     final c = _map;
     if (c == null || !_styleReady || _layersReady || _rendering) return;
     _rendering = true;
     try {
-      // ---------------- 水域 ----------------
-      final lakes = <Map<String, dynamic>>[];
-      final rivers = <Map<String, dynamic>>[];
-      for (final w in _waters) {
-        if (w.isRiver) {
-          // ★ 河流是折线，不能闭合（见 _ring 注释）
-          final coords = _ring(w.geometry, close: false);
-          if (coords.length < 2) continue;
-          rivers.add(_feature('LineString', coords, {'n': w.name}));
-        } else {
-          final coords = _ring(w.geometry);
-          if (coords.length < 4) continue;
-          lakes.add(_feature('Polygon', [coords], {'n': w.name}));
-        }
-      }
-
-      // ---------------- 禁钓区 ----------------
-      final zones = <Map<String, dynamic>>[];
-      for (final z in _zones.zones) {
-        if (!z.onMap || z.rings.isEmpty) continue;
-        final coords = _ring(z.rings.first);
-        if (coords.length < 4) continue;
-        zones.add(_feature('Polygon', [coords], {
-          'active': z.statusNow().active,
-          'name': z.name,
-        }));
-      }
-
       // ---------------- 钓点图标 ----------------
       // 红色定位针 + 白色鱼形，运行时用 Canvas 画成 PNG 交给原生层当 icon
       await _ensureSpotIcon();
 
       // ---------------- 湖泊：蓝色水面 ----------------
-      await _safeSource('lakes', _fc(lakes));
+      await _safeSource('lakes', _fc(_lakeFeatures()));
       await _safeLayer(
           'lakes',
           'lakes-fill',
@@ -532,7 +592,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       // ---------------- 河流：双层水面带 ----------------
       // 深蓝描边在下、亮蓝芯在上，合成「一条有边界的水面」，
       // 也就是参考图里那种河道渲染色；单根半透明细线在卫星图上基本看不见。
-      await _safeSource('rivers', _fc(rivers));
+      await _safeSource('rivers', _fc(_riverFeatures()));
       await _safeLayer(
           'rivers',
           'rivers-casing',
@@ -557,7 +617,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           minzoom: 3);
 
       // ---------------- 禁钓区：红色 ----------------
-      await _safeSource('zones', _fc(zones));
+      await _safeSource('zones', _fc(_zoneFeatures()));
       await _safeLayer(
           'zones',
           'zones-fill',
@@ -617,6 +677,11 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       _renderAttempt = 0;
       // 首次加完后按当前开关状态应用一次显隐（否则默认关掉的图层仍会显示）
       await _applyLayerToggles();
+      // 建层过程中数据又到过一批 → 立刻用最新数据覆盖一次
+      if (_sourcesDirty) {
+        _sourcesDirty = false;
+        await _refreshSources();
+      }
       await _drawMe();
       _updateScale();
       // 集成测试：图层全部加完后回调一次，断言 6 个图层真的存在
