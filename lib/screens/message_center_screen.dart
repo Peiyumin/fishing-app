@@ -10,7 +10,7 @@ import 'chat_screen.dart';
 import 'post_detail_screen.dart';
 
 /// 消息中心（v27）
-/// - 顶部「私信」黑卡入口：与钓友和客服的对话（需互相关注才能发消息）
+/// - 顶部「私信」黑卡入口：与钓友和客服的对话（需先关注对方；非会员每个对象 6 条）
 /// - 下方通知四类：系统通知 / 评论 / 回复 / 点赞
 class MessageCenterScreen extends StatefulWidget {
   const MessageCenterScreen({super.key});
