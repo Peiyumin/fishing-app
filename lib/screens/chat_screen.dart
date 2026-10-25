@@ -584,14 +584,11 @@ class _ChatScreenState extends State<ChatScreen> {
         _openMemberCenter,
       ));
     }
-    if (_truncated) {
-      list.add(_banner(
-        Icons.lock_outline,
-        '非会员仅显示最近 6 条消息，开通会员查看全部',
-        '开通会员',
-        _openMemberCenter,
-      ));
-    }
+    // ★ 不再单独提示「非会员仅显示最近 6 条」。
+    //   上面那条「还可发 N 条 / 已发满 N 条」已经把非会员限制讲完了，
+    //   两条横幅上下叠在一起纯属重复，反而把真正的聊天内容挤到屏幕下方
+    //   （用户截图反馈：进会话先看到两行黄条，看不到消息）。
+    //   后端返回的 truncated 字段保留，仍参与轮询变更判定，只是不再展示。
     return list;
   }
 
