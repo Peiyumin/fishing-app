@@ -316,7 +316,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = raw.trim();
     if (text.isEmpty || _sending) return;
     if (!_can.canSend) {
-      _showGateHint(_can.reason.isEmpty ? 'oneway_limit' : _can.reason);
+      _showGateHint(_can.reason.isEmpty ? 'need_member' : _can.reason);
       return;
     }
     setState(() => _sending = true);
@@ -352,17 +352,54 @@ class _ChatScreenState extends State<ChatScreen> {
   void _showGateHint(String code) {
     switch (code) {
       case 'need_member':
-        CenterToast.show(context, '只有会员才能使用私信，请先开通会员');
+        // 非会员条数用尽：弹窗引导，点「去开通」直接进会员中心
+        _showMemberDialog('非会员对同一个人最多发送 ${_can.limit} 条消息，开通会员后不限条数。');
         break;
       case 'need_follow':
         CenterToast.show(context, '请先关注对方后再私信');
         break;
+      // 兼容旧版服务端返回（新规则下已不再出现）
       case 'oneway_limit':
-        CenterToast.show(context, '单向关注最多 6 条，互相关注后可继续');
+        _showMemberDialog('已达到当前的发送上限，开通会员后不限条数。');
         break;
       default:
         CenterToast.show(context, '发送失败，请稍后再试');
     }
+  }
+
+  /// 开通会员引导弹窗：确认后跳转会员中心，返回时立刻刷新资格
+  /// （否则刚开通完还是旧状态，会再弹一次窗）
+  void _showMemberDialog(String message) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('开通会员'),
+        content: Text(message, style: const TextStyle(height: 1.5)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('暂不'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _openMemberCenter();
+            },
+            child: const Text('去开通'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 进会员中心，返回后刷新发送资格
+  Future<void> _openMemberCenter() async {
+    await Navigator.of(context).pushNamed('/member-center');
+    if (!mounted) return;
+    try {
+      final can = await MessageService.canChat(widget.peerId);
+      if (mounted) setState(() => _can = can);
+    } catch (_) {}
   }
 
   /// 「5/31 上午10:39」格式
@@ -527,34 +564,32 @@ class _ChatScreenState extends State<ChatScreen> {
   List<Widget> _banners() {
     final list = <Widget>[];
     if (_loading) return list;
-    if (!_can.iMember) {
-      list.add(_banner(
-        Icons.lock_outline,
-        '私信功能仅对会员开放',
-        '去开通',
-        () => Navigator.of(context).pushNamed('/member-center'),
-      ));
-    } else if (!_can.iFollow) {
+    // ① 未关注：关注是私信的前置门槛（免费，点一下即可）
+    if (!_can.iFollow) {
       list.add(_banner(
         Icons.person_add_alt_1_outlined,
-        '请先关注对方后再私信',
+        '关注对方后才能私信',
         _following ? '处理中…' : '关注',
         _following ? null : _toggleFollow,
       ));
-    } else if (!_can.mutual && _can.sentCount >= _can.limit) {
+    } else if (!_can.iMember) {
+      // ② 非会员：每个聊天对象 6 条配额，剩几条明确告知，用完引导开通
+      final left = _can.limit - _can.sentCount;
       list.add(_banner(
-        Icons.info_outline,
-        '单向关注最多 ${_can.limit} 条，互相关注后可继续',
-        '去互关',
-        _following ? null : _toggleFollow,
+        Icons.lock_outline,
+        left > 0
+            ? '非会员对同一个人最多 ${_can.limit} 条，还可发 $left 条'
+            : '已发满 ${_can.limit} 条，开通会员后不限条数',
+        '开通会员',
+        _openMemberCenter,
       ));
     }
     if (_truncated) {
       list.add(_banner(
         Icons.lock_outline,
-        '仅显示前 6 条消息，开通会员查看全部',
+        '非会员仅显示最近 6 条消息，开通会员查看全部',
         '开通会员',
-        () => Navigator.of(context).pushNamed('/member-center'),
+        _openMemberCenter,
       ));
     }
     return list;
@@ -649,14 +684,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _inputBar() {
-    final canSend = _can.canSend;
-    final hint = !_can.iMember
-        ? '开通会员后才能私信'
-        : !_can.iFollow
-            ? '关注对方后才能私信'
-            : !_can.mutual && _can.sentCount >= _can.limit
-                ? '互相关注后可继续私信'
-                : '说点什么…';
+    final left = _can.limit - _can.sentCount;
+    final hint = !_can.iFollow
+        ? '关注对方后才能私信'
+        : !_can.iMember
+            ? (left > 0
+                ? '非会员还可发 $left 条，开通会员不限条数'
+                : '已发满 ${_can.limit} 条，开通会员后不限条数')
+            : '说点什么…';
     return SafeArea(
       top: false,
       child: Container(
@@ -686,7 +721,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 controller: _input,
                 minLines: 1,
                 maxLines: 4,
-                enabled: canSend,
+                // 不做 disabled：未关注/发满时仍允许输入，点发送再弹窗引导，
+                // 否则用户点了没反应会以为 App 卡住（_sendText 内部做拦截）
                 textInputAction: TextInputAction.send,
                 onSubmitted: (_) => _sendText(_input.text),
                 decoration: InputDecoration(
@@ -706,14 +742,13 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             const SizedBox(width: 6),
             GestureDetector(
-              onTap: canSend && !_sending ? () => _sendText(_input.text) : null,
+              // 始终可点：资格不足时由 _sendText 弹窗说明原因
+              onTap: _sending ? null : () => _sendText(_input.text),
               child: Container(
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: canSend && !_sending
-                      ? AppTheme.primary
-                      : AppTheme.border,
+                  color: _sending ? AppTheme.border : AppTheme.primary,
                   borderRadius: BorderRadius.circular(20),
                 ),
                 alignment: Alignment.center,
