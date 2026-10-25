@@ -203,8 +203,8 @@ class _SpotsScreenState extends State<SpotsScreen>
         //   ② 产品上地图页需要整屏响应拖动 / 双指缩放，不能有翻页手势。
         physics: const NeverScrollableScrollPhysics(),
         children: [
-          _buildVenueTab(),
-          _buildWildTab(),
+          _TabKeepAlive(child: _buildVenueTab()),
+          _TabKeepAlive(child: _buildWildTab()),
         ],
       ),
     );
@@ -655,5 +655,32 @@ class _SpotsScreenState extends State<SpotsScreen>
     );
     // 登录成功后用户仍停在钓点页，需要自己再点一次发布
     return false;
+  }
+}
+
+/// 让 TabBarView 的子页在切走后**不被销毁**。
+///
+/// 「野钓钓点」Tab 里挂的是原生 MapLibre PlatformView。TabBarView 内部是
+/// PageView，离屏子页默认会被 dispose —— 于是每次从「本地钓场」切回地图，
+/// 都要重新走一遍「创建原生 View → 解析样式 → 重新拉瓦片」，安卓上这一套
+/// 3~8 秒，用户感受就是「地图每次进来都要转圈半天、加载完还闪一下」。
+/// 用 AutomaticKeepAliveClientMixin 钉在树里，只有第一次要等。
+class _TabKeepAlive extends StatefulWidget {
+  final Widget child;
+  const _TabKeepAlive({required this.child});
+
+  @override
+  State<_TabKeepAlive> createState() => _TabKeepAliveState();
+}
+
+class _TabKeepAliveState extends State<_TabKeepAlive>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context); // keep-alive 协议要求：build 里必须先调
+    return widget.child;
   }
 }
