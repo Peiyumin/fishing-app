@@ -166,42 +166,30 @@ class _AppRefreshState extends State<AppRefresh>
           bottom: BorderSide(color: AppTheme.divider),
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(16, 9, 16, 9),
-      child: Row(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      // 整条居中：两行字都居中排，不再左边留一个转圈图标
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          const SizedBox(
-            width: 15,
-            height: 15,
-            child: CircularProgressIndicator(
-              strokeWidth: 1.8,
-              color: AppTheme.primary,
+          const Text(
+            '垂钓圈 为您玩命加载…',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 12.5,
+              height: 1.25,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textSecondary,
             ),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  '垂钓圈 为您玩命加载…',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    height: 1.25,
-                    fontWeight: FontWeight.w600,
-                    color: AppTheme.textSecondary,
-                  ),
-                ),
-                const SizedBox(height: 1),
-                Text(
-                  '最后更新：${_fmt(_last)}',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    height: 1.25,
-                    color: AppTheme.textSecondary,
-                  ),
-                ),
-              ],
+          const SizedBox(height: 2),
+          Text(
+            '最后更新：${_fmt(_last)}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 11,
+              height: 1.25,
+              color: AppTheme.textSecondary,
             ),
           ),
         ],
@@ -213,11 +201,13 @@ class _AppRefreshState extends State<AppRefresh>
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        // 下拉手势与转圈仍交给 RefreshIndicator；提示条是叠在上面的一层视觉
+        // 下拉手势仍交给 RefreshIndicator，但它的转圈图标**不显示**：
+        // 用户要求「把原来的加载图标删掉」，视觉反馈只留上面那条居中提示。
+        // color/backgroundColor 给透明即可，动画逻辑照常（松手触发 onRefresh）。
         RefreshIndicator(
           onRefresh: _run,
-          color: widget.color ?? AppTheme.primary,
-          backgroundColor: widget.backgroundColor ?? AppTheme.surface,
+          color: Colors.transparent,
+          backgroundColor: Colors.transparent,
           displacement: widget.displacement ?? 40,
           edgeOffset: widget.edgeOffset ?? 0,
           child: widget.child,
@@ -230,7 +220,7 @@ class _AppRefreshState extends State<AppRefresh>
             child: AnimatedBuilder(
               animation: _anim,
               builder: (_, __) {
-                // 收起后整块从树上移除：既省一层合成，也避免那个「转圈」
+                // 收起后整块从树上移除：既省一层合成，也避免任何动画
                 // 在屏幕外白转（无限动画会让 pumpAndSettle 永远等不到静止）
                 if (_anim.value == 0 && !_busy) return const SizedBox.shrink();
                 return SlideTransition(position: _slide, child: _hintBar());
