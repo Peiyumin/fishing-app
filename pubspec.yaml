@@ -1,7 +1,7 @@
 name: fishing_app
 description: 垂钓社区 App —— 钓鱼天气、钓点导航、渔获分享（Flutter 双端）
 publish_to: 'none'
-version: 2.1.28+38
+version: 2.1.29+39
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -75,3 +75,7 @@ flutter:
     - assets/certs/isrg_root_x1.pem
     - assets/certs/digicert_global_root_g2.pem
     - assets/certs/gts_root_r4.pem
+    # 真实鱼类素材（46 种，透明 PNG，约 3.6MB）：图鉴 / 钓鱼档案 / 池塘共用
+    - assets/fish/
+    # 池塘环境背景（斜俯视鸟瞰：池塘居中，四周树与小房子）
+    - assets/pond/
