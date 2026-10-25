@@ -6,6 +6,7 @@ import '../services/content_service.dart';
 import 'article_detail_screen.dart';
 import 'my_submissions_screen.dart';
 import 'publish_article_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 文章频道定义
 class ArticleTab {
@@ -151,7 +152,7 @@ class _ArticleFeedState extends State<ArticleFeed>
         ),
       );
     }
-    return RefreshIndicator(
+    return AppRefresh(
       onRefresh: _load,
       child: _list.isEmpty
           ? ListView(
