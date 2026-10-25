@@ -6,6 +6,7 @@ import '../models/wallet.dart';
 import '../services/session_provider.dart';
 import '../services/wallet_service.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/app_refresh.dart';
 
 /// 钱包（v27）：余额 + 积分 + 流水 + 充值
 class WalletScreen extends StatefulWidget {
@@ -130,7 +131,7 @@ class _WalletScreenState extends State<WalletScreen> {
         title: const Text('我的钱包', style: TextStyle(fontWeight: FontWeight.w700)),
         centerTitle: true,
       ),
-      body: RefreshIndicator(
+      body: AppRefresh(
         color: AppTheme.primary,
         onRefresh: _load,
         child: ListView(
