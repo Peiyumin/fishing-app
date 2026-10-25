@@ -10,6 +10,7 @@ import 'discover_screen.dart';
 import 'nearby_anglers_screen.dart';
 import 'publish_catch_screen.dart';
 import 'publish_hub_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 每日签到 / 每日任务（v27，参考图一，配色沿用 App 青绿 + 暖金）
 class SigninScreen extends StatefulWidget {
@@ -163,7 +164,7 @@ class _SigninScreenState extends State<SigninScreen> {
         title: const Text('每日任务', style: TextStyle(fontWeight: FontWeight.w700)),
         centerTitle: true,
       ),
-      body: RefreshIndicator(
+      body: AppRefresh(
         color: AppTheme.primary,
         onRefresh: _load,
         child: ListView(
