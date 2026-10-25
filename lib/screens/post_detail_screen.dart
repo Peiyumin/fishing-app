@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../widgets/emoji_panel.dart';
 import 'package:provider/provider.dart';
 
 import '../models/post.dart';
@@ -696,6 +697,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                         borderRadius:
                             BorderRadius.circular(AppTheme.radiusPill),
                         borderSide: BorderSide.none,
+                      ),
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.emoji_emotions_outlined,
+                            size: 19, color: AppTheme.textSecondary),
+                        tooltip: '表情',
+                        onPressed: () => showEmojiSheet(context, _ctrl),
                       ),
                     ),
                   ),
