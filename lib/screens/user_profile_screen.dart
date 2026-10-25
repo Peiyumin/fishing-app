@@ -11,6 +11,7 @@ import '../widgets/post_card.dart';
 import '../widgets/user_avatar.dart';
 import 'chat_screen.dart';
 import 'follow_list_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 他人（或自己）的用户资料页：头像 + 关注/粉丝/发布 + 关注按钮 + TA 的动态
 class UserProfileScreen extends StatefulWidget {
@@ -77,7 +78,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       appBar: AppBar(title: Text(p?.nickname ?? '用户资料')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
+          : AppRefresh(
               onRefresh: _load,
               child: ListView(
                 children: [
