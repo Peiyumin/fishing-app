@@ -36,17 +36,19 @@ class FishPhoto extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final img = Image.asset(
-      FishAssets.pathOrFallback(name, waterType: waterType),
-      width: width,
+    // 只给高度时按素材宽高比算出宽度：带鱼 3.3:1、鲷鱼 1.6:1，
+    // 不钉死宽度的话，Image 会按原始尺寸（360px）铺开，把格子和按钮顶破。
+    final w = width ??
+        (height == null ? null : height! * FishAssets.aspectOf(name));
+    final img = SizedBox(
+      width: w,
       height: height,
-      fit: fit,
-      filterQuality: FilterQuality.medium,
-      gaplessPlayback: true,
-      errorBuilder: (_, __, ___) => SizedBox(
-        width: width,
-        height: height,
-        child: const Center(
+      child: Image.asset(
+        FishAssets.pathOrFallback(name, waterType: waterType),
+        fit: fit,
+        filterQuality: FilterQuality.medium,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => const Center(
           child: Icon(Icons.set_meal, color: Color(0xFFB9C4BF)),
         ),
       ),
