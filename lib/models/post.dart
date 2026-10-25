@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:intl/intl.dart';
 
+import 'badge.dart';
+
 /// 动态/渔获发布 数据模型
 /// 对应 posts 表，并通过外联 users 取到作者昵称与头像
 ///
@@ -35,6 +37,11 @@ class Post {
 
   /// 渔获页「钓到了什么」：[{'name':'鲫鱼','count':2}]（其他类别为空）
   final List<Map<String, dynamic>> fish;
+
+  /// 作者已获得的徽章（信息流里显示在头像后面，最多 3 枚）
+  /// 不走动态列表接口，而是由 BadgeHub 按作者 id 批量拉取后回填，
+  /// 这样一屏只多一次请求，不会每张卡片各发一次。
+  final List<BadgeItem> badges;
 
   /// 钓点位置是否公开（false 时其他人看不到具体钓点）
   final bool locPublic;
@@ -73,6 +80,7 @@ class Post {
     this.authorVip = 0,
     this.fish = const [],
     this.locPublic = true,
+    this.badges = const [],
   });
 
   /// 把 Supabase 返回的 JSON 转成 Post
@@ -114,7 +122,27 @@ class Post {
           : (json['loc_public'] is bool
               ? json['loc_public'] as bool
               : (json['loc_public'] as num?)?.toInt() != 0),
+      badges: parseBadges(json['badges']),
     );
+  }
+
+  /// 徽章字段（后端可能直接返回数组，也可能给 JSON 字符串）
+  static List<BadgeItem> parseBadges(dynamic raw) {
+    if (raw == null) return const [];
+    var list = raw;
+    if (list is String && list.trim().isNotEmpty) {
+      try {
+        list = jsonDecode(list);
+      } catch (_) {
+        return const [];
+      }
+    }
+    if (list is! List) return const [];
+    return list
+        .whereType<Map>()
+        .map((m) => BadgeItem.fromJson(Map<String, dynamic>.from(m)))
+        .where((b) => b.name.isNotEmpty || b.icon.isNotEmpty)
+        .toList();
   }
 
   /// 鱼种字段：后端存 JSON 字符串（也兼容已解析的数组）
@@ -218,6 +246,7 @@ class Post {
     int? authorVip,
     List<Map<String, dynamic>>? fish,
     bool? locPublic,
+    List<BadgeItem>? badges,
   }) {
     return Post(
       id: id ?? this.id,
@@ -245,6 +274,7 @@ class Post {
       authorVip: authorVip ?? this.authorVip,
       fish: fish ?? this.fish,
       locPublic: locPublic ?? this.locPublic,
+      badges: badges ?? this.badges,
     );
   }
 }
