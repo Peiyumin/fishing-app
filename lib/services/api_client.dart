@@ -62,7 +62,7 @@ class ApiClient {
   }
 
   /// POST 但返回完整 JSON（不丢弃 ok/code/error），用于需要读取业务 code 的接口
-  /// （如私信发送失败要区分 need_member / need_follow / oneway_limit）。
+  /// （如私信发送失败要区分 need_follow / need_member）。
   static Future<Map<String, dynamic>> postRaw(
       String path, Map<String, dynamic> data) async {
     final req = await _http.postUrl(Uri.parse(_buildUrl(path)));
