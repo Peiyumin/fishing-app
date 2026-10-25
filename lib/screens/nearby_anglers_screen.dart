@@ -6,7 +6,6 @@ import '../services/follow_service.dart';
 import '../services/location_service.dart';
 import '../services/nearby_service.dart';
 import '../widgets/center_toast.dart';
-import '../widgets/member_gate.dart';
 import '../widgets/user_avatar.dart';
 import 'chat_screen.dart';
 
@@ -94,13 +93,11 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
   }
 
   Future<void> _chat(NearbyAngler a) async {
-    // 私信是会员专属功能：非会员先引导开通会员
-    if (await ensureMember(context)) {
-      if (!mounted) return;
-      await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => ChatScreen(peerId: a.userId, nickname: a.nickname),
-      ));
-    }
+    // 非会员也能进聊天页：会员不限条数，非会员每个对象 6 条，
+    // 发满后由聊天页弹窗引导开通（规则见 lib/messages.php: CHAT_FREE_LIMIT）
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => ChatScreen(peerId: a.userId, nickname: a.nickname),
+    ));
   }
 
   @override
