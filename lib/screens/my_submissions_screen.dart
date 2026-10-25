@@ -6,6 +6,7 @@ import '../models/article.dart';
 import '../services/content_service.dart';
 import 'activity_detail_screen.dart';
 import 'article_detail_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 我的发布（活动 + 文章投稿）
 ///
@@ -218,7 +219,7 @@ class _FeedShell extends StatelessWidget {
         ),
       );
     }
-    return RefreshIndicator(
+    return AppRefresh(
       onRefresh: onRefresh,
       child: empty
           ? ListView(
