@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../widgets/emoji_panel.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong2.dart';
 import 'package:provider/provider.dart';
@@ -292,10 +293,17 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
                   TextField(
                     controller: _descCtrl,
                     maxLines: 3,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: '说明（选填）',
                       hintText: '钓法、水深、注意事项…',
                       border: OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.emoji_emotions_outlined,
+                            size: 20, color: AppTheme.textSecondary),
+                        tooltip: '表情',
+                        onPressed: () =>
+                            showEmojiSheet(context, _descCtrl),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
