@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../widgets/emoji_panel.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong2.dart';
@@ -531,10 +532,16 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
                 TextField(
                   controller: _descCtrl,
                   maxLines: 3,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: '简介（选填）',
                     hintText: '环境、钓法、注意事项…',
                     border: OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.emoji_emotions_outlined,
+                          size: 20, color: AppTheme.textSecondary),
+                      tooltip: '表情',
+                      onPressed: () => showEmojiSheet(context, _descCtrl),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),
