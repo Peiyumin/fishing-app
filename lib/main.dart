@@ -10,6 +10,7 @@ import 'models/app_bootstrap.dart';
 import 'models/message.dart';
 import 'screens/chat_screen.dart';
 import 'screens/fish_guide_screen.dart';
+import 'screens/fish_tank_screen.dart';
 import 'screens/member_center_screen.dart';
 import 'screens/message_center_screen.dart';
 import 'screens/nearby_anglers_screen.dart';
@@ -341,6 +342,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         '/member-center': (_) => const MemberCenterScreen(),
         '/member-orders': (_) => const MemberOrdersScreen(),
         '/fish-guide': (_) => const FishGuideScreen(),
+        '/fish-tank': (_) => const FishTankScreen(),
         '/nearby-anglers': (_) => const NearbyAnglersScreen(),
         '/spot-map': (_) => const SpotMapScreen(),
         '/notify-settings': (_) => const NotifySettingsScreen(),
