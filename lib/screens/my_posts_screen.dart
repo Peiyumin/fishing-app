@@ -6,6 +6,7 @@ import '../services/refresh_bus.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/post_card.dart';
 import 'publish_catch_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 我的作品（独立页）：展示当前登录用户自己的全部发布，
 /// 支持编辑（渔获类）与删除。从「我的」页「作品」统计项进入。
@@ -88,7 +89,7 @@ class _MyPostsScreenState extends State<MyPostsScreen> {
       appBar: AppBar(title: const Text('我的作品')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
+          : AppRefresh(
               onRefresh: _load,
               child: _posts.isEmpty
                   ? ListView(
