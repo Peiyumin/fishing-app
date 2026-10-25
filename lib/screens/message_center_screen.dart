@@ -8,6 +8,7 @@ import '../services/post_service.dart';
 import '../widgets/center_toast.dart';
 import 'chat_screen.dart';
 import 'post_detail_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 消息中心（v27）
 /// - 顶部「私信」黑卡入口：与钓友和客服的对话（需先关注对方；非会员每个对象 6 条）
@@ -108,7 +109,7 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
           ),
         ],
       ),
-      body: RefreshIndicator(
+      body: AppRefresh(
         color: AppTheme.primary,
         onRefresh: _load,
         child: ListView(
@@ -370,7 +371,7 @@ class _NoticeListScreenState extends State<NoticeListScreen> {
               child: CircularProgressIndicator(color: AppTheme.primary))
           : _items.isEmpty
               ? _empty()
-              : RefreshIndicator(
+              : AppRefresh(
                   color: AppTheme.primary,
                   onRefresh: () => _load(),
                   child: ListView.separated(
