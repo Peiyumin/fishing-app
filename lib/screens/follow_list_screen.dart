@@ -5,6 +5,7 @@ import '../services/follow_service.dart';
 import '../widgets/follow_button.dart';
 import '../widgets/user_avatar.dart';
 import 'user_profile_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 粉丝 / 关注 列表页
 class FollowListScreen extends StatefulWidget {
@@ -64,7 +65,7 @@ class _FollowListScreenState extends State<FollowListScreen> {
               ? _msg(_error!)
               : _users.isEmpty
                   ? _msg(widget.followers ? '还没有粉丝' : '还没有关注任何人')
-                  : RefreshIndicator(
+                  : AppRefresh(
                       onRefresh: _load,
                       child: ListView.separated(
                         itemCount: _users.length,
