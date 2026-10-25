@@ -6,6 +6,7 @@ import '../services/content_service.dart';
 import 'activity_detail_screen.dart';
 import 'my_submissions_screen.dart';
 import 'publish_activity_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 活动列表（首页「活动」入口）
 ///
@@ -79,7 +80,7 @@ class _ActivityListScreenState extends State<ActivityListScreen> {
                 child: CircularProgressIndicator(strokeWidth: 2.2),
               ),
             )
-          : RefreshIndicator(
+          : AppRefresh(
               onRefresh: _load,
               child: _list.isEmpty
                   ? ListView(
