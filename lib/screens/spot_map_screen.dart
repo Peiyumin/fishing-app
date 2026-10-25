@@ -1538,14 +1538,20 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
         }),
 
         // ---------------- 顶部：搜索 + 图层/名录 ----------------
-        Positioned(
-          top: topInset,
-          left: 12,
-          right: 12,
-          child: Column(children: [
-            Row(children: [
-              // 嵌入模式：顶部空间留给钓点页自己的 Tab 栏，只放右侧功能按钮
-              if (!widget.embedded) ...[
+        //
+        // ★★ 嵌入模式（钓点页「野钓钓点」Tab）**不画这一行**。
+        //   原来这里无条件画「图层 / 禁钓名录」两个圆钮，而原生 MapLibre
+        //   内核（spot_map_gl.dart）没有这两个钮 —— 两套内核的浮层位置完全
+        //   不同。原生 View 起得慢时会自动降级到本页，用户看到的就是
+        //   「地图一加载出来，按钮全换位置了」。现在两个钮并入右侧竖排
+        //   工具条（与原生内核同序同位），嵌入模式下这里保持空白。
+        if (!widget.embedded)
+          Positioned(
+            top: topInset,
+            left: 12,
+            right: 12,
+            child: Column(children: [
+              Row(children: [
                 Expanded(
                   child: Container(
                     height: 44,
@@ -1579,23 +1585,25 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-              ],
-              _roundBtn(Icons.layers_outlined, '图层', _showLayerPanel),
-              const SizedBox(width: 8),
-              _roundBtn(Icons.verified_user_outlined, '禁钓名录', _showDirectory),
+                _roundBtn(Icons.layers_outlined, '图层', _showLayerPanel),
+                const SizedBox(width: 8),
+                _roundBtn(
+                    Icons.verified_user_outlined, '禁钓名录', _showDirectory),
+              ]),
+              if (_searching && _searchCtrl.text.trim().isNotEmpty)
+                _searchResults(),
             ]),
-            if (!widget.embedded &&
-                _searching &&
-                _searchCtrl.text.trim().isNotEmpty)
-              _searchResults(),
-          ]),
-        ),
+          ),
 
         // ---------------- 右侧工具栏 ----------------
+        //
+        // ★★ 与原生 MapLibre 内核**逐项对齐**：卫星 / 放大 / 缩小 / 定位 / 图层，
+        //   嵌入模式 top=64，非嵌入 top=状态栏+140。
+        //   位置、按钮顺序、按钮数量以前两套内核各不相同，一旦降级切内核，
+        //   用户看到的就是整排按钮平移、还多两个少两个。
         Positioned(
           right: 12,
-          // 嵌入模式已被外层 AppBar 占掉状态栏高度，工具栏贴着顶部按钮行往下排
-          top: widget.embedded ? 104 : MediaQuery.of(context).padding.top + 140,
+          top: widget.embedded ? 64 : MediaQuery.of(context).padding.top + 140,
           child: Column(children: [
             _roundBtn(
                 _layers.satellite ? Icons.satellite_alt : Icons.map_outlined,
@@ -1607,10 +1615,10 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
             const SizedBox(height: 8),
             _roundBtn(Icons.remove, '缩小',
                 () => _mapController.move(_mapController.center, _zoom - 1)),
-            if (!widget.embedded) ...[
-              const SizedBox(height: 8),
-              _roundBtn(Icons.my_location, '我的位置', () => _locate()),
-            ],
+            const SizedBox(height: 8),
+            _roundBtn(Icons.my_location, '定位', () => _locate()),
+            const SizedBox(height: 8),
+            _roundBtn(Icons.layers_outlined, '图层', _showLayerPanel),
           ]),
         ),
 
@@ -1666,28 +1674,34 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
             ]),
           ),
 
-        // ---------------- 嵌入模式：底部版权 + AI 悬浮胶囊（参考 App 样式）----------------
-        if (widget.embedded)
+        // ---------------- 嵌入模式：AI 胶囊 + 版权行 ----------------
+        //
+        // ★★ 位置和样式按原生内核（spot_map_gl.dart）来：
+        //   AI 胶囊 bottom=88（给底部「+」发布按钮和导航栏让位），
+        //   版权行 bottom=6、单行省略、半透明黑字。
+        //   原来这里是「bottom=10 + 白色带阴影两行文字」，降级后既压住
+        //   底部导航，颜色也从黑变白，看起来像换了个页面。
+        if (widget.embedded) ...[
           Positioned(
-            left: 12,
-            right: 12,
-            bottom: 10,
-            child: Column(children: [
-              // AI 找钓点胶囊（居中悬浮）
-              _aiCapsule(),
-              const SizedBox(height: 6),
-              Text(
-                '${_tile.attribution} · 禁钓数据据政府公开通告整理（2026-10）',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                    fontSize: 9.5,
-                    color: Colors.white70,
-                    shadows: [
-                      Shadow(color: Colors.black45, blurRadius: 3),
-                    ]),
-              ),
-            ]),
+            left: 0,
+            right: 0,
+            bottom: 88,
+            child: _aiCapsule(),
           ),
+          Positioned(
+            left: 10,
+            bottom: 6,
+            right: 90,
+            child: IgnorePointer(
+              child: Text(
+                '${_tile.attribution} · 禁钓数据据政府公开通告整理（2026-10）',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 9.5, color: Color(0x99000000)),
+              ),
+            ),
+          ),
+        ],
 
         // ---------------- 选中详情 ----------------
         if (_selWater != null)
