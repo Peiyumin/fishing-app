@@ -1,6 +1,9 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/api_client.dart';
 import '../services/api_config.dart';
@@ -85,22 +88,95 @@ class MapConfigService {
       );
 
   /// 拉取配置（幂等，只拉一次）
-  static Future<void> load({bool force = false}) async {
-    if (_loaded && !force) return;
+  ///
+  /// ★★ v2.1.27 修了两件事：
+  ///
+  /// ① **并发调用共享同一个请求**。以前是 `if (_loaded) return;`，而 `_loaded`
+  ///    表示「已经开始了」而不是「已经完成」—— 第二个调用方会立刻拿到一个
+  ///    已完成的 Future，此时配置还没回来，它读到的 `MapConfigService.source`
+  ///    是兜底的高德。钓点页 initState 先调一次、地图页 initState 又调一次，
+  ///    几乎必然踩中，结果就是「配了星图却用高德」。
+  ///
+  /// ② **不让建图等网络**，见 [_restoreCache] 注释。
+  static Future<void>? _inflight;
+
+  static Future<void> load({bool force = false}) {
+    if (force) return _inflight = _doLoad(force: true);
+    // 有请求在路上 → 等同一个 Future。**必须先判 _inflight 再判 _loaded**：
+    // _loaded 在请求发出瞬间就为 true，此时配置还没回来。
+    final f = _inflight;
+    if (f != null) return f;
+    if (_loaded) return Future.value();
+    return _inflight = _doLoad();
+  }
+
+  static Future<void> _doLoad({bool force = false}) async {
     _loaded = true;
+    final hasCache = await _restoreCache();
     if (!ApiConfig.enabled) return;
+    if (hasCache && !force) {
+      unawaited(_refresh()); // 后台刷新，不阻塞建图
+      return;
+    }
+    await _refresh();
+  }
+
+  static Future<void> _refresh() async {
     try {
       // ApiClient 已自动拆出后端的 data 字段
-      final cfg = await ApiClient.get('/app/map-config') as Map?;
+      final cfg = await ApiClient.get('/app/map-config')
+          .timeout(const Duration(seconds: 5)) as Map?;
       if (cfg != null) {
         _geoToken = (cfg['geovisearthToken'] ?? '').toString().trim();
         _tk = (cfg['tiandituTk'] ?? '').toString().trim();
         _prefer = (cfg['prefer'] ?? 'auto').toString().trim().toLowerCase();
         final e = (cfg['engine'] ?? 'gl').toString().trim().toLowerCase();
         _engine = e == 'dart' ? 'dart' : 'gl';
+        await _saveCache();
       }
     } catch (_) {
-      // 后台不可达：保持空密钥 → 使用高德兜底
+      // 后台不可达：保持当前配置（缓存或高德兜底）
+    }
+  }
+
+  /// 上次成功拿到的配置（本机缓存）
+  ///
+  /// 缓存的意义不是「省一次请求」，而是**不让建图等网络**：
+  /// 底图源（星图 token / 天地图 tk / 用哪套内核）必须建图前就知道，
+  /// 没有缓存时这部分延迟全落在用户盯灰屏的时间上。
+  static const _kCacheKey = 'map_config_v1';
+
+  static Future<bool> _restoreCache() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final raw = sp.getString(_kCacheKey);
+      if (raw == null || raw.isEmpty) return false;
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      _geoToken = (m['geovisearthToken'] ?? '').toString().trim();
+      _tk = (m['tiandituTk'] ?? '').toString().trim();
+      final p = (m['prefer'] ?? 'auto').toString().trim().toLowerCase();
+      if (p.isNotEmpty) _prefer = p;
+      _engine = m['engine'] == 'dart' ? 'dart' : 'gl';
+      return true;
+    } catch (_) {
+      return false; // 缓存坏了就当没有，别影响建图
+    }
+  }
+
+  static Future<void> _saveCache() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString(
+        _kCacheKey,
+        jsonEncode({
+          'geovisearthToken': _geoToken,
+          'tiandituTk': _tk,
+          'prefer': _prefer,
+          'engine': _engine,
+        }),
+      );
+    } catch (_) {
+      // 存不进就算了，下次继续走网络
     }
   }
 }
