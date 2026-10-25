@@ -80,8 +80,15 @@ class SpotMapGlScreen extends StatefulWidget {
   /// 唯一的机器可判定证据，比肉眼看截图可靠。
   static void Function(MapLibreMapController c)? debugOnLayersReady;
 
-  /// 原生内核就绪的超时时长（生产 8 秒；集成测试会放宽，模拟器起得慢）
-  static Duration readyTimeout = const Duration(seconds: 8);
+  /// 原生内核就绪的超时时长（生产 15 秒；集成测试会放宽，模拟器起得慢）
+  ///
+  /// ★ 原来是 8 秒，实战里太紧：安卓中低端机首次创建 PlatformView
+  ///   （Activity 挂载 + GL 上下文 + 样式解析 + 首帧纹理上传）经常超过 8 秒，
+  ///   一超时就被判定为「内核起不来」而降级到 flutter_map 内核 ——
+  ///   那正是用户截到的「地图一加载出来，按钮位置全变了」，而且降级后的
+  ///   Dart 版内核逐瓦片解码贴图，拖动更卡。宁可按着白屏多等几秒，
+  ///   也不要中途换一套 UI（两套内核的浮层现已对齐，但内核性能差一个量级）。
+  static Duration readyTimeout = const Duration(seconds: 15);
 
   @override
   State<SpotMapGlScreen> createState() => _SpotMapGlScreenState();
