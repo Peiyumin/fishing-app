@@ -12,6 +12,7 @@ import '../utils/geo_names.dart';
 import '../widgets/post_card.dart';
 import '../widgets/center_toast.dart';
 import 'auth_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 发现页：分类 Tab + 动态瀑布流
 ///   推荐 —— 浏览 + 点赞×3 + 评论×5 综合热度排序
@@ -176,7 +177,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
+          : AppRefresh(
               onRefresh: _load,
               child: _posts.isEmpty
                   ? ListView(
