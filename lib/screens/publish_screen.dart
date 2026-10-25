@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../widgets/emoji_panel.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
@@ -279,6 +280,13 @@ class _PublishScreenState extends State<PublishScreen> {
                         hintText: _bodyHint,
                         border: const OutlineInputBorder(),
                         counterText: '',
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.emoji_emotions_outlined,
+                              size: 20, color: AppTheme.textSecondary),
+                          tooltip: '表情',
+                          onPressed: () =>
+                              showEmojiSheet(context, _bodyCtrl),
+                        ),
                       ),
                     ),
                     // 二手价格（仅出售/求购）
