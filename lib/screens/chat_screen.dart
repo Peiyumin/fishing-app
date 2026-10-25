@@ -1,14 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
 import '../models/message.dart';
 import '../models/user_profile.dart';
+import '../services/api_client.dart';
 import '../services/follow_service.dart';
+import '../services/message_poller.dart';
 import '../services/message_service.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/emoji_panel.dart';
 import '../widgets/user_avatar.dart';
+import 'user_profile_screen.dart';
 
 /// 私信会话列表
 class ConversationListScreen extends StatefulWidget {
@@ -137,7 +143,13 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
       );
 }
 
-/// 私信对话
+/// 私信对话（v2.1.25 改版）
+///
+///   · 参考主流 IM 的陌生人会话页：顶部头像+昵称+关注+更多，
+///     列表头部是对方「资料卡」（大头像/昵称/签名/安全提示/确认聊天）；
+///   · 打开期间 3 秒增量轮询：对方发来的消息立即上屏（纯拉模式做到近实时）；
+///   · 底部快捷表情短语栏（早上好/比心/困/捂脸/赞，点击即发送）+ 表情面板；
+///   · 会员/关注/单向 6 条上限的资格提示保留在列表上方。
 class ChatScreen extends StatefulWidget {
   final String peerId;
   final String nickname;
@@ -156,38 +168,119 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _truncated = false;
   bool _following = false; // 正在执行关注/取关
   bool _sending = false;
+  bool _emojiOpen = false;
+
+  /// 已上屏的消息 id（增量轮询对比用）
+  Set<String> _knownIds = {};
+
+  /// 该会话未读数（AppBar 角标）
+  int _convUnread = 0;
+
+  /// 对方资料（资料卡用）
+  String _peerAvatar = '';
+  String _peerBio = '';
+
+  /// 实时轮询（打开聊天页期间 3 秒一次）
+  Timer? _pollTimer;
+
+  /// 是否停在列表底部（在底部才自动滚动，上翻看历史不打扰）
+  bool _atBottom = true;
 
   @override
   void initState() {
     super.initState();
+    _scroll.addListener(_onScroll);
     _load();
+    _pollTimer = Timer.periodic(
+        const Duration(seconds: 3), (_) => _pollNew());
+    // 聊天页打开期间，全局轮询切到「快速+静默」：新消息由本页自己上屏，
+    // 不再由全局轮询弹系统通知（用户正盯着这个会话，弹通知是打扰）。
+    MessagePoller.instance.setFastMode(true);
   }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
+    _scroll.removeListener(_onScroll);
     _input.dispose();
     _scroll.dispose();
+    MessagePoller.instance.setFastMode(false);
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_scroll.hasClients) return;
+    final atBottom =
+        _scroll.position.pixels >= _scroll.position.maxScrollExtent - 30;
+    if (atBottom != _atBottom) _atBottom = atBottom;
+  }
+
+  Future<Map<String, dynamic>> _peerProfile() async {
+    try {
+      final data = await ApiClient.get('/users/${widget.peerId}') as Map;
+      return data.cast<String, dynamic>();
+    } catch (_) {
+      return const {};
+    }
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
       final r = await MessageService.chat(widget.peerId);
+      Map<String, dynamic> prof = const {};
+      List<Conversation> convs = const [];
+      try {
+        prof = await _peerProfile();
+        convs = await MessageService.conversations();
+      } catch (_) {}
       if (!mounted) return;
       setState(() {
         _messages
           ..clear()
           ..addAll(r.messages);
+        _knownIds = {for (final m in r.messages) m.id};
         _can = r.can;
         _truncated = r.truncated;
+        _convUnread = convs
+            .where((c) => c.peerId == widget.peerId)
+            .fold(0, (p, c) => p + c.unread);
+        _peerAvatar = (prof['avatar'] ?? '').toString();
+        _peerBio = (prof['bio'] ?? '').toString();
         _loading = false;
       });
-      _toBottom();
+      _toBottom(force: true);
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
       CenterToast.show(context, e.toString().replaceAll('Exception: ', ''));
+    }
+  }
+
+  /// 增量轮询：只把对方新发来的消息追加进去，顺带刷新资格
+  Future<void> _pollNew() async {
+    if (_sending) return; // 自己正在发，等发送流程自己收尾，避免竞态重复上屏
+    try {
+      final r = await MessageService.chat(widget.peerId);
+      if (!mounted) return;
+      final hasNew = r.messages.any((m) => !_knownIds.contains(m.id));
+      final canChanged = r.can.canSend != _can.canSend ||
+          r.can.sentCount != _can.sentCount ||
+          r.can.iFollow != _can.iFollow ||
+          r.can.mutual != _can.mutual ||
+          r.can.iMember != _can.iMember;
+      if (!hasNew && !canChanged && r.truncated == _truncated) return;
+      setState(() {
+        _messages
+          ..clear()
+          ..addAll(r.messages);
+        _knownIds = {for (final m in r.messages) m.id};
+        _can = r.can;
+        _truncated = r.truncated;
+      });
+      if (hasNew && _atBottom) _toBottom();
+    } catch (_) {
+      // 网络抖动：静默，下一轮再试
     }
   }
 
@@ -211,28 +304,40 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _toBottom() {
+  void _toBottom({bool force = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) {
+      if (_scroll.hasClients && (force || _atBottom)) {
         _scroll.jumpTo(_scroll.position.maxScrollExtent);
       }
     });
   }
 
-  Future<void> _send() async {
-    final text = _input.text.trim();
-    if (text.isEmpty || _sending || !_can.canSend) return;
+  Future<void> _sendText(String raw) async {
+    final text = raw.trim();
+    if (text.isEmpty || _sending) return;
+    if (!_can.canSend) {
+      _showGateHint(_can.reason.isEmpty ? 'oneway_limit' : _can.reason);
+      return;
+    }
     setState(() => _sending = true);
     try {
       final msg = await MessageService.send(widget.peerId, text);
       if (!mounted) return;
       _input.clear();
-      setState(() => _messages.add(msg));
-      await _load(); // 刷新 sentCount / 资格，及时反映单向 6 条上限
+      setState(() {
+        _messages.add(msg);
+        _knownIds.add(msg.id);
+      });
+      _toBottom(force: true);
+      // 立即刷新资格（单向关注发送后 sentCount 会变，可能到达 6 条上限）
+      try {
+        final can = await MessageService.canChat(widget.peerId);
+        if (mounted) setState(() => _can = can);
+      } catch (_) {}
     } on ChatSendException catch (e) {
       if (!mounted) return;
       // 资格可能因服务端状态变化而失效，重新拉一次资格并提示
-      await _load();
+      await _pollNew();
       _showGateHint(e.code);
     } catch (e) {
       if (mounted) {
@@ -260,6 +365,17 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// 「5/31 上午10:39」格式
+  String _fmtTime(String iso) {
+    if (iso.isEmpty) return '';
+    final t = DateTime.tryParse(iso);
+    if (t == null) return '';
+    final h = t.hour;
+    final ap = h < 12 ? '上午' : '下午';
+    final h12 = h == 0 ? 12 : (h > 12 ? h - 12 : h);
+    return '${t.month}/${t.day} $ap$h12:${t.minute.toString().padLeft(2, '0')}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = context.watch<SessionProvider>();
@@ -267,7 +383,71 @@ class _ChatScreenState extends State<ChatScreen> {
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
-        title: Text(widget.nickname.isEmpty ? '私信' : widget.nickname),
+        titleSpacing: 4,
+        leadingWidth: 30,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, size: 20),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
+        title: Row(
+          children: [
+            UserAvatar(
+              url: _peerAvatar,
+              userId: widget.peerId,
+              radius: 15,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                widget.nickname.isEmpty ? '私信' : widget.nickname,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w700),
+              ),
+            ),
+            if (_convUnread > 0)
+              Container(
+                margin: const EdgeInsets.only(left: 6),
+                padding: const EdgeInsets.all(5),
+                decoration: const BoxDecoration(
+                    color: AppTheme.danger, shape: BoxShape.circle),
+                child: Text(_convUnread > 99 ? '99+' : '$_convUnread',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w700)),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: _following ? null : _toggleFollow,
+            child: Text(
+              _can.iFollow ? '已关注' : '关注',
+              style: TextStyle(
+                fontSize: 13.5,
+                fontWeight: FontWeight.w700,
+                color: _can.iFollow
+                    ? AppTheme.textSecondary
+                    : AppTheme.primary,
+              ),
+            ),
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_horiz, size: 20),
+            onSelected: (v) {
+              if (v == 'profile') {
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => UserProfileScreen(userId: widget.peerId),
+                ));
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'profile', child: Text('查看资料')),
+            ],
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -276,20 +456,68 @@ class _ChatScreenState extends State<ChatScreen> {
             child: _loading && _messages.isEmpty
                 ? const Center(
                     child: CircularProgressIndicator(color: AppTheme.primary))
-                : _messages.isEmpty
-                    ? _emptyChat()
-                    : ListView.builder(
-                        controller: _scroll,
-                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                        itemCount: _messages.length,
-                        itemBuilder: (_, i) {
-                          final m = _messages[i];
-                          final mine = m.mine || m.fromId == meId;
-                          return _bubble(m, mine);
-                        },
-                      ),
+                : ListView.builder(
+                    controller: _scroll,
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                    itemCount: _messages.length + 1,
+                    itemBuilder: (_, i) {
+                      if (i == 0) return _profileHeader();
+                      final m = _messages[i - 1];
+                      final mine = m.mine || m.fromId == meId;
+                      return _bubble(m, mine);
+                    },
+                  ),
           ),
-          _inputBar(),
+          _inputArea(),
+        ],
+      ),
+    );
+  }
+
+  /// 列表头部：对方资料卡（参考主流 IM 的陌生人会话首屏）
+  Widget _profileHeader() {
+    final time = _messages.isNotEmpty
+        ? _fmtTime(_messages.last.createdAt)
+        : _fmtTime(DateTime.now().toIso8601String());
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 22, 24, 8),
+      child: Column(
+        children: [
+          UserAvatar(
+            url: _peerAvatar,
+            userId: widget.peerId,
+            radius: 32,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            widget.nickname.isEmpty ? '钓友' : widget.nickname,
+            style: const TextStyle(
+                fontSize: 17, fontWeight: FontWeight.w800),
+          ),
+          if (_peerBio.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(_peerBio,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 12.5, color: AppTheme.textSecondary)),
+          ],
+          const SizedBox(height: 14),
+          const Text(
+            '为保障用户沟通安全，未互相关注的陌生人违规消息可能会被处理，请遵守法律法规和社区规范',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                fontSize: 11, color: AppTheme.textSecondary, height: 1.6),
+          ),
+          const SizedBox(height: 10),
+          if (time.isNotEmpty)
+            Text(time,
+                style: const TextStyle(
+                    fontSize: 12, color: AppTheme.textSecondary)),
+          const SizedBox(height: 8),
+          const Text('对方已确认聊天，可继续发送消息',
+              style: TextStyle(
+                  fontSize: 12, color: AppTheme.textSecondary)),
+          const SizedBox(height: 8),
         ],
       ),
     );
@@ -402,6 +630,24 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// 底部区域：快捷表情短语 + （展开时）表情面板 + 输入行
+  Widget _inputArea() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_emojiOpen)
+          EmojiPanel(
+            height: 236,
+            onPick: (e) => insertAtCursor(_input, e),
+            onBackspace: () => backspaceAtCursor(_input),
+          )
+        else
+          QuickEmojiBar(onPick: _sendText),
+        _inputBar(),
+      ],
+    );
+  }
+
   Widget _inputBar() {
     final canSend = _can.canSend;
     final hint = !_can.iMember
@@ -414,13 +660,27 @@ class _ChatScreenState extends State<ChatScreen> {
     return SafeArea(
       top: false,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+        padding: const EdgeInsets.fromLTRB(8, 8, 10, 8),
         decoration: const BoxDecoration(
           color: AppTheme.surface,
           border: Border(top: BorderSide(color: AppTheme.divider)),
         ),
         child: Row(
           children: [
+            // 表情面板开关
+            IconButton(
+              onPressed: () => setState(() => _emojiOpen = !_emojiOpen),
+              icon: Icon(
+                _emojiOpen
+                    ? Icons.keyboard_outlined
+                    : Icons.emoji_emotions_outlined,
+                size: 22,
+                color: _emojiOpen ? AppTheme.primary : AppTheme.textSecondary,
+              ),
+              splashRadius: 20,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            ),
             Expanded(
               child: TextField(
                 controller: _input,
@@ -428,7 +688,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 maxLines: 4,
                 enabled: canSend,
                 textInputAction: TextInputAction.send,
-                onSubmitted: (_) => _send(),
+                onSubmitted: (_) => _sendText(_input.text),
                 decoration: InputDecoration(
                   hintText: hint,
                   hintStyle: const TextStyle(
@@ -444,15 +704,17 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             GestureDetector(
-              onTap: canSend ? _send : null,
+              onTap: canSend && !_sending ? () => _sendText(_input.text) : null,
               child: Container(
-                width: 42,
-                height: 42,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
-                  color: canSend ? AppTheme.primary : AppTheme.border,
-                  borderRadius: BorderRadius.circular(21),
+                  color: canSend && !_sending
+                      ? AppTheme.primary
+                      : AppTheme.border,
+                  borderRadius: BorderRadius.circular(20),
                 ),
                 alignment: Alignment.center,
                 child: _sending
@@ -461,7 +723,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         height: 17,
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.send, size: 19, color: Colors.white),
+                    : const Icon(Icons.send, size: 18, color: Colors.white),
               ),
             ),
           ],
@@ -469,18 +731,4 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
-
-  Widget _emptyChat() => Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.chat_bubble_outline,
-                size: 44, color: AppTheme.textSecondary.withOpacity(0.4)),
-            const SizedBox(height: 10),
-            const Text('还没有消息，打个招呼吧',
-                style: TextStyle(
-                    fontSize: 12.5, color: AppTheme.textSecondary)),
-          ],
-        ),
-      );
 }
