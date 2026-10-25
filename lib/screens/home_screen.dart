@@ -265,15 +265,31 @@ class _HomeScreenState extends State<HomeScreen>
       }
     }
 
-    // ② 定位
-    //    等首帧渲染完再请求权限：iOS 在首帧之前弹系统定位框会被丢掉
+    // ② 先用「上次的坐标」秒拉一次天气，不等 GPS
+    //    GPS 冷启动在室内要好几秒，旧写法是「等定位 → 再请求天气」，
+    //    用户看到的就是首页天气卡空着转圈。现在有上次坐标就立刻请求。
     await _firstFrame.future;
     if (!mounted) return;
-    double lat = 30.2741, lng = 120.1551; // 默认：杭州
+    final lastPos = await _readLastPos();
+    if (lastPos != null) {
+      unawaited(_fetchWeather(lastPos[0], lastPos[1], silent: silent));
+    }
+
+    // ③ 定位（带超时，拿不到就用上次坐标/默认坐标）
+    double lat = lastPos?[0] ?? 30.2741;
+    double lng = lastPos?[1] ?? 120.1551; // 默认：杭州
+    var moved = lastPos == null;
     try {
-      final pos = await LocationService.determinePosition();
+      final pos = await LocationService.determinePosition()
+          .timeout(const Duration(seconds: 12));
       lat = pos.latitude;
       lng = pos.longitude;
+      if (lastPos == null ||
+          (lastPos[0] - lat).abs() > 0.02 ||
+          (lastPos[1] - lng).abs() > 0.02) {
+        moved = true;
+      }
+      await _saveLastPos(lat, lng);
       // 记下自身坐标：「附近钓点」据此按距离由近到远排序
       if (mounted) {
         setState(() {
@@ -289,10 +305,43 @@ class _HomeScreenState extends State<HomeScreen>
         LocationPrompt.showError(context, e);
       }
     } catch (_) {
-      // 忽略，使用默认坐标
+      // 超时 / 其他异常：沿用上次坐标或默认坐标
     }
 
-    // ③ 后台刷新最新天气
+    // ④ 坐标没变就不重复请求（②已经拉过了），变了才补一次新坐标的天气
+    if (moved) {
+      await _fetchWeather(lat, lng, silent: silent);
+    }
+  }
+
+  static const String _posKey = 'home_last_pos';
+
+  Future<List<double>?> _readLastPos() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final raw = sp.getString(_posKey);
+      if (raw == null || raw.isEmpty) return null;
+      final p = raw.split(',');
+      if (p.length != 2) return null;
+      final la = double.tryParse(p[0]);
+      final ln = double.tryParse(p[1]);
+      if (la == null || ln == null) return null;
+      return [la, ln];
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _saveLastPos(double lat, double lng) async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString(_posKey, '$lat,$lng');
+    } catch (_) {}
+  }
+
+  /// 拉最新天气并上屏（失败时保持已有缓存，不把卡片清空）
+  Future<void> _fetchWeather(double lat, double lng,
+      {bool silent = false}) async {
     try {
       final w = await WeatherService.fetch(lat, lng);
       if (mounted) {
@@ -363,17 +412,16 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _onRefresh() async {
     // 定位先发起，不等它。它回来后会自己刷新地名和钓点距离
     _loadPlace(refresh: true);
+    // ★ 下拉只等「动态」一件事：用户下拉就是想看有没有新帖。
+    //   旧写法把天气（要先拿 GPS）和钓点一起 await，室内定位锁不上时
+    //   刷新要转好几秒 —— 现在是天气/钓点甩到后台，刷新几百毫秒就收。
     try {
-      await Future.wait([
-        _loadFeed(),
-        _loadWeather(),
-      ]).timeout(const Duration(seconds: 10));
+      await _loadFeed().timeout(const Duration(seconds: 6));
     } catch (_) {
-      // 超时 / 网络失败也照常收起刷新圈，不能把用户晾在转圈里
+      // 失败也照常收起提示条，不能把用户晾在加载态里
     }
-    try {
-      await _loadSpots().timeout(const Duration(seconds: 6));
-    } catch (_) {}
+    unawaited(_loadWeather(silent: true));
+    unawaited(_loadSpots());
     if (mounted) setState(() => _lastUpdated = DateTime.now());
   }
 
