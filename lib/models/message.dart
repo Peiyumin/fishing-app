@@ -65,7 +65,10 @@ class ChatMessage {
 
 /// 私信发送资格（后端 /messages/can-chat 返回）
 ///
-/// 规则：会员 + 已关注对方 +（互相关注 或 单向关注未满 6 条）才能发送。
+/// 规则（v2.1.26）：
+///   1. 必须先关注对方（免费门槛）；
+///   2. 会员不限条数；
+///   3. 非会员对「同一个聊天对象」最多 [limit] 条（默认 6），发满引导开通会员。
 class ChatCan {
   final bool iFollow;    // 我是否关注了对方
   final bool heFollows;  // 对方是否关注了我
@@ -73,9 +76,11 @@ class ChatCan {
   final bool iMember;    // 我是否会员
   final bool heMember;   // 对方是否会员
   final bool canSend;    // 当前是否允许发送
-  final String reason;   // 不能发送的原因码：need_member / need_follow / oneway_limit
-  final int sentCount;   // 我单方面已发条数
-  final int limit;       // 单向关注上限
+  final String reason;   // 不能发送的原因码：need_follow / need_member
+  final int sentCount;   // 我对该对象已发条数
+  final int limit;       // 非会员对同一对象的条数上限
+  final int remaining;   // 非会员剩余条数；会员为 -1（不限）
+  final bool unlimited;  // 是否不限条数（会员）
 
   const ChatCan({
     this.iFollow = false,
@@ -87,6 +92,8 @@ class ChatCan {
     this.reason = '',
     this.sentCount = 0,
     this.limit = 6,
+    this.remaining = 0,
+    this.unlimited = false,
   });
 
   factory ChatCan.fromJson(Map<String, dynamic> j) => ChatCan(
@@ -99,11 +106,14 @@ class ChatCan {
         reason: (j['reason'] ?? '').toString(),
         sentCount: (j['sentCount'] as num?)?.toInt() ?? 0,
         limit: (j['limit'] as num?)?.toInt() ?? 6,
+        remaining: (j['remaining'] as num?)?.toInt() ?? 0,
+        unlimited: j['unlimited'] == true,
       );
 
   /// 人类可读的限制说明（配合 reason 使用）
-  String get limitHint =>
-      '（已发 $sentCount/$limit 条，互相关注后可继续）';
+  String get limitHint => unlimited
+      ? '（会员不限条数）'
+      : '（已发 $sentCount/$limit 条，开通会员后不限条数）';
 }
 
 /// 私信发送失败（携带业务 code，便于前端区分会员/关注/单向限制）
