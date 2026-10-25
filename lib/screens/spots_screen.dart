@@ -17,6 +17,7 @@ import 'publish_venue_screen.dart';
 import 'spot_detail_screen.dart';
 import 'spot_map_gl.dart';
 import 'spot_map_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 钓点页：双 Tab
 ///   ① 本地钓场：图2 样式卡片列表（封面 / 星级 / 标签 / 地址 / 距离 / 收费 / 简介）
@@ -267,7 +268,7 @@ class _SpotsScreenState extends State<SpotsScreen>
         ),
         const Divider(height: 1),
         Expanded(
-          child: RefreshIndicator(
+          child: AppRefresh(
             onRefresh: _load,
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
