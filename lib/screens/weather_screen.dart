@@ -13,6 +13,7 @@ import '../services/fish_service.dart';
 import '../services/tide_service.dart';
 import '../utils/geo_names.dart';
 import '../widgets/location_prompt.dart';
+import '../widgets/app_refresh.dart';
 
 /// 深空配色（对齐钓鱼天气参考稿）
 class _Pal {
@@ -282,7 +283,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
         child: Text('暂无天气数据', style: TextStyle(color: _Pal.muted)),
       );
     }
-    return RefreshIndicator(
+    return AppRefresh(
       onRefresh: _load,
       color: _Pal.accent,
       backgroundColor: _Pal.card,
