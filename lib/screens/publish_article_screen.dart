@@ -6,6 +6,7 @@ import '../services/api_config.dart';
 import '../services/content_service.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/emoji_panel.dart';
 import 'auth_screen.dart';
 
 /// 投稿文章
@@ -138,10 +139,12 @@ class _PublishArticleScreenState extends State<PublishArticleScreen> {
           ),
           const SizedBox(height: 14),
           _label('摘要（选填）', sub: '留空会自动截取正文开头'),
-          _field(_summary, hint: '一句话概括这篇讲什么', maxLength: 60),
+          _field(_summary, hint: '一句话概括这篇讲什么', maxLength: 60,
+              emoji: true),
           const SizedBox(height: 14),
           _label('正文'),
-          _field(_body, hint: '空行分段，写清楚就能发布', maxLines: 12),
+          _field(_body, hint: '空行分段，写清楚就能发布', maxLines: 12,
+              emoji: true),
           const SizedBox(height: 22),
           SizedBox(
             height: 46,
@@ -198,6 +201,7 @@ class _PublishArticleScreenState extends State<PublishArticleScreen> {
     String? hint,
     int maxLength = 200,
     int maxLines = 1,
+    bool emoji = false,
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -219,6 +223,14 @@ class _PublishArticleScreenState extends State<PublishArticleScreen> {
           counterText: '',
           isDense: true,
           contentPadding: const EdgeInsets.symmetric(vertical: 10),
+          suffixIcon: emoji
+              ? IconButton(
+                  icon: const Icon(Icons.emoji_emotions_outlined,
+                      size: 20, color: AppTheme.textSecondary),
+                  tooltip: '表情',
+                  onPressed: () => showEmojiSheet(context, c),
+                )
+              : null,
         ),
       ),
     );
