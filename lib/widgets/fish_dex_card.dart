@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/fish.dart';
-import 'fish_art.dart';
+import 'fish_photo.dart';
 
 /// 我的页 -「钓鱼档案」卡片（图三样式）
 ///
@@ -10,8 +10,8 @@ import 'fish_art.dart';
 /// ② 离下一级还差几种（进度条 + 「再点亮 N 种 → Lv.2」）；
 /// ③ 自己钓了多少（累计渔获 / 本月出钓 / 图鉴收藏）。
 ///
-/// 鱼图全部用 App 内的矢量绘制（[FishArt]），不走网络——进页面立刻有内容，
-/// 和鱼缸里游的是同一套画法，视觉统一。
+/// 鱼图全部用 App 内置的真实鱼照（[FishPhoto]），不走网络——进页面立刻有内容，
+/// 和池塘里游的是同一套素材，视觉统一。
 class FishDexCard extends StatelessWidget {
   /// 图鉴数据（含已点亮鱼种）
   final FishGuide guide;
@@ -28,7 +28,7 @@ class FishDexCard extends StatelessWidget {
   /// 点「拍一条入缸」
   final VoidCallback? onSnap;
 
-  /// 点「我的鱼缸」
+  /// 点「我的池塘」
   final VoidCallback? onOpenTank;
 
   const FishDexCard({
@@ -301,7 +301,7 @@ class FishDexCard extends StatelessWidget {
                           size: 16, color: Color(0xFF8FE3D2)),
                       const SizedBox(width: 5),
                       const Text(
-                        '鱼缸',
+                        '池塘',
                         style: TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w700,
@@ -339,18 +339,18 @@ class FishDexCard extends StatelessWidget {
               child: f == null
                   // 未点亮也给个轮廓，让人知道「这里能长出鱼」
                   ? Opacity(
-                      opacity: 0.20,
-                      child: FishArt(
-                        name: '鱼',
-                        size: 26,
+                      opacity: 0.30,
+                      child: FishPhoto(
+                        name: '鲫鱼',
+                        waterType: f == null ? 'fresh' : f.waterType,
+                        height: 22,
                         locked: true,
                       ),
                     )
-                  : FishArt(
+                  : FishPhoto(
                       name: f.name,
-                      rarity: f.rarity,
                       waterType: f.waterType,
-                      size: 30,
+                      height: 34,
                     ),
             ),
           ),
@@ -451,12 +451,10 @@ class FishDexCard extends StatelessWidget {
               child: Center(
                 child: Padding(
                   padding: const EdgeInsets.only(top: 6, bottom: 14),
-                  child: FishArt(
+                  child: FishPhoto(
                     name: hero.name,
-                    rarity: hero.rarity,
                     waterType: hero.waterType,
-                    size: 72,
-                    underwater: true,
+                    height: 86,
                   ),
                 ),
               ),
