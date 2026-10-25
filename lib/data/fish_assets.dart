@@ -111,6 +111,65 @@ class FishAssets {
     '马林鱼': '旗鱼',
   };
 
+  /// 每条鱼的宽高比（宽 / 高），打包时就量好了。
+  /// 只给高度不给宽度时，用它算宽度 —— 否则带鱼这种 3.3:1 的长条鱼
+  /// 会按原始尺寸撑满一行，把格子和按钮顶破。
+  static const Map<String, double> _aspect = {
+    'baitiao': 3.333,
+    'bayu': 3.711,
+    'bianyu': 1.614,
+    'bimu': 1.682,
+    'caoyu': 3.429,
+    'dahuangyu': 3.913,
+    'daiyu': 4.615,
+    'dayinyu': 2.857,
+    'diaoyu': 2.466,
+    'fancheyu': 1.143,
+    'ganyu': 4.337,
+    'guiyu': 1.978,
+    'haijiyu': 2.250,
+    'hailuyu': 1.488,
+    'haiman': 2.011,
+    'heidiao': 1.338,
+    'heitouyu': 1.773,
+    'heiyu': 2.951,
+    'huangsang': 3.051,
+    'jiangxue': 4.186,
+    'jianyu': 1.572,
+    'jinqiangyu': 2.791,
+    'jiyu': 2.182,
+    'lianyu': 2.384,
+    'lingyu': 2.975,
+    'liuxianyu': 2.835,
+    'liyu': 1.364,
+    'luofeiyu': 2.384,
+    'luyu': 1.364,
+    'maisui': 2.590,
+    'makou': 3.243,
+    'nianyu': 1.538,
+    'qiaozui': 2.500,
+    'qingyu': 2.748,
+    'qiyu': 1.791,
+    'shibanyu': 2.182,
+    'shidiaoyu': 2.209,
+    'taiyu': 3.529,
+    'xiaohuangyu': 3.130,
+    'xunyu': 4.337,
+    'yanzhiyu': 1.818,
+    'yongyu': 2.156,
+    'youyu': 3.600,
+    'zhangyu': 1.600,
+    'zhendiao': 1.622,
+    'ziyu': 3.333
+  };
+
+  /// 素材宽高比；查不到按 2.6:1 估（大多数淡水鱼的侧面比例）
+  static double aspectOf(String name) {
+    final slug = slugOf(name);
+    if (slug == null) return 2.6;
+    return _aspect[slug] ?? 2.6;
+  }
+
   /// 查不到时按水类型兜底，避免露出一个空白格
   static const String _freshFallback = 'caoyu';
   static const String _saltFallback = 'diaoyu';
