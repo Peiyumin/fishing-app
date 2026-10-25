@@ -7,7 +7,6 @@ import '../models/user_profile.dart';
 import '../services/follow_service.dart';
 import '../services/post_service.dart';
 import '../widgets/follow_button.dart';
-import '../widgets/member_gate.dart';
 import '../widgets/post_card.dart';
 import '../widgets/user_avatar.dart';
 import 'chat_screen.dart';
@@ -34,15 +33,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _load();
   }
 
-  /// 私信对方：非会员先引导开通会员；会员则进入会话页（会话内再校验关注/单向上限）
+  /// 私信对方：直接进入会话页。
+  /// 会员不限条数；非会员每个对象 6 条，发满后聊天页弹窗引导开通。
   Future<void> _openChat() async {
-    if (await ensureMember(context)) {
-      if (!mounted) return;
-      Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) =>
-            ChatScreen(peerId: widget.userId, nickname: _profile?.nickname ?? '钓友'),
-      ));
-    }
+    if (!mounted) return;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) =>
+          ChatScreen(peerId: widget.userId, nickname: _profile?.nickname ?? '钓友'),
+    ));
   }
 
   Future<void> _load() async {
