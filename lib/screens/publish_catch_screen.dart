@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
+import '../widgets/emoji_panel.dart';
 import '../models/fishing_species.dart';
 import '../models/post.dart';
 import '../services/api_client.dart';
@@ -858,12 +859,18 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
             maxLines: 5,
             maxLength: _maxStory,
             onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               hintText: '分享钓法、饵料、当时的鱼情与环境\n优质内容更容易被推荐哦～',
               hintStyle:
                   TextStyle(fontSize: 12.5, color: AppTheme.textSecondary),
               counterText: '',
               fillColor: AppTheme.primarySoft,
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.emoji_emotions_outlined,
+                    size: 20, color: AppTheme.textSecondary),
+                tooltip: '表情',
+                onPressed: () => showEmojiSheet(context, _storyCtrl),
+              ),
             ),
           ),
         ],
