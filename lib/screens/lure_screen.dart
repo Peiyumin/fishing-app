@@ -7,6 +7,7 @@ import 'article_list_screen.dart' show ArticleFeed;
 import 'publish_article_screen.dart';
 import 'spot_detail_screen.dart';
 import 'spots_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 路亚专题
 ///
@@ -143,7 +144,7 @@ class _LureSpotsFeedState extends State<LureSpotsFeed>
         ),
       );
     }
-    return RefreshIndicator(
+    return AppRefresh(
       onRefresh: _load,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
