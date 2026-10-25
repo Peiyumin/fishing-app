@@ -399,9 +399,24 @@ class _SigninScreenState extends State<SigninScreen> {
         alignment: Alignment.center,
         child: Icon(_taskIcon(t.icon), size: 18, color: AppTheme.primary),
       ),
-      title: Text(t.title,
-          style: const TextStyle(
-              fontSize: 13.5, fontWeight: FontWeight.w700)),
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(t.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 13.5, fontWeight: FontWeight.w700)),
+          ),
+          // ★ 完成任务后要能一眼看出「这行已经做完了、只差领奖」。
+          //   以前只有按钮从「去完成」变成「领取 +N」这一处差异，
+          //   列表扫下来几乎看不出来，用户反馈「缺少任务标识」。
+          if (t.done && !t.claimed) ...[
+            const SizedBox(width: 6),
+            _doneTag(),
+          ],
+        ],
+      ),
       subtitle: Row(children: [
         Expanded(
           child: Text(
@@ -417,6 +432,26 @@ class _SigninScreenState extends State<SigninScreen> {
                 color: AppTheme.star)),
       ]),
       trailing: _taskAction(t),
+    );
+  }
+
+  /// 「已完成（待领取）」小标签：带勾的浅绿胶囊
+  Widget _doneTag() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: AppTheme.primaryLight,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: const Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.check_circle, size: 10, color: AppTheme.primary),
+        SizedBox(width: 2),
+        Text('已完成',
+            style: TextStyle(
+                fontSize: 9.5,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.primary)),
+      ]),
     );
   }
 
@@ -452,7 +487,7 @@ class _SigninScreenState extends State<SigninScreen> {
                   height: 11,
                   child: CircularProgressIndicator(
                       strokeWidth: 1.6, color: Colors.white))
-              : Text('领取 +${t.points}',
+              : Text('领取',
                   style: const TextStyle(
                       color: Colors.white,
                       fontSize: 11.5,
