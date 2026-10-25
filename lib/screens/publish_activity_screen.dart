@@ -6,6 +6,7 @@ import '../services/api_config.dart';
 import '../services/content_service.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/emoji_panel.dart';
 import 'auth_screen.dart';
 
 const List<String> _weekCn = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -211,12 +212,16 @@ class _PublishActivityScreenState extends State<PublishActivityScreen> {
           const SizedBox(height: 14),
 
           _label('一句话介绍', sub: '选填，留空会自动截取正文'),
-          _field(_summary, hint: '这场活动玩什么、适合谁', maxLength: 60),
+          _field(_summary, hint: '这场活动玩什么、适合谁', maxLength: 60,
+              emoji: true),
           const SizedBox(height: 14),
 
           _label('详细说明'),
           _field(_body,
-              hint: '行程安排、装备要求、注意事项…（空行分段）', maxLines: 10, maxLength: 2000),
+              hint: '行程安排、装备要求、注意事项…（空行分段）',
+              maxLines: 10,
+              maxLength: 2000,
+              emoji: true),
           const SizedBox(height: 22),
 
           SizedBox(
@@ -348,6 +353,7 @@ class _PublishActivityScreenState extends State<PublishActivityScreen> {
     int maxLength = 200,
     int maxLines = 1,
     bool number = false,
+    bool emoji = false,
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -370,6 +376,14 @@ class _PublishActivityScreenState extends State<PublishActivityScreen> {
           counterText: '',
           isDense: true,
           contentPadding: const EdgeInsets.symmetric(vertical: 10),
+          suffixIcon: emoji
+              ? IconButton(
+                  icon: const Icon(Icons.emoji_emotions_outlined,
+                      size: 20, color: AppTheme.textSecondary),
+                  tooltip: '表情',
+                  onPressed: () => showEmojiSheet(context, c),
+                )
+              : null,
         ),
       ),
     );
