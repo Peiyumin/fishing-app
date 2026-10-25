@@ -11,6 +11,7 @@ import '../widgets/center_toast.dart';
 import '../widgets/post_card.dart';
 import 'auth_screen.dart';
 import 'publish_catch_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 渔获频道：只展示「渔获」类动态（category=post）
 /// 入口：首页宫格「渔获」/ 发布中心「发布渔获」发布成功后回流
@@ -154,7 +155,7 @@ class _CatchScreenState extends State<CatchScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
+          : AppRefresh(
               onRefresh: _load,
               child: _posts.isEmpty
                   ? ListView(
