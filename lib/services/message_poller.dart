@@ -51,11 +51,16 @@ import 'session_provider.dart';
 ///   · `since` 由服务端时间推进，天然去重：同一条消息不会重复弹。
 ///   · 多条互动（点赞/评论）在客户端**聚合**成一条，避免刷屏。
 ///   · App 回到前台立即补拉一次，把后台期间错过的消息一次性提醒。
+///
+/// v2.1.25：轮询间隔 15s → 10s（用户要求「对方发信息后尽快收到」）；
+///   另加「快速模式」——聊天页打开时切到 3s 轮询且**只更新红点、不弹通知**
+///   （用户正盯着这个会话，新消息由聊天页自己上屏，再弹一条系统通知反而是打扰）。
 class MessagePoller {
   MessagePoller._();
   static final MessagePoller instance = MessagePoller._();
 
-  static const _interval = Duration(seconds: 15);
+  static const _interval = Duration(seconds: 10);
+  static const _fastInterval = Duration(seconds: 3);
 
   /// 全局未读总数（铃铛 / 消息中心据此显示红点）
   final ValueNotifier<int> unread = ValueNotifier<int>(0);
@@ -67,11 +72,23 @@ class MessagePoller {
   Timer? _timer;
   bool _running = false;
 
+  /// 快速模式（聊天页打开中）：3 秒一轮，只刷红点不打扰
+  bool _fast = false;
+
   /// 服务端时间游标：只拉这个时间点之后的新消息
   String _since = '';
 
   /// 首轮只建基线，不把历史未读当成「新消息」弹出来
   bool _baselineDone = false;
+
+  /// 聊天页等「正在盯着会话」的场景调用：切到 3s 轮询、静默刷新
+  void setFastMode(bool v) {
+    if (_fast == v) return;
+    _fast = v;
+    if (!_running) return;
+    _timer?.cancel();
+    _timer = Timer.periodic(_fast ? _fastInterval : _interval, (_) => _poll());
+  }
 
   /// 在 main() 里把全局登录态挂上来，并随登录态自动启停。
   void attach(SessionProvider session) {
