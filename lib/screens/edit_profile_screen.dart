@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../widgets/emoji_panel.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
@@ -240,11 +241,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             controller: _bioCtrl,
             maxLength: 50,
             maxLines: 2,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: '个性签名',
               hintText: '一句话介绍自己，最多 50 个字',
               border: OutlineInputBorder(),
               prefixIcon: Icon(Icons.edit_note),
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.emoji_emotions_outlined,
+                    size: 20, color: AppTheme.textSecondary),
+                tooltip: '表情',
+                onPressed: () => showEmojiSheet(context, _bioCtrl),
+              ),
             ),
           ),
           const SizedBox(height: 12),
