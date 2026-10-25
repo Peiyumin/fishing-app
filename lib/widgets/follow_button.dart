@@ -15,6 +15,9 @@ class FollowButton extends StatefulWidget {
   final bool compact; // 小尺寸（列表里用）
   final bool tiny; // 超小尺寸（首页信息流作者行）
 
+  /// 描边样式：未关注时白底 + 主色描边 + 主色文字（信息流作者行大按钮用）
+  final bool outline;
+
   const FollowButton({
     super.key,
     required this.userId,
@@ -23,6 +26,7 @@ class FollowButton extends StatefulWidget {
     this.onChanged,
     this.compact = false,
     this.tiny = false,
+    this.outline = false,
   });
 
   @override
@@ -67,11 +71,13 @@ class _FollowButtonState extends State<FollowButton> {
     if (widget.isMe) return const SizedBox.shrink();
 
     final following = _following;
-    final double h = widget.tiny ? 24 : (widget.compact ? 26 : 32);
-    final double fs = widget.tiny ? 11 : (widget.compact ? 12 : 13);
-    final double hPad = widget.tiny ? 10 : (widget.compact ? 12 : 16);
+    // 描边样式（信息流作者行）：比 tiny 大一圈，且未关注时也是白底绿字
+    final bool line = widget.outline;
+    final double h = line ? 30 : (widget.tiny ? 24 : (widget.compact ? 26 : 32));
+    final double fs = line ? 13 : (widget.tiny ? 11 : (widget.compact ? 12 : 13));
+    final double hPad = line ? 14 : (widget.tiny ? 10 : (widget.compact ? 12 : 16));
     final double radius =
-        widget.tiny ? 13 : (widget.compact ? 14 : 16);
+        line ? 8 : (widget.tiny ? 13 : (widget.compact ? 14 : 16));
     return SizedBox(
       height: h,
       child: OutlinedButton(
@@ -82,10 +88,12 @@ class _FollowButtonState extends State<FollowButton> {
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           side: BorderSide(
               color: following ? Colors.grey.shade300 : AppTheme.primary),
-          backgroundColor:
-              following ? Colors.grey.shade50 : AppTheme.primary,
-          foregroundColor:
-              following ? Colors.grey.shade600 : Colors.white,
+          backgroundColor: following
+              ? Colors.grey.shade50
+              : (line ? Colors.white : AppTheme.primary),
+          foregroundColor: following
+              ? Colors.grey.shade600
+              : (line ? AppTheme.primary : Colors.white),
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(radius)),
         ),
@@ -95,11 +103,12 @@ class _FollowButtonState extends State<FollowButton> {
                 height: 12,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation(
-                      following ? Colors.grey.shade600 : Colors.white),
+                  valueColor: AlwaysStoppedAnimation(following
+                      ? Colors.grey.shade600
+                      : (line ? AppTheme.primary : Colors.white)),
                 ),
               )
-            : Text(following ? '已关注' : '+ 关注',
+            : Text(following ? '已关注' : '关注',
                 style: TextStyle(fontSize: fs, fontWeight: FontWeight.w600)),
       ),
     );
