@@ -9,7 +9,7 @@ import '../services/fish_service.dart';
 import '../services/session_provider.dart';
 import '../widgets/app_refresh.dart';
 import '../widgets/center_toast.dart';
-import '../widgets/fish_art.dart';
+import '../widgets/fish_photo.dart';
 
 /// 鱼种图鉴（v27，参考图五）
 /// 淡水 / 海水两大类；解锁进度驱动等级晋升；未解锁置灰。
@@ -69,7 +69,7 @@ class _FishGuideScreenState extends State<FishGuideScreen>
         centerTitle: true,
         actions: [
           IconButton(
-            tooltip: '我的鱼缸',
+            tooltip: '我的池塘',
             icon: const Icon(Icons.water, color: AppTheme.accent),
             onPressed: () => Navigator.of(context).pushNamed('/fish-tank'),
           ),
@@ -552,15 +552,14 @@ class _FishGuideScreenState extends State<FishGuideScreen>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // 鱼图改为 App 内矢量绘制：不再等后端图片，
-                  // 弱网下也能立刻看到完整图鉴（这也是池塘里游的那套画法）
+                  // 鱼图是 App 内置的真实鱼照（46 种，透明 PNG）：
+                  // 不再等后端图片，弱网/断网也能立刻看到完整图鉴
                   Expanded(
                     child: Center(
-                      child: FishArt(
+                      child: FishPhoto(
                         name: f.name,
-                        rarity: f.rarity,
                         waterType: f.waterType,
-                        size: f.unlocked ? 46 : 38,
+                        height: f.unlocked ? 40 : 34,
                         locked: !f.unlocked,
                       ),
                     ),
@@ -633,11 +632,10 @@ class _FishGuideScreenState extends State<FishGuideScreen>
                     borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   ),
                   child: Center(
-                    child: FishArt(
+                    child: FishPhoto(
                       name: f.name,
-                      rarity: f.rarity,
                       waterType: f.waterType,
-                      size: 56,
+                      height: 58,
                       locked: !f.unlocked,
                     ),
                   ),
