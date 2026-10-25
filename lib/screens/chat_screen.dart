@@ -15,6 +15,7 @@ import '../widgets/center_toast.dart';
 import '../widgets/emoji_panel.dart';
 import '../widgets/user_avatar.dart';
 import 'user_profile_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 私信会话列表
 class ConversationListScreen extends StatefulWidget {
@@ -62,7 +63,7 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
               child: CircularProgressIndicator(color: AppTheme.primary))
           : _convs.isEmpty
               ? _empty()
-              : RefreshIndicator(
+              : AppRefresh(
                   color: AppTheme.primary,
                   onRefresh: _load,
                   child: ListView.separated(
