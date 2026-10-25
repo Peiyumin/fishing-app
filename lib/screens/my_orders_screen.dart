@@ -5,6 +5,7 @@ import '../models/my_order.dart';
 import '../services/shop_service.dart';
 import '../widgets/center_toast.dart';
 import 'mall_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 我的订单：商城（积分兑换 / 现金登记）的完整订单中心
 ///
@@ -234,7 +235,7 @@ class _MyOrdersScreenState extends State<MyOrdersScreen>
   Widget _buildBody() {
     if (_orders == null) return const _OrderSkeleton();
     if (_orders!.isEmpty) {
-      return RefreshIndicator(
+      return AppRefresh(
         onRefresh: _load,
         color: AppTheme.primary,
         child: ListView(
@@ -258,7 +259,7 @@ class _MyOrdersScreenState extends State<MyOrdersScreen>
       );
     }
     final list = _visible;
-    return RefreshIndicator(
+    return AppRefresh(
       onRefresh: _load,
       color: AppTheme.primary,
       child: list.isEmpty
