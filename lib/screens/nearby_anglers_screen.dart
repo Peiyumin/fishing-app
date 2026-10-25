@@ -8,6 +8,7 @@ import '../services/nearby_service.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/user_avatar.dart';
 import 'chat_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 附近钓友：所有登录用户可用；按定位由近到远，列表含头像/名字/签名/关注/私信/距离
 class NearbyAnglersScreen extends StatefulWidget {
@@ -109,7 +110,7 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
             style: TextStyle(fontWeight: FontWeight.w700)),
         centerTitle: true,
       ),
-      body: RefreshIndicator(
+      body: AppRefresh(
         color: AppTheme.primary,
         onRefresh: _init,
         child: _body(),
