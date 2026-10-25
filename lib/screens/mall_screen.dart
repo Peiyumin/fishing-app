@@ -5,6 +5,7 @@ import '../models/shop_product.dart';
 import '../models/user_profile.dart';
 import '../services/shop_service.dart';
 import 'product_detail_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 商城（测试版）
 /// 商品由后台「运营配置 → 商城管理」配置，前端只读展示。
@@ -73,7 +74,7 @@ class _MallScreenState extends State<MallScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
+          : AppRefresh(
               onRefresh: _load,
               child: ListView(
                 children: [
