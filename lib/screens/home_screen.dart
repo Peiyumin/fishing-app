@@ -28,6 +28,7 @@ import 'signin_screen.dart';
 import 'weather_screen.dart';
 import 'spots_screen.dart';
 import 'spot_detail_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 首页：搜索框 + 宫格导航 + 天气/钓点 + 实时动态流
 class HomeScreen extends StatefulWidget {
@@ -498,7 +499,7 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ),
       ),
-      body: RefreshIndicator(
+      body: AppRefresh(
         onRefresh: _onRefresh,
         child: ListView(
           children: [
