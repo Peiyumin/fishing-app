@@ -7,7 +7,9 @@ import '../models/fish.dart';
 import '../services/api_client.dart';
 import '../services/fish_service.dart';
 import '../services/session_provider.dart';
+import '../widgets/app_refresh.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/fish_art.dart';
 
 /// 鱼种图鉴（v27，参考图五）
 /// 淡水 / 海水两大类；解锁进度驱动等级晋升；未解锁置灰。
@@ -65,8 +67,15 @@ class _FishGuideScreenState extends State<FishGuideScreen>
         title: const Text('我的鱼种图鉴',
             style: TextStyle(fontWeight: FontWeight.w700)),
         centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: '我的鱼缸',
+            icon: const Icon(Icons.water, color: AppTheme.accent),
+            onPressed: () => Navigator.of(context).pushNamed('/fish-tank'),
+          ),
+        ],
       ),
-      body: RefreshIndicator(
+      body: AppRefresh(
         color: AppTheme.primary,
         onRefresh: _load,
         child: ListView(
@@ -543,29 +552,17 @@ class _FishGuideScreenState extends State<FishGuideScreen>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
+                  // 鱼图改为 App 内矢量绘制：不再等后端图片，
+                  // 弱网下也能立刻看到完整图鉴（这也是池塘里游的那套画法）
                   Expanded(
-                    child: ColorFiltered(
-                      colorFilter: f.unlocked
-                          ? const ColorFilter.mode(
-                              Colors.transparent, BlendMode.multiply)
-                          : const ColorFilter.matrix([
-                              0.2126, 0.7152, 0.0722, 0, 0,
-                              0.2126, 0.7152, 0.0722, 0, 0,
-                              0.2126, 0.7152, 0.0722, 0, 0,
-                              0, 0, 0, 1, 0,
-                            ]),
-                      child: f.image.isNotEmpty
-                          ? Image.network(f.image,
-                              fit: BoxFit.contain,
-                              errorBuilder: (_, __, ___) => Icon(
-                                  Icons.set_meal,
-                                  size: 34,
-                                  color: AppTheme.textSecondary
-                                      .withOpacity(0.4)))
-                          : Icon(Icons.set_meal,
-                              size: 34,
-                              color:
-                                  AppTheme.textSecondary.withOpacity(0.4)),
+                    child: Center(
+                      child: FishArt(
+                        name: f.name,
+                        rarity: f.rarity,
+                        waterType: f.waterType,
+                        size: f.unlocked ? 46 : 38,
+                        locked: !f.unlocked,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 6),
@@ -635,10 +632,15 @@ class _FishGuideScreenState extends State<FishGuideScreen>
                     color: f.unlocked ? AppTheme.primaryLight : AppTheme.primarySoft,
                     borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   ),
-                  child: f.image.isNotEmpty
-                      ? Image.network(f.image, fit: BoxFit.contain)
-                      : const Icon(Icons.set_meal,
-                          size: 34, color: AppTheme.textSecondary),
+                  child: Center(
+                    child: FishArt(
+                      name: f.name,
+                      rarity: f.rarity,
+                      waterType: f.waterType,
+                      size: 56,
+                      locked: !f.unlocked,
+                    ),
+                  ),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
