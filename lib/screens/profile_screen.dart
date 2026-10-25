@@ -3,17 +3,20 @@ import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
 import '../models/badge.dart';
+import '../models/fish.dart';
 import '../models/member.dart';
 import '../models/post.dart';
 import '../models/profile_config.dart';
 import '../models/user_profile.dart';
 import '../services/api_config.dart';
+import '../services/fish_service.dart';
 import '../services/follow_service.dart';
 import '../services/post_service.dart';
 import '../services/profile_service.dart';
 import '../services/refresh_bus.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/fish_dex_card.dart';
 import '../widgets/user_avatar.dart';
 import 'auth_screen.dart';
 import 'edit_profile_screen.dart';
@@ -24,6 +27,7 @@ import 'spots_screen.dart';
 import 'wallet_screen.dart';
 import 'weather_screen.dart';
 import 'my_posts_screen.dart';
+import '../widgets/app_refresh.dart';
 
 /// 我的页
 ///
@@ -43,6 +47,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   UserProfile? _me;
 
   ProfilePageConfig _cfg = ProfilePageConfig.defaults;
+  FishGuide _guide = FishService.fallback;
   List<BadgeItem> _myBadges = [];
   List<BadgeItem> _allBadges = [];
 
@@ -56,6 +61,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     RefreshBus.feedTick.addListener(_onFeedTick);
     _loadConfig();
     _loadBadges();
+    _loadGuide();
   }
 
   @override
@@ -73,6 +79,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (sp.isLoggedIn || !ApiConfig.enabled) {
       _loadMyPosts();
       _loadBadges();
+      // 发布渔获可能点亮了新的鱼种，档案卡要跟着变
+      _loadGuide();
     }
   }
 
@@ -98,6 +106,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _allBadges = r.all;
       _myBadges = r.mine;
     });
+  }
+
+  Future<void> _loadGuide() async {
+    if (!ApiConfig.enabled) return;
+    try {
+      final g = await FishService.guide();
+      if (mounted) setState(() => _guide = g);
+    } catch (_) {
+      // 图鉴接口不可用时用内置 fallback，档案卡照常显示（全未点亮）
+    }
   }
 
   Future<void> _loadMe() async {
@@ -132,7 +150,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _refreshAll() async {
-    await Future.wait([_loadMyPosts(), _loadMe(), _loadBadges(), _loadConfig()]);
+    await Future.wait(
+        [_loadMyPosts(), _loadMe(), _loadBadges(), _loadConfig(), _loadGuide()]);
   }
 
   // ============================================================
@@ -631,6 +650,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  /// 累计渔获（尾）：把已加载的渔获帖里的鱼条数加起来
+  int get _totalCatches {
+    var n = 0;
+    for (final p in _myPosts) {
+      if (!p.isCatch) continue;
+      for (final f in p.fish) {
+        n += (f['count'] as num?)?.toInt() ?? 1;
+      }
+      // 没有记鱼种的老帖子，按 1 条算
+      if (p.fish.isEmpty) n += 1;
+    }
+    return n;
+  }
+
+  /// 本月出钓次数：按本月渔获帖的日期去重
+  int get _monthTrips {
+    final now = DateTime.now();
+    final days = <String>{};
+    for (final p in _myPosts) {
+      if (!p.isCatch) continue;
+      final t = p.createdAt;
+      if (t.year == now.year && t.month == now.month) {
+        days.add('${t.year}-${t.month}-${t.day}');
+      }
+    }
+    return days.length;
+  }
+
+  /// 钓鱼档案卡（图三）：图鉴进度 + 三个统计 + 拍一条入缸 / 我的鱼缸
+  Widget _fishDexCard() {
+    return FishDexCard(
+      guide: _guide,
+      totalCatches: _totalCatches,
+      monthTrips: _monthTrips,
+      onOpenDex: () => Navigator.of(context).pushNamed('/fish-guide'),
+      onSnap: () => Navigator.of(context).pushNamed('/fish-guide'),
+      onOpenTank: () => Navigator.of(context).pushNamed('/fish-tank'),
+    );
+  }
+
   /// 我的服务宫格
   Widget _servicesCard() {
     if (_cfg.services.isEmpty) return const SizedBox.shrink();
@@ -984,7 +1043,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
         ],
       ),
-      body: RefreshIndicator(
+      body: AppRefresh(
         onRefresh: _refreshAll,
         child: ListView(
           controller: _scroll,
@@ -994,6 +1053,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _badgeBar(),
             _statsRow(sp),
             _memberBar(),
+            _fishDexCard(),
             _menuCard(),
             _servicesCard(),
             _smartBar(),
