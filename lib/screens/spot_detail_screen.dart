@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../widgets/emoji_panel.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -155,9 +156,15 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
               TextField(
                 controller: noteCtrl,
                 maxLines: 3,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: '补充说明（选填）',
                   border: OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.emoji_emotions_outlined,
+                        size: 20, color: AppTheme.textSecondary),
+                    tooltip: '表情',
+                    onPressed: () => showEmojiSheet(context, noteCtrl),
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
