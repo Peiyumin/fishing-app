@@ -7,6 +7,7 @@ import '../models/member_plan.dart';
 import '../services/member_service.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/app_refresh.dart';
 
 /// 会员中心（v27，参考图三 / 图四）
 /// 配色沿用 App 青绿主题：深湖绿渐变头部 + 暖金强调，权益网格 + 套餐选择
@@ -150,7 +151,7 @@ class _MemberCenterScreenState extends State<MemberCenterScreen> {
       body: _loading
           ? const Center(
               child: CircularProgressIndicator(color: AppTheme.primary))
-          : RefreshIndicator(
+          : AppRefresh(
               color: AppTheme.primary,
               onRefresh: _load,
               child: ListView(
@@ -722,7 +723,7 @@ class _MemberOrdersScreenState extends State<MemberOrdersScreen> {
                   child: Text('暂无订单',
                       style: TextStyle(
                           fontSize: 13, color: AppTheme.textSecondary)))
-              : RefreshIndicator(
+              : AppRefresh(
                   color: AppTheme.primary,
                   onRefresh: _load,
                   child: ListView.builder(
