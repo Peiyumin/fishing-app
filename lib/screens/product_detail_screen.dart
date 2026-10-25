@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
+import '../widgets/emoji_panel.dart';
 import '../models/shop_product.dart';
 import '../models/shop_review.dart';
 import '../services/refresh_bus.dart';
@@ -181,6 +182,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           borderRadius:
                               BorderRadius.circular(AppTheme.radiusSm),
                           borderSide: BorderSide.none,
+                        ),
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.emoji_emotions_outlined,
+                              size: 20, color: AppTheme.textSecondary),
+                          tooltip: '表情',
+                          onPressed: () => showEmojiSheet(context, ctrl),
                         ),
                       ),
                     ),
