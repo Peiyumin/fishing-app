@@ -215,7 +215,7 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.photo_library_outlined,
-                  color: AppTheme.accent),
+                  color: AppTheme.primary),
               title: const Text('从相册选择'),
               subtitle: const Text('一次最多选 5 张'),
               onTap: () {
@@ -611,7 +611,7 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
               IconButton(
                 onPressed: _locating ? null : () => _locate(),
                 icon: const Icon(Icons.refresh, size: 18),
-                color: AppTheme.accent,
+                color: AppTheme.primary,
                 tooltip: '重新定位',
               ),
             ],
