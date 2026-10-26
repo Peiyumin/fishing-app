@@ -13,6 +13,7 @@ import '../models/weather_forecast.dart';
 import '../services/location_service.dart';
 import '../services/weather_service.dart';
 import '../utils/geo_names.dart';
+import '../utils/text_safe.dart';
 import '../utils/watermark_stamp.dart';
 import '../widgets/center_toast.dart';
 import 'publish_catch_screen.dart';
@@ -230,13 +231,13 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
             }
           }
           // 水印地址：地级市 + 详细地址（太长截断）
+          // ★ 用 cutGrapheme 而不是 substring：地址里可能带 emoji 或罕见字，
+          //   按 code unit 切会切出孤立代理项 → 水印上印一个方块。
           _place = detail.isEmpty
               ? city
               : (city.isNotEmpty && !detail.startsWith(city)
-                  ? '$city · ${detail.length > 40 ? detail.substring(0, 40) : detail}'
-                  : detail.length > 44
-                      ? detail.substring(0, 44)
-                      : detail);
+                  ? '$city · ${cutGrapheme(detail, 40)}'
+                  : cutGrapheme(detail, 44));
         }
       });
     } on LocationException {
@@ -409,7 +410,8 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
     if (wx != null) {
       lines.add(WatermarkLine(
         '${wx.description} ${wx.temperature.round()}℃ · 湿度${wx.humidity}%'
-        ' · 风${wx.windSpeed.round()}km/h · 气压${wx.pressure.round()}hPa',
+        ' · ${windLevelText(wx.windSpeed, wx.windDir)}'
+        ' · 气压${wx.pressure.round()}hPa',
         12.5,
         FontWeight.w500,
         const Color(0xEBFFFFFF),
@@ -877,13 +879,13 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
                 gradient: SweepGradient(
                   colors: _recording
                       ? const [AppTheme.danger, AppTheme.danger]
+                      // 原来是一圈彩虹（蓝/绿/黄/粉/紫）—— 全站唯一的彩虹，
+                      // 和「近黑 + 冷灰 + 荧光黄绿」完全无关。改成黄绿同色相
+                      // 的明暗扫掠：仍有"在动"的感觉，但跑不出色板。
                       : const [
-                          Color(0xFF63C8F5),
-                          Color(0xFF7BE495),
-                          Color(0xFFFFE27A),
-                          Color(0xFFFFA6C1),
-                          Color(0xFFB6A4FF),
-                          Color(0xFF63C8F5),
+                          AppTheme.accent,
+                          AppTheme.accentDark,
+                          AppTheme.accent,
                         ],
                 ),
               ),
