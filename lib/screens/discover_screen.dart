@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
@@ -126,30 +127,55 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F7F7),
-      body: SafeArea(
-        bottom: false,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _header(),
-            _tabs(),
-            Expanded(
-              child: _loading
-                  ? const Center(
-                      child: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  : AppRefresh(
-                      onRefresh: _load,
-                      child: _posts.isEmpty ? _empty() : _grid(),
-                    ),
+      backgroundColor: AppTheme.background,
+      body: Column(
+        children: [
+          // ── 绿色头部：和首页那条深绿顶栏同一套配色 ──
+          //
+          // 之前这里是白底黑字大标题 + 黑色胶囊 tab，切到发现页像进了另一个
+          // App。现在统一成 primaryDark → primary 的竖向渐变，状态栏图标转白。
+          AnnotatedRegion<SystemUiOverlayStyle>(
+            value: SystemUiOverlayStyle.light,
+            child: Container(
+              width: double.infinity,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [AppTheme.primaryDark, AppTheme.primary],
+                ),
+              ),
+              child: SafeArea(
+                bottom: false,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [_header(), _tabs()],
+                ),
+              ),
             ),
-          ],
-        ),
+          ),
+          Expanded(
+            child: ClipRRect(
+              // 内容区从绿色下方「浮」上来，和首页卡片区同一层次关系
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+              child: Container(
+                color: AppTheme.background,
+                child: _loading
+                    ? const Center(
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : AppRefresh(
+                        onRefresh: _load,
+                        child: _posts.isEmpty ? _empty() : _grid(),
+                      ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -158,37 +184,54 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   Widget _header() {
     final place = _city ?? '附近';
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '钓友圈',
-            style: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w800,
-              height: 1.1,
-              color: Color(0xFF15181A),
-              letterSpacing: .5,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              const Text(
+                '钓友圈',
+                style: TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w800,
+                  height: 1.1,
+                  color: Colors.white,
+                  letterSpacing: .5,
+                ),
+              ),
+              const SizedBox(width: 8),
+              // 右上角一片很淡的光斑，让纯色绿有层次（不抢标题）
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(.34),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 2),
           Text(
             '看渔获 · 找钓友 · $place',
-            style: const TextStyle(fontSize: 12.5, color: Color(0xFF8A9096)),
+            style: TextStyle(fontSize: 12.5, color: Colors.white.withOpacity(.74)),
           ),
         ],
       ),
     );
   }
 
-  /// 四个胶囊 tab：选中黑底白字，未选白底灰字，下面一行小英文
+  /// 四个胶囊 tab：选中白底深绿字，未选半透明白底白字
+  ///
+  /// 全在深绿底上，所以「选中」用的是**反白**（白胶囊），不再用黑胶囊。
   Widget _tabs() {
     return SizedBox(
       height: 58,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
         itemCount: _tabDefs.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, i) {
@@ -202,10 +245,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
               decoration: BoxDecoration(
-                color: on ? const Color(0xFF15181A) : Colors.white,
+                color: on ? Colors.white : Colors.white.withOpacity(.13),
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                    color: on ? const Color(0xFF15181A) : const Color(0xFFE6E8EA)),
+                  color: on ? Colors.white : Colors.white.withOpacity(.24),
+                ),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -216,7 +260,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                       fontSize: 14,
                       height: 1.1,
                       fontWeight: FontWeight.w700,
-                      color: on ? Colors.white : const Color(0xFF2B2F33),
+                      color: on ? AppTheme.primaryDark : Colors.white,
                     ),
                   ),
                   const SizedBox(height: 1),
@@ -227,7 +271,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                       height: 1.1,
                       letterSpacing: .6,
                       fontWeight: FontWeight.w600,
-                      color: on ? Colors.white70 : const Color(0xFFA3A9AF),
+                      color: on
+                          ? AppTheme.primary.withOpacity(.70)
+                          : Colors.white.withOpacity(.62),
                     ),
                   ),
                 ],
@@ -242,7 +288,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   Widget _grid() {
     return WaterfallGrid(
       posts: _posts,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 110),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 110),
       onTap: (p) => Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => PostDetailScreen(post: p)),
       ),
