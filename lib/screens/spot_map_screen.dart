@@ -164,10 +164,13 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
 
   // 高德瓦片（与野钓卫星地图同源；卫星=8 + 路网标注=6 叠加）
   // 天地图底图见 TileSource（密钥从后台配置拉，取不到自动回退高德）
-  static const _waterColor = Color(0xFF1565C0);
-  static const _waterFill = Color(0x591E88E5);
-  static const _zoneColor = Color(0xFFE5484D);
-  static const _zoneFill = Color(0x26E5484D);
+  // ★ 地图图层也走 AppTheme 的数据色（v2.1.36）
+  //   原来水是 Material Blue 800(#1565C0)/600(#1E88E5)，禁钓区是自定义红 #E5484D，
+  //   三个都不在色板里，比 App 其它地方的数据蓝/警示红整体偏"网页味"。
+  static const _waterColor = AppTheme.waterDeep; // 水域描边：浅底上要能读
+  static final _waterFill = AppTheme.water.withOpacity(.35); // 水面填充
+  static const _zoneColor = AppTheme.danger;
+  static final _zoneFill = AppTheme.danger.withOpacity(.15);
 
   @override
   void initState() {
@@ -463,7 +466,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
   void _showLayerPanel() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFFF2F4F7),
+      backgroundColor: AppTheme.background,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
@@ -492,7 +495,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                           style: TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.w800,
-                              color: Color(0xFF1A1D21))),
+                              color: AppTheme.textPrimary)),
                       SizedBox(height: 2),
                       Text('LAYERS',
                           style: TextStyle(
@@ -674,7 +677,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
           style: const TextStyle(
               fontSize: 15.5,
               fontWeight: FontWeight.w800,
-              color: Color(0xFF1A1D21))),
+              color: AppTheme.textPrimary)),
       const SizedBox(width: 6),
       Text(en,
           style: const TextStyle(
@@ -699,7 +702,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFE8F5EC) : const Color(0xFFF2F4F7),
+          color: selected ? AppTheme.accentLight : AppTheme.surface,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: selected ? AppTheme.primary : AppTheme.border,
@@ -710,7 +713,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
           Stack(clipBehavior: Clip.none, children: [
             Icon(icon,
                 size: 26,
-                color: selected ? AppTheme.primary : const Color(0xFF9AA1AA)),
+                color: selected ? AppTheme.primary : AppTheme.textTertiary),
             if (vip)
               Positioned(
                 right: -14,
@@ -719,14 +722,15 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF3A3F46),
+                    // 深底 + 荧光黄绿：设计系统的「深底高亮」唯一写法
+                    color: AppTheme.primary,
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: const Text('VIP',
                       style: TextStyle(
                           fontSize: 8,
                           fontWeight: FontWeight.w800,
-                          color: Color(0xFFFFD666))),
+                          color: AppTheme.accent)),
                 ),
               ),
           ]),
@@ -737,7 +741,9 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
               style: TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w600,
-                  color: selected ? AppTheme.primaryDark : const Color(0xFF3A3F46))),
+                  color: selected
+                      ? AppTheme.primaryDark
+                      : AppTheme.textSecondary)),
           Text(sub,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -780,7 +786,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                   style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFF1A1D21))),
+                      color: AppTheme.textPrimary)),
               Text(subtitle,
                   style: const TextStyle(
                       fontSize: 11, color: AppTheme.textSecondary)),
@@ -913,7 +919,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
-        color: st.active ? AppTheme.dangerLight : const Color(0xFFEFF2F1),
+        color: st.active ? AppTheme.dangerLight : AppTheme.primaryLight,
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(st.label,
@@ -950,7 +956,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                     decoration: BoxDecoration(
                       color: r.activeNow
                           ? AppTheme.dangerLight
-                          : const Color(0xFFEFF2F1),
+                          : AppTheme.primaryLight,
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(r.activeNow ? '进行中' : '未开始/已结束',
@@ -983,7 +989,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                     padding: EdgeInsets.only(top: 3),
                     child: Text('查看来源 ›',
                         style: TextStyle(
-                            fontSize: 11, color: AppTheme.accent)),
+                            fontSize: 11, color: AppTheme.textSecondary)),
                   ),
                 ),
             ],
@@ -1002,7 +1008,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
             padding: const EdgeInsets.only(bottom: 12),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Icon(Icons.info_outline,
-                  size: 15, color: AppTheme.accent),
+                  size: 15, color: AppTheme.water),
               const SizedBox(width: 8),
               Expanded(
                   child: Text(t,
@@ -1327,7 +1333,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
         label: _zoom >= 5.5 && _layers.waterLabels ? w.name : null,
         labelStyle: const TextStyle(
             fontSize: 11,
-            color: Color(0xFF0B4F8A),
+            color: AppTheme.waterDeep,
             fontWeight: FontWeight.w600),
       );
     }).toList();
@@ -1351,7 +1357,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
       return Polyline(
         points: pts,
         strokeWidth: base * (0.45 + 0.75 * zt),
-        color: const Color(0xCC3FA9F5),
+        color: AppTheme.water.withOpacity(.8),
       );
     }).toList();
   }
@@ -1360,8 +1366,10 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     if (!_layers.noFishingZones) return const [];
     return _zones.zones.where((z) => z.onMap && z.rings.isNotEmpty).map((z) {
       final st = z.statusNow();
-      final fill = st.active ? _zoneFill : const Color(0x14E5484D);
-      final border = st.active ? _zoneColor : const Color(0x88E5484D);
+      final fill =
+          st.active ? _zoneFill : AppTheme.danger.withOpacity(.08);
+      final border =
+          st.active ? _zoneColor : AppTheme.danger.withOpacity(.53);
       return Polygon(
         points: _tile.projectAll(z.rings.first),
         color: fill,
@@ -1371,7 +1379,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
         label: _zoom >= 6 ? _shortZoneName(z.name) : null,
         labelStyle: const TextStyle(
             fontSize: 10.5,
-            color: Color(0xFFB71C1C),
+            color: AppTheme.dangerDark,
             fontWeight: FontWeight.w600),
       );
     }).toList();
@@ -1428,7 +1436,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                         fontSize: 10.5,
-                        color: Color(0xFF0B4F8A),
+                        color: AppTheme.waterDeep,
                         fontWeight: FontWeight.w600)),
               ),
             ),
@@ -1444,7 +1452,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
         height: 22,
         child: Container(
           decoration: BoxDecoration(
-            color: AppTheme.accent.withOpacity(0.9),
+            color: AppTheme.primary.withOpacity(0.9),
             shape: BoxShape.circle,
             border: Border.all(color: Colors.white, width: 2.5),
           ),
@@ -1749,7 +1757,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
             decoration: BoxDecoration(
                 color: AppTheme.accentLight,
                 borderRadius: BorderRadius.circular(10)),
-            child: const Icon(Icons.water, color: AppTheme.accentDark),
+            child: const Icon(Icons.water, color: AppTheme.water),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -1845,7 +1853,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
-              color: const Color(0xE6101A12),
+              color: AppTheme.primary.withOpacity(.90),
               borderRadius: BorderRadius.circular(26),
               boxShadow: const [
                 BoxShadow(
@@ -1866,10 +1874,10 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                     ? const Padding(
                         padding: EdgeInsets.all(5),
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Color(0xFF101A12)),
+                            strokeWidth: 2, color: AppTheme.primary),
                       )
                     : const Icon(Icons.auto_awesome,
-                        size: 14, color: Color(0xFF101A12)),
+                        size: 14, color: AppTheme.primary),
               ),
               const SizedBox(width: 8),
               Text(_aiLoading ? '分析中…' : 'AI 找钓点',
@@ -1943,7 +1951,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
             title: w.name,
             sub: w.isRiver ? '江河 · ${w.basin}' : '${w.kindLabel} · ${w.area}',
             icon: Icons.water,
-            color: AppTheme.accent,
+            color: AppTheme.water,
             onTap: () {
               _exitSearch();
               final g = CoordTransform.wgs84ToGcj02(
@@ -2180,7 +2188,7 @@ class _CrosshairPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final c = size.center(Offset.zero);
     final p = Paint()
-      ..color = const Color(0xCC1E88E5)
+      ..color = AppTheme.water.withOpacity(.8)
       ..strokeWidth = 1.6
       ..style = PaintingStyle.stroke;
     const r = 13.0;
@@ -2189,7 +2197,8 @@ class _CrosshairPainter extends CustomPainter {
     canvas.drawLine(Offset(c.dx + r - 1, c.dy), Offset(c.dx + r + 6, c.dy), p);
     canvas.drawLine(Offset(c.dx, c.dy - r - 6), Offset(c.dx, c.dy - r + 1), p);
     canvas.drawLine(Offset(c.dx, c.dy + r - 1), Offset(c.dx, c.dy + r + 6), p);
-    canvas.drawCircle(c, 1.6, Paint()..color = const Color(0xCC1E88E5));
+    canvas.drawCircle(
+        c, 1.6, Paint()..color = AppTheme.water.withOpacity(.8));
   }
 
   @override
