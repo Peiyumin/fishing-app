@@ -69,6 +69,11 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   FishingWeather? _fw;
   bool _wxDone = false;
 
+  /// 滚动位置：滚过封面后顶部要浮出「作者条」（参考稿就是这个交互）
+  final _scroll = ScrollController();
+  final _offVN = ValueNotifier<double>(0);
+  double _coverH = 360;
+
   @override
   void initState() {
     super.initState();
@@ -77,11 +82,16 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     _loadComments();
     _trackView();
     _loadWeather();
+    _scroll.addListener(() {
+      _offVN.value = _scroll.hasClients ? _scroll.offset : 0;
+    });
   }
 
   @override
   void dispose() {
     _ctrl.dispose();
+    _scroll.dispose();
+    _offVN.dispose();
     super.dispose();
   }
 
@@ -294,6 +304,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   Widget _cover() {
     final w = MediaQuery.of(context).size.width;
     final h = (w * .92).clamp(240.0, 480.0);
+    _coverH = h;
     final top = MediaQuery.of(context).padding.top;
     final img = _post.imageUrls.isNotEmpty ? _post.imageUrls.first : null;
     final cover = _post.isVideo && _post.videoUrl != null;
@@ -654,23 +665,23 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                       ],
                     ),
                     const SizedBox(height: 5),
+                    // 等级徽章 + 类别 + 时间合成一行：窄屏（320dp）下
+                    // 三个 Text 并排会撑爆，这里只留一个可省略的文本。
                     Row(
                       children: [
-                        // 等级徽章（和首页/发现页同一样式）
                         _levelBadge(_post.userLevel),
                         const SizedBox(width: 6),
-                        Text(
-                          _post.isCatch ? '渔获记录' : _post.categoryLabel,
-                          style: const TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w600,
-                              color: AppTheme.primary),
-                        ),
-                        const SizedBox(width: 6),
-                        Text('· ${_post.timeAgo}',
+                        Expanded(
+                          child: Text(
+                            '${_post.isCatch ? '渔获记录' : _post.categoryLabel} · ${_post.timeAgo}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                                 fontSize: 11.5,
-                                color: AppTheme.textSecondary)),
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.primary),
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -1681,17 +1692,94 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     );
   }
 
+  // ══════════════════════ 吸顶作者条 ══════════════════════
+
+  /// 滚过封面后从顶部浮出的作者条（参考稿的交互）：
+  /// 返回 + 头像 + 昵称 + 关注 + 更多，白底 + 底部细线。
+  Widget _stickyBar() {
+    return ValueListenableBuilder<double>(
+      valueListenable: _offVN,
+      builder: (_, off, __) {
+        // 封面下沿前 96px 开始渐显，再滚 80px 完全出现
+        final t = ((off - (_coverH - 96)) / 80).clamp(0.0, 1.0);
+        if (t <= 0) return const SizedBox.shrink();
+        final top = MediaQuery.of(context).padding.top;
+        return Opacity(
+          opacity: t,
+          child: Container(
+            padding: EdgeInsets.only(top: top + 4, bottom: 6, left: 4, right: 6),
+            decoration: BoxDecoration(
+              color: AppTheme.surface.withOpacity(t),
+              border: Border(
+                  bottom: BorderSide(
+                      color: AppTheme.divider.withOpacity(t), width: 1)),
+            ),
+            child: Row(
+              children: [
+                IconButton(
+                  iconSize: 20,
+                  padding: const EdgeInsets.all(8),
+                  constraints: const BoxConstraints(),
+                  icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                      color: AppTheme.textPrimary),
+                  onPressed: () => Navigator.of(context).maybePop(),
+                ),
+                const SizedBox(width: 2),
+                UserAvatar(
+                  url: ApiConfig.mediaUrl(_post.avatarUrl),
+                  userId: _post.userId,
+                  radius: 15,
+                  vipLevel: _post.authorVip,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _authorName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.textPrimary),
+                  ),
+                ),
+                if (!_post.isMe && ApiConfig.enabled) ...[
+                  FollowButton(
+                    userId: _post.userId,
+                    tiny: true,
+                    initialFollowing: _following,
+                    onChanged: (v) => _following = v,
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                IconButton(
+                  iconSize: 20,
+                  padding: const EdgeInsets.all(6),
+                  constraints: const BoxConstraints(),
+                  icon: const Icon(Icons.more_horiz_rounded,
+                      color: AppTheme.textPrimary),
+                  onPressed: _showMore,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   // ══════════════════════ 组装 ══════════════════════
 
   @override
   Widget build(BuildContext context) {
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.light,
-      child: Scaffold(
-        backgroundColor: AppTheme.background,
-        body: ListView(
-          padding: EdgeInsets.zero,
-          children: [
+    final page = Scaffold(
+      backgroundColor: AppTheme.background,
+      body: Stack(
+        children: [
+          ListView(
+            controller: _scroll,
+            padding: EdgeInsets.zero,
+            children: [
             // 封面 + 内容区上浮圆角
             Stack(
               children: [
@@ -1789,9 +1877,24 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                 ),
               ),
             ),
-          ],
-        ),
-        bottomNavigationBar: _bottomBar(),
+            ],
+          ),
+          // 吸顶作者条（滚过封面才出现）
+          Positioned(top: 0, left: 0, right: 0, child: _stickyBar()),
+        ],
+      ),
+      bottomNavigationBar: _bottomBar(),
+    );
+
+    // 状态栏图标：封面区用白色，滚到白底后切深色
+    return ValueListenableBuilder<double>(
+      valueListenable: _offVN,
+      child: page,
+      builder: (_, off, child) => AnnotatedRegion<SystemUiOverlayStyle>(
+        value: off > _coverH - 90
+            ? SystemUiOverlayStyle.dark
+            : SystemUiOverlayStyle.light,
+        child: child!,
       ),
     );
   }
