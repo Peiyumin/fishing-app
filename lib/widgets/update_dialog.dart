@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../app_theme.dart';
 import '../services/app_update_service.dart';
 import 'center_toast.dart';
 
@@ -78,7 +79,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(
           children: [
-            const Icon(Icons.system_update, color: Color(0xFF2E7D32)),
+            const Icon(Icons.system_update, color: AppTheme.accentDark),
             const SizedBox(width: 8),
             Text('发现新版本 v${info.version}'),
           ],
