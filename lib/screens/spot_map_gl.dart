@@ -2250,7 +2250,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                 onMapClick: (point, latlng) => _onMapClick(point),
               )
             : Container(
-                color: const Color(0xFFDDE6EC),
+                color: AppTheme.divider,
                 alignment: Alignment.center,
                 child: const SizedBox(
                   width: 30,
@@ -2431,7 +2431,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
               alignment: Alignment.centerLeft,
               child: Text(_tile.describe,
                   style: const TextStyle(
-                      fontSize: 11, color: Color(0xFF8A9099))),
+                      fontSize: 11, color: AppTheme.textSecondary)),
             ),
             const SizedBox(height: 10),
             // 底图线路自检：WiFi / 移动网络对比时，把逐家的结果直接摆出来
@@ -2451,7 +2451,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       title: Text(title, style: const TextStyle(fontSize: 13.5)),
       subtitle: Text(sub,
           style:
-              const TextStyle(fontSize: 11.5, color: Color(0xFF8A9099))),
+              const TextStyle(fontSize: 11.5, color: AppTheme.textSecondary)),
       value: value,
       activeColor: AppTheme.accent,
       onChanged: onChanged,
@@ -2512,7 +2512,7 @@ class _NetCheckRowState extends State<_NetCheckRow> {
                   style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
               const SizedBox(width: 6),
               Text('当前：${widget.current}',
-                  style: const TextStyle(fontSize: 11, color: Color(0xFF8A9099))),
+                  style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
               const Spacer(),
               if (_busy)
                 const SizedBox(
@@ -2534,7 +2534,7 @@ class _NetCheckRowState extends State<_NetCheckRow> {
             const Padding(
               padding: EdgeInsets.only(top: 2, left: 20),
               child: Text('点「重新检测」测一下这台手机当前网络能不能拉到底图',
-                  style: TextStyle(fontSize: 11, color: Color(0xFF8A9099))),
+                  style: TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
             ),
           for (final r in _results)
             Padding(
@@ -2564,7 +2564,7 @@ class _NetCheckRowState extends State<_NetCheckRow> {
             const Padding(
               padding: EdgeInsets.only(top: 5, left: 20),
               child: Text('首选底图在这条网络上不通，已自动改用能通的那家（回退本页再进生效）',
-                  style: TextStyle(fontSize: 10.5, color: Color(0xFF8A9099))),
+                  style: TextStyle(fontSize: 10.5, color: AppTheme.textSecondary)),
             ),
         ],
       ),
