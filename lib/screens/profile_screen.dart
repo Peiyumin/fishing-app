@@ -678,7 +678,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return days.length;
   }
 
-  /// 钓鱼档案卡（图三）：图鉴进度 + 三个统计 + 拍一条入缸 / 我的池塘
+  /// 钓鱼档案卡（图三）：图鉴进度 + 三个统计 + 拍一条投入池塘 / 我的池塘
   Widget _fishDexCard() {
     return FishDexCard(
       guide: _guide,
