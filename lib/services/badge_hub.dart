@@ -28,6 +28,13 @@ class BadgeHub {
   /// 后端不支持这个接口时置 true，之后不再发请求
   static bool _disabled = false;
 
+  /// 上一次请求失败的时间：失败后短暂退避，**但不把作者 id 记成「已问过」**
+  ///
+  /// 之前的写法是 catch 里 `_known.addAll(ids)`，等于「只要失败过一次，这批人
+  /// 这辈子都不会再查」——后端修好了也得杀进程重进才看得到徽章。现在改成
+  /// 20 秒退避，之后还会再试。
+  static DateTime? _backoffUntil;
+
   /// 缓存有更新就 +1，卡片监听它重建
   static final ValueNotifier<int> revision = ValueNotifier<int>(0);
 
@@ -39,6 +46,11 @@ class BadgeHub {
   /// 卡片侧调用：登记作者 id，自动合并成一次请求
   static void warm(Iterable<String> userIds) {
     if (_disabled || !ApiConfig.enabled) return;
+    final until = _backoffUntil;
+    if (until != null) {
+      if (DateTime.now().isBefore(until)) return;
+      _backoffUntil = null;
+    }
     var added = false;
     for (final id in userIds) {
       if (id.isEmpty || _known.contains(id) || _cache.containsKey(id)) continue;
@@ -82,9 +94,9 @@ class BadgeHub {
       }
       if (changed) revision.value++;
     } catch (_) {
-      // 404（后端没升级）或网络问题：标记这些 id 已知，别反复打
-      _known.addAll(ids);
-      // 连续失败会在下次 warm 时被 _known 挡住，这里只在明确 404 时停用
+      // 404（后端还没升级）或网络抖动：不记入 _known，只退避 20 秒，
+      // 之后有新卡片进来还会再试一次 —— 后端升级完不用重启 App。
+      _backoffUntil = DateTime.now().add(const Duration(seconds: 20));
     }
     // 还有剩下的（超过一批）继续排队
     if (_pending.isNotEmpty) {
@@ -100,6 +112,7 @@ class BadgeHub {
     _pending.clear();
     _timer?.cancel();
     _timer = null;
+    _backoffUntil = null;
     _disabled = false;
     revision.value++;
   }
