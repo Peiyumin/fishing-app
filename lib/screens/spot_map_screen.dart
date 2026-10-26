@@ -499,7 +499,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                               fontSize: 11,
                               letterSpacing: 1.2,
                               fontWeight: FontWeight.w700,
-                              color: Color(0xFF8A9099))),
+                              color: AppTheme.textSecondary)),
                     ],
                   ),
                   const Spacer(),
@@ -560,7 +560,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                   Text(
                     _tile.describe,
                     style: const TextStyle(
-                        fontSize: 11.5, color: Color(0xFF8A9099)),
+                        fontSize: 11.5, color: AppTheme.textSecondary),
                   ),
                   const SizedBox(height: 4),
                   // 瓦片统计：缓存命中越多越省流量，也说明离线缓存确实在工作
@@ -568,7 +568,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                     '瓦片 ${CachedTileProvider.statLine}'
                     '${CachedTileProvider.hasBundledTiles ? ' · 含内置包' : ''}',
                     style: const TextStyle(
-                        fontSize: 11, color: Color(0xFF8A9099)),
+                        fontSize: 11, color: AppTheme.textSecondary),
                   ),
                 ]),
 
@@ -637,7 +637,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                 const SizedBox(height: 12),
                 const Text(
                   '蓝色水域与红色禁钓区为参考图层，禁钓规定以现场标识牌及当地通告为准。',
-                  style: TextStyle(fontSize: 11.5, color: Color(0xFF8A9099)),
+                  style: TextStyle(fontSize: 11.5, color: AppTheme.textSecondary),
                 ),
               ],
             ),
@@ -681,7 +681,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
               fontSize: 10.5,
               letterSpacing: 0.8,
               fontWeight: FontWeight.w700,
-              color: Color(0xFF8A9099))),
+              color: AppTheme.textSecondary)),
     ]);
   }
 
@@ -702,7 +702,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
           color: selected ? const Color(0xFFE8F5EC) : const Color(0xFFF2F4F7),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: selected ? AppTheme.primary : const Color(0xFFE3E6EA),
+            color: selected ? AppTheme.primary : AppTheme.border,
             width: selected ? 2 : 1,
           ),
         ),
@@ -741,7 +741,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
           Text(sub,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 9.5, color: Color(0xFF8A9099))),
+              style: const TextStyle(fontSize: 9.5, color: AppTheme.textSecondary)),
         ]),
       ),
     );
@@ -783,7 +783,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                       color: Color(0xFF1A1D21))),
               Text(subtitle,
                   style: const TextStyle(
-                      fontSize: 11, color: Color(0xFF8A9099))),
+                      fontSize: 11, color: AppTheme.textSecondary)),
             ],
           ),
         ),
@@ -1480,7 +1480,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                 initialZoom: 4,
                 minZoom: 3,
                 maxZoom: _tile.maxZoom,
-                backgroundColor: const Color(0xFFDDE6EC),
+                backgroundColor: AppTheme.divider,
                 onPositionChanged: (position, _) {
                   final z = position.zoom ?? _zoom;
                   if ((z >= 5.5) != (_zoom >= 5.5) || (z >= 6) != (_zoom >= 6)) {
@@ -1859,7 +1859,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                 width: 24,
                 height: 24,
                 decoration: const BoxDecoration(
-                  color: Color(0xFF9BE15D),
+                  color: AppTheme.inkHi,
                   shape: BoxShape.circle,
                 ),
                 child: _aiLoading
@@ -1883,7 +1883,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                       fontSize: 10,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 0.6,
-                      color: Color(0xFF9BE15D))),
+                      color: AppTheme.inkHi)),
             ]),
           ),
         ),
