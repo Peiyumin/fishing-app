@@ -117,7 +117,7 @@ class FishAssets {
   static const Map<String, double> _aspect = {
     'baitiao': 3.333,
     'bayu': 3.711,
-    'bianyu': 1.614,
+    'bianyu': 1.579,
     'bimu': 1.682,
     'caoyu': 3.429,
     'dahuangyu': 3.913,
@@ -128,7 +128,7 @@ class FishAssets {
     'ganyu': 4.337,
     'guiyu': 1.978,
     'haijiyu': 2.250,
-    'hailuyu': 1.488,
+    'hailuyu': 1.519,
     'haiman': 2.011,
     'heidiao': 1.338,
     'heitouyu': 1.773,
@@ -141,9 +141,9 @@ class FishAssets {
     'lianyu': 2.384,
     'lingyu': 2.975,
     'liuxianyu': 2.835,
-    'liyu': 1.364,
+    'liyu': 2.156,
     'luofeiyu': 2.384,
-    'luyu': 1.364,
+    'luyu': 2.236,
     'maisui': 2.590,
     'makou': 3.243,
     'nianyu': 1.538,
@@ -160,7 +160,7 @@ class FishAssets {
     'youyu': 3.600,
     'zhangyu': 1.600,
     'zhendiao': 1.622,
-    'ziyu': 3.333
+    'ziyu': 3.333,
   };
 
   /// 素材宽高比；查不到按 2.6:1 估（大多数淡水鱼的侧面比例）
