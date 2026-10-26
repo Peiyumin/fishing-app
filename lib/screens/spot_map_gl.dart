@@ -20,6 +20,7 @@ import '../models/water_body.dart';
 import '../services/location_service.dart';
 import '../services/map_config_service.dart';
 import '../services/ai_spot_service.dart';
+
 import '../services/map_data_service.dart';
 import '../services/map_tile_source.dart';
 import '../services/api_config.dart';
@@ -29,6 +30,25 @@ import '../services/tile_health.dart';
 import '../widgets/spot_pin.dart';
 import 'spot_detail_screen.dart';
 import 'spot_map_screen.dart' show SpotMapController, SpotMapScreen;
+
+/// maplibre 的图层属性只吃 `'#RRGGBB'` 字符串，没法直接引用 [AppTheme] 的 Color，
+/// 而这些属性又都写在 `const` 里 —— 所以只能落成字符串常量。
+///
+/// ★ 这里是**唯一**允许出现十六进制色值的地方，每个值都必须和 AppTheme 的
+///   token 一字不差（`test/theme_palette_test.dart` 会逐条比对）。
+///   以前地图图层自己一套蓝（#4FAEE8/#3FA9F5/#2E8FD0/#0B4FA8 四种），
+///   禁钓区又是 #E53935/#C62828 两个自造红，AI 点是橙色 #FF8A00 ——
+///   和 App 其它页面的数据蓝/警示红/荧光黄绿全都差一档，
+///   同一屏里"地图上的蓝"和"App 的蓝"是两个蓝。
+class _Hex {
+  static const background = '#EDF1F6'; // = AppTheme.background
+  static const water = '#46A0FB'; // = AppTheme.water
+  static const waterDeep = '#1E5FA8'; // = AppTheme.waterDeep
+  static const danger = '#F44336'; // = AppTheme.danger
+  static const dangerDark = '#C62828'; // = AppTheme.dangerDark
+  static const accent = '#C6FF3D'; // = AppTheme.accent
+  static const white = '#FFFFFF';
+}
 
 /// 钓点地图 · 原生 MapLibre 内核（v2.1.12）
 ///
@@ -459,7 +479,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         {
           'id': 'bg',
           'type': 'background',
-          'paint': {'background-color': '#DDE6EC'},
+          'paint': {'background-color': _Hex.background},
         },
         // raster-fade-duration: 0 —— 关掉瓦片淡入动画。
         // 默认 300ms 的淡入会让原生层在瓦片刚到时反复重绘，
@@ -772,7 +792,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         'hydro',
         'hydro-water',
         const FillLayerProperties(
-          fillColor: '#4FAEE8',
+          fillColor: _Hex.water,
           fillOpacity: 0.5,
         ),
         sourceLayer: 'water',
@@ -788,7 +808,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         'hydro',
         'hydro-water-line',
         const LineLayerProperties(
-          lineColor: '#3FA9F5',
+          lineColor: _Hex.water,
           lineWidth: 0.8,
           lineOpacity: 0.6,
         ),
@@ -817,7 +837,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         'hydro',
         'hydro-river-major',
         const LineLayerProperties(
-          lineColor: '#4FAEE8',
+          lineColor: _Hex.water,
           lineWidth: [
             'interpolate',
             ['linear'],
@@ -862,7 +882,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         'hydro',
         'hydro-river-line',
         LineLayerProperties(
-          lineColor: '#4FAEE8',
+          lineColor: _Hex.water,
           lineWidth: _zNum([6, 0.55, 10, 0.75, 14, 1.2, 17, 1.8]),
           lineOpacity: 0.85,
           lineCap: 'round',
@@ -952,7 +972,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           'lakes',
           'lakes-fill',
           const FillLayerProperties(
-              fillColor: '#2E8FD0',
+              fillColor: _Hex.water,
               // ★ 不再把传 opacity 设成 0 —— 见 _applyLayerToggles 注释
               fillOpacity: 0.45),
           minzoom: 3);
@@ -960,7 +980,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           'lakes',
           'lakes-line',
           const LineLayerProperties(
-              lineColor: '#0B4FA8', lineWidth: 1.6, lineOpacity: 0.9),
+              lineColor: _Hex.waterDeep, lineWidth: 1.6, lineOpacity: 0.9),
           minzoom: 3);
 
       // ---------------- 河流：单层浅蓝水面带 ----------------
@@ -977,7 +997,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           'rivers',
           'rivers-line',
           LineLayerProperties(
-            lineColor: '#3FA9F5',
+            lineColor: _Hex.water,
             // ★ v2.1.22：宽度档整体收窄（原来 z12=16px / z15=30px，
             //   是一根很粗的实心蓝带，和在线那层是同一个观感问题）。
             //   本地这张表只是「离线兜底」，没有水面填充可依靠，
@@ -995,7 +1015,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           'zones',
           'zones-fill',
           const FillLayerProperties(
-            fillColor: '#E53935',
+            fillColor: _Hex.danger,
             // 正在禁渔期（active=true）的红得更实，已过期的淡一档
             fillOpacity: [
               'case',
@@ -1009,7 +1029,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           'zones',
           'zones-line',
           const LineLayerProperties(
-            lineColor: '#C62828',
+            lineColor: _Hex.dangerDark,
             lineWidth: 2.2,
             lineOpacity: 1.0,
             lineJoin: 'round',
@@ -1046,7 +1066,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         'ai-spots',
         'ai-spot-halo',
         CircleLayerProperties(
-          circleColor: '#FF8A00',
+          circleColor: _Hex.accent,
           circleRadius: _zNum([8, 15, 14, 20]),
           circleOpacity: 0.25,
           circleBlur: 1.2,
@@ -1057,26 +1077,25 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         'ai-spots',
         'ai-spot-circle',
         CircleLayerProperties(
-          circleColor: '#FF8A00',
+          circleColor: _Hex.accent,
           circleRadius: _zNum([8, 10, 14, 13]),
-          circleStrokeColor: '#FFFFFF',
+          circleStrokeColor: _Hex.white,
           circleStrokeWidth: 2.4,
         ),
         minzoom: 0,
       );
-      await _safeLayer(
-        'ai-spots',
-        'ai-spot-label',
-        const SymbolLayerProperties(
-          textField: ['get', 'n'],
-          textSize: 11.5,
-          textColor: '#FFFFFF',
-          textAllowOverlap: true,
-          textIgnorePlacement: true,
-          textAnchor: 'center',
-        ),
-        minzoom: 0,
-      );
+      // ★★ v2.1.36：这里原来有一个 ai-spot-label 文字层（textField: ['get','n']，
+      //   想把 AI 钓点序号画在地图上）。**已删除**，原因：
+      //   MapLibre 渲染任何 `text-field` 都必须从样式里的 `glyphs`
+      //   （`{fontstack}/{range}.pbf`）拉字形。本项目的样式是纯栅格瓦片
+      //   （星图地球影像 + 注记），`sources` 里没有也不该有 glyphs 服务 ——
+      //   于是这一层拿不到任何字形，只能画 last-resort 的 `.notdef`，
+      //   也就是用户看到的**小方块**。数字也一样，和中文无关。
+      //
+      //   序号信息并没有丢：钓点列表按同一顺序排列，点圆点会高亮对应项，
+      //   序号只是「地图上的第几个」，不值得为它引一个字体服务。
+      //   要恢复「圆点里带数字」的话，正确做法是用 Flutter Canvas 画成 PNG
+      //   再 `addImage`（同 spot-pin / water-icon），绝不能再用 text-field。
 
       // ---------------- 校验：真的加上了才算成功 ----------------
       final ids =
@@ -1185,7 +1204,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     // 白色外圈：卫星影像背景很花，没有白边会糊成一团
     canvas.drawCircle(const Offset(32, 32), 29, Paint()..color = Colors.white);
     canvas.drawCircle(
-        const Offset(32, 32), 25.5, Paint()..color = const Color(0xFF1E6FC4));
+        const Offset(32, 32), 25.5, Paint()..color = AppTheme.water);
     final wave = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
@@ -1511,7 +1530,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           gradient: const LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF0B3026), Color(0xFF0F7A53)],
+            colors: [Color(0xFF1D242E), Color(0xFF07080C)],
           ),
           borderRadius: BorderRadius.circular(26),
           boxShadow: const [
@@ -1531,12 +1550,12 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                 height: 18,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation(Color(0xFFB6F36A)),
+                  valueColor: AlwaysStoppedAnimation(AppTheme.accent),
                 ),
               )
             else
               const Icon(Icons.auto_awesome,
-                  size: 19, color: Color(0xFFB6F36A)),
+                  size: 19, color: AppTheme.accent),
             const SizedBox(width: 9),
             Column(
               mainAxisSize: MainAxisSize.min,
@@ -1562,12 +1581,13 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFF8A00),
+                  color: AppTheme.accent,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text('${_aiSpots.length}',
                     style: const TextStyle(
-                        color: Colors.white,
+                        // 荧光黄绿底上必须用近黑字（白字对比度只有 1.1:1）
+                        color: AppTheme.primary,
                         fontSize: 11,
                         fontWeight: FontWeight.w700)),
               ),
@@ -1857,11 +1877,11 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                         width: 30,
                         height: 30,
                         decoration: const BoxDecoration(
-                          color: Color(0xFFFFF1E0),
+                          color: AppTheme.accentLight,
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(Icons.auto_awesome,
-                            size: 17, color: Color(0xFFFF8A00)),
+                            size: 17, color: AppTheme.accentDark),
                       ),
                       const SizedBox(width: 10),
                       Column(
@@ -1921,12 +1941,12 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                                 height: 26,
                                 alignment: Alignment.center,
                                 decoration: const BoxDecoration(
-                                  color: Color(0xFFFF8A00),
+                                  color: AppTheme.accent,
                                   shape: BoxShape.circle,
                                 ),
                                 child: Text('${i + 1}',
                                     style: const TextStyle(
-                                        color: Colors.white,
+                                        color: AppTheme.primary,
                                         fontSize: 12.5,
                                         fontWeight: FontWeight.w700)),
                               ),
@@ -2006,10 +2026,10 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   }
 
   static Color _aiScoreColor(int s) {
-    if (s >= 80) return const Color(0xFF2E9E5B);
-    if (s >= 60) return const Color(0xFFD9A02B);
-    if (s >= 40) return const Color(0xFFE07A29);
-    return const Color(0xFFD9534F);
+    if (s >= 80) return AppTheme.accentDark;
+    if (s >= 60) return AppTheme.starDark;
+    if (s >= 40) return AppTheme.warning;
+    return AppTheme.danger;
   }
 
   Future<void> _locate({bool silent = false}) async {
@@ -2052,10 +2072,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
             'me',
             'me-circle',
             CircleLayerProperties(
-              circleColor:
-                  '#${AppTheme.accent.value.toRadixString(16).substring(2)}',
+              circleColor: _Hex.water,
               circleRadius: 6,
-              circleStrokeColor: '#FFFFFF',
+              circleStrokeColor: _Hex.white,
               circleStrokeWidth: 2.5,
             ));
         _meAdded = true;
@@ -2292,7 +2311,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
                 decoration: BoxDecoration(
-                  color: const Color(0xE61B2C24),
+                  color: const Color(0xE607080C),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Row(children: [
@@ -2453,7 +2472,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           style:
               const TextStyle(fontSize: 11.5, color: AppTheme.textSecondary)),
       value: value,
-      activeColor: AppTheme.accent,
+      activeColor: AppTheme.primary,
       onChanged: onChanged,
     );
   }
@@ -2498,7 +2517,7 @@ class _NetCheckRowState extends State<_NetCheckRow> {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF5F7F6),
+        color: AppTheme.primarySoft,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -2506,7 +2525,8 @@ class _NetCheckRowState extends State<_NetCheckRow> {
         children: [
           Row(
             children: [
-              const Icon(Icons.wifi_tethering, size: 15, color: Color(0xFF5A646B)),
+              const Icon(Icons.wifi_tethering,
+                  size: 15, color: AppTheme.violet),
               const SizedBox(width: 5),
               const Text('底图线路自检',
                   style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
@@ -2553,7 +2573,7 @@ class _NetCheckRowState extends State<_NetCheckRow> {
                       style: TextStyle(
                           fontSize: 11,
                           color: r.ok
-                              ? const Color(0xFF4A5056)
+                              ? AppTheme.textSecondary
                               : AppTheme.danger),
                     ),
                   ),
