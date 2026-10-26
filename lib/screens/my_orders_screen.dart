@@ -313,7 +313,7 @@ class _OrderCard extends StatelessWidget {
   static Color statusColor(int s) {
     switch (s) {
       case 1:
-        return AppTheme.accent;
+        return AppTheme.accentDark;
       case 2:
         return AppTheme.primary;
       case 3:
@@ -387,7 +387,7 @@ class _OrderCard extends StatelessWidget {
                             _Tag(text: order.typeLabel,
                                 color: order.isPoints
                                     ? AppTheme.star
-                                    : AppTheme.accent),
+                                    : AppTheme.accentDark),
                             const SizedBox(width: 6),
                             Text('${order.unitText} × ${order.quantity}',
                                 style: const TextStyle(
