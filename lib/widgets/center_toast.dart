@@ -81,7 +81,7 @@ class _ToastWidgetState extends State<_ToastWidget>
                   padding:
                       const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                   decoration: BoxDecoration(
-                    color: const Color(0xF016241E), // textPrimary 96% 不透明
+                    color: AppTheme.primary.withOpacity(.94),
                     borderRadius: BorderRadius.circular(AppTheme.radiusMd),
                     boxShadow: AppTheme.softShadow,
                   ),
