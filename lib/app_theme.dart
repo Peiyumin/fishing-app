@@ -27,6 +27,9 @@ class AppTheme {
   /// 星标 / 评分：暖金（唯一暖色，制造焦点）
   static const Color star = Color(0xFFF2A93B);
   static const Color starLight = Color(0xFFFCEFDB);
+  /// 暖金的文字版本：星标本身在白底上看不清（对比度只有 1.8:1），
+  /// 需要文字/图标落在浅底时用这一档深金。
+  static const Color starDark = Color(0xFFB26A00);
   /// 危险 / 删除 / 红标
   static const Color danger = Color(0xFFE5484D);
   static const Color dangerDark = Color(0xFFB71C1C);
@@ -51,8 +54,35 @@ class AppTheme {
   static const Color surface = Colors.white;
   static const Color textPrimary = Color(0xFF16241E);
   static const Color textSecondary = Color(0xFF5A6B62);
+  /// 第三级文字（城市·时间、计数、说明）：比 textSecondary 浅一档。
+  /// 原来卡片里散着 #9AA1A7 / #8A9099 两种偏蓝的灰，在白绿卡上显脏。
+  static const Color textTertiary = Color(0xFF8A9A91);
   static const Color divider = Color(0xFFE9EEEA);
   static const Color border = Color(0xFFE1E8E3);
+
+  // ─────────────── 深色面板（沉浸页专用：天气 / 地图 / 池塘） ───────────────
+  //
+  // 这几个页面用深底是对的（数据密、要看图、夜间也在用），但底必须是
+  // **深墨绿水面**，不能是深蓝夜空 —— 深蓝在这个 App 里读起来像另一个产品。
+  //
+  // 层级固定 6 档 + 1 个高亮，别在页面里再临时调：
+  //   inkBg(底) < inkSurfaceAlt(交替行) < inkSurface(卡面) < inkLine(分隔线)
+  //   inkText(主文字) / inkMuted(次要文字) / inkHi(高亮)
+  static const Color inkBg = Color(0xFF0B1C16);
+  static const Color inkSurface = Color(0xFF12271F);
+  static const Color inkSurfaceAlt = Color(0xFF0F211A);
+  static const Color inkLine = Color(0xFF1F3A2E);
+  /// 表头 / 略微提起的一条带
+  static const Color inkHead = Color(0xFF164034);
+  static const Color inkText = Color(0xFFE6F0EA);
+  static const Color inkMuted = Color(0xFF8CA79A);
+
+  /// 深底高亮：**湖绿的亮阶**。
+  ///
+  /// 别用荧光黄绿（#C8FF6A / #D8E86A）—— 那个色在深底上像电竞界面，
+  /// 而且会和暖金、危险红、水蓝抢注意力，一屏里出现四五个高饱和色，
+  /// 结果是谁都不突出。深底只留这一个高亮色，其余全部降成 inkMuted。
+  static const Color inkHi = Color(0xFF4FD8A4);
 
   // ───────────────────────── 形状 / 间距 / 字阶 ─────────────────────────
   static const double radiusLg = 18;
