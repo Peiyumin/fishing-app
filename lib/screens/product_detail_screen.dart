@@ -349,7 +349,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   Text('可用 ${_p.pointsPrice} 积分兑换',
                       style: const TextStyle(
                           fontSize: 12.5,
-                          color: Color(0xFFB26A00),
+                          color: AppTheme.starDark,
                           fontWeight: FontWeight.w600)),
                 ],
               ),
@@ -603,7 +603,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   icon: const Icon(Icons.stars_rounded, size: 18),
                   label: Text('${_p.pointsPrice} 积分兑换'),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFFB26A00),
+                    foregroundColor: AppTheme.starDark,
                     side: const BorderSide(color: AppTheme.star),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
