@@ -205,6 +205,9 @@ class FishingWeather {
   final double temperature; // ℃
   final int humidity; // %
   final double windSpeed; // km/h
+  /// 风向（度）。界面只说「东南风 3级」，所以这里直接带上风向；
+  /// 旧版本缓存的 JSON 没有这个键 → null，此时只显示风力等级，不硬套一个方位。
+  final int? windDir;
   final double pressure; // hPa（海平面气压）
   final int weatherCode; // WMO 天气代码
   final String description; // 天气文字
@@ -222,6 +225,7 @@ class FishingWeather {
     required this.temperature,
     required this.humidity,
     required this.windSpeed,
+    this.windDir,
     required this.pressure,
     required this.weatherCode,
     required this.description,
@@ -273,6 +277,7 @@ class FishingWeather {
       temperature: h?.temp ?? b.curTemp,
       humidity: h?.humidity ?? b.curHumidity,
       windSpeed: h?.windSpeed ?? b.curWindSpeed,
+      windDir: h?.windDir ?? b.curWindDir,
       pressure: h?.pressure ?? b.curPressure,
       weatherCode: h?.weatherCode ?? b.curCode,
       description: FishingWeather._wmoText(h?.weatherCode ?? b.curCode),
@@ -293,6 +298,7 @@ class FishingWeather {
         't': temperature,
         'h': humidity,
         'ws': windSpeed,
+        'wd': windDir,
         'p': pressure,
         'c': weatherCode,
         'd': description,
@@ -306,6 +312,7 @@ class FishingWeather {
         temperature: (m['t'] as num?)?.toDouble() ?? 0,
         humidity: (m['h'] as num?)?.round() ?? 0,
         windSpeed: (m['ws'] as num?)?.toDouble() ?? 0,
+        windDir: (m['wd'] as num?)?.round(),
         pressure: (m['p'] as num?)?.toDouble() ?? 0,
         weatherCode: (m['c'] as num?)?.round() ?? 0,
         description: (m['d'] ?? '').toString(),
