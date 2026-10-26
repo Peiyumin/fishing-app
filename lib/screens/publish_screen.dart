@@ -453,7 +453,7 @@ class _PublishScreenState extends State<PublishScreen> {
                   borderRadius: BorderRadius.circular(14)),
               child: ListTile(
                 leading: const Icon(Icons.location_on,
-                    color: AppTheme.accent),
+                    color: AppTheme.primary),
                 title: Text(_locationName ?? '添加定位（选填）',
                     style: TextStyle(
                         color: _locationName == null ? Colors.grey : null)),
