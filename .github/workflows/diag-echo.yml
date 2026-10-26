@@ -1,0 +1,15 @@
+# 诊断用：极简 macOS 任务，验证 runner 是否可用（与业务代码无关）。
+name: diag-echo
+
+on:
+  workflow_dispatch:
+
+jobs:
+  t:
+    runs-on: macos-14
+    steps:
+      - run: |
+          echo "hello from macos runner"
+          sw_vers || true
+          uname -a
+        shell: bash
