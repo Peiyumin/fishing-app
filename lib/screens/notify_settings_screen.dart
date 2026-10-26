@@ -70,6 +70,12 @@ class _NotifySettingsScreenState extends State<NotifySettingsScreen> {
         elevation: 0,
         backgroundColor: Colors.white,
         foregroundColor: AppTheme.textPrimary,
+        // 同上：白色顶栏必须把标题和图标一起改深，否则白字白底
+        titleTextStyle: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: AppTheme.textPrimary),
+        iconTheme: const IconThemeData(color: AppTheme.textPrimary),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 28),
@@ -98,7 +104,7 @@ class _NotifySettingsScreenState extends State<NotifySettingsScreen> {
               child: _card(children: [
                 _row(
                   icon: Icons.mail_outline,
-                  color: AppTheme.accent,
+                  color: AppTheme.primary,
                   title: '私信消息',
                   sub: '互相关注的钓友发来的私信',
                   value: NotifyPrefs.chat,
