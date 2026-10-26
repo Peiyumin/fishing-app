@@ -133,7 +133,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
                 decoration: BoxDecoration(
                   color: _a.joined
                       ? AppTheme.primaryLight
-                      : const Color(0xFFF2F5F3),
+                      : AppTheme.primarySoft,
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(_a.joined ? '已报名' : _a.joinText,
@@ -277,7 +277,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
               foregroundColor: joined ? AppTheme.primary : Colors.white,
               disabledBackgroundColor: joined
                   ? AppTheme.primaryLight
-                  : const Color(0xFFDDE4E0),
+                  : AppTheme.primaryBorder,
               disabledForegroundColor:
                   joined ? AppTheme.primary : AppTheme.textSecondary,
               elevation: 0,
