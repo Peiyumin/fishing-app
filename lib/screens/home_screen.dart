@@ -19,10 +19,11 @@ import '../widgets/center_toast.dart';
 import '../widgets/grid_nav.dart';
 import '../widgets/location_prompt.dart';
 import '../widgets/msg_bell.dart';
-import '../widgets/post_card.dart';
 import '../widgets/section_header.dart';
 import '../widgets/spot_card.dart';
+import '../widgets/waterfall_post_card.dart';
 import '../widgets/weather_card.dart';
+import 'post_detail_screen.dart';
 import 'search_screen.dart';
 import 'signin_screen.dart';
 import 'weather_screen.dart';
@@ -621,8 +622,18 @@ class _HomeScreenState extends State<HomeScreen>
               subtitle: '实时更新',
             ),
             // 动态信息流（实时刷新）
+            //
+            // ★ 版式与「钓友圈」共用同一张双列瀑布卡（WaterfallPostCard），
+            //   用户要求首页这一块和参考图一模一样，所以不再用竖排大卡片。
+            //   嵌在 ListView 里 → shrinkWrap + 禁掉自己的滚动，避免两个
+            //   滚动容器抢手势（外层 AppRefresh 才是真正的滚动者）。
             _loadingPosts
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(20),
+                      child: CircularProgressIndicator(),
+                    ),
+                  )
                 : _posts.isEmpty
                     ? const Center(
                         child: Padding(
@@ -630,10 +641,14 @@ class _HomeScreenState extends State<HomeScreen>
                           child: Text('还没有动态，点击中间「+」发布第一条吧'),
                         ),
                       )
-                    : Column(
-                        children: _posts
-                            .map((p) => PostCard(post: p))
-                            .toList(),
+                    : WaterfallGrid(
+                        posts: _posts,
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+                        onTap: (p) => Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => PostDetailScreen(post: p)),
+                        ),
                       ),
           ],
         ),
