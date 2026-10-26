@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../app_theme.dart';
 import '../models/fishing_species.dart';
 import '../models/fish.dart';
 import '../models/weather_forecast.dart';
@@ -15,22 +16,27 @@ import '../utils/geo_names.dart';
 import '../widgets/location_prompt.dart';
 import '../widgets/app_refresh.dart';
 
-/// 深空配色（对齐钓鱼天气参考稿）
+/// 天气页调色板 —— 深墨绿水面，不是深蓝夜空
+///
+/// 原来这套是「深空蓝 + 荧光黄绿」，和 App 其余部分的湖绿浅底完全是两个世界：
+/// 从首页点进天气，像跳进了另一个产品。现在底色走 [AppTheme.ink*] 的深绿阶，
+/// 高亮从荧光黄绿换成湖绿亮阶，暖金统一到 [AppTheme.star]，气压箭头从
+/// 危险红改成暖橙（气压上升对钓鱼不是「错误」，用红色是误读）。
 class _Pal {
-  static const bg0 = Color(0xFF070D19);
-  static const bg1 = Color(0xFF0C1730);
-  static const card = Color(0xFF111D33);
-  static const cardAlt = Color(0xFF0E1828);
-  static const line = Color(0xFF1E2C46);
-  static const head = Color(0xFF12354B);
-  static const txt = Color(0xFFE9F0FA);
-  static const muted = Color(0xFF7F93AE);
-  static const gold = Color(0xFFF3C860);
-  static const accent = Color(0xFF54C8DE);
-  static const green = Color(0xFF7CE58C);
-  static const lime = Color(0xFFD8E86A);
-  static const amber = Color(0xFFF2C24B);
-  static const rise = Color(0xFFFF7A6B);
+  static const bg0 = Color(0xFF08130F); // 页面最底
+  static const bg1 = AppTheme.inkBg; // 深水面
+  static const card = AppTheme.inkSurface; // 卡面
+  static const cardAlt = AppTheme.inkSurfaceAlt; // 交替行
+  static const line = AppTheme.inkLine; // 分隔线
+  static const head = AppTheme.inkHead; // 表头
+  static const txt = AppTheme.inkText; // 主文字
+  static const muted = AppTheme.inkMuted; // 次要文字
+  static const gold = AppTheme.star; // 暖金（全站唯一暖色）
+  static const accent = Color(0xFF4CC3D9); // 水蓝（气温/湿度）
+  static const green = Color(0xFF6BD1A2); // 湖绿亮阶（口好）
+  static const lime = AppTheme.inkHi; // 高亮（指数/选中）
+  static const amber = AppTheme.warning; // 橙
+  static const rise = Color(0xFFE8A67A); // 气压上升：暖橙，别用危险红
   static const fall = Color(0xFF5FD3AE);
 }
 
@@ -711,7 +717,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
       const SizedBox(height: 9),
       Text(result.advice,
           style: const TextStyle(
-              color: Color(0xFFBBC9DC), fontSize: 12.5, height: 1.6)),
+              color: _Pal.muted, fontSize: 12.5, height: 1.6)),
       const SizedBox(height: 11),
       Text(
           '依据：气压与 3 小时变压 · 水温适温 · 水氧需求 · 风 · 天气现象 · 昼夜温差'
@@ -922,7 +928,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
             const SizedBox(height: 5),
             Text(body,
                 style: const TextStyle(
-                    color: Color(0xFFBBC9DC), fontSize: 12, height: 1.55)),
+                    color: _Pal.muted, fontSize: 12, height: 1.55)),
           ],
         ),
       );
@@ -1283,13 +1289,13 @@ class _DateStrip extends StatelessWidget {
                     ? const LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [Color(0xFF3B4A67), Color(0xFF26324C)],
+                        colors: [_Pal.head, _Pal.card],
                       )
                     : null,
                 color: sel ? null : Colors.transparent,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: sel ? const Color(0xFF9FB0CB) : _Pal.line,
+                  color: sel ? _Pal.muted : _Pal.line,
                   width: sel ? 1.2 : 1,
                 ),
               ),
@@ -1306,7 +1312,7 @@ class _DateStrip extends StatelessWidget {
                   Text(
                     '${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}',
                     style: TextStyle(
-                        color: sel ? Colors.white : const Color(0xFFB9C7DA),
+                        color: sel ? Colors.white : _Pal.muted,
                         fontSize: 12.5,
                         fontWeight: FontWeight.w700),
                   ),
@@ -1359,7 +1365,7 @@ class _ModeRow extends StatelessWidget {
                   Text(
                     FishingMode.all[i].name,
                     style: TextStyle(
-                      color: i == selected ? _Pal.gold : _Pal.muted,
+                      color: i == selected ? _Pal.txt : _Pal.muted,
                       fontSize: i == selected ? 16 : 14,
                       fontWeight:
                           i == selected ? FontWeight.w700 : FontWeight.normal,
@@ -1367,10 +1373,10 @@ class _ModeRow extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Container(
-                    width: i == selected ? 18 : 0,
-                    height: 2.5,
+                    width: i == selected ? 20 : 0,
+                    height: 3,
                     decoration: BoxDecoration(
-                      color: _Pal.gold,
+                      color: _Pal.lime,
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -1418,17 +1424,17 @@ class _SpeciesChips extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 14),
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: sel ? _Pal.gold.withOpacity(0.14) : Colors.transparent,
+                color: sel ? _Pal.lime.withOpacity(0.12) : Colors.transparent,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: sel ? _Pal.gold : _Pal.line,
+                  color: sel ? _Pal.lime : _Pal.line,
                   width: sel ? 1.1 : 1,
                 ),
               ),
               child: Text(
                 species[i].name,
                 style: TextStyle(
-                  color: sel ? _Pal.gold : const Color(0xFFB9C7DA),
+                  color: sel ? _Pal.lime : _Pal.muted,
                   fontSize: 12.5,
                   fontWeight: sel ? FontWeight.w600 : FontWeight.normal,
                 ),
@@ -1487,9 +1493,9 @@ class _TitleRow extends StatelessWidget {
                   borderRadius: BorderRadius.circular(3),
                   gradient: const LinearGradient(
                     colors: [
-                      Color(0xFFE5484D),
-                      Color(0xFFF2C24B),
-                      Color(0xFF7CE58C)
+                      _Pal.amber,
+                      _Pal.gold,
+                      _Pal.green
                     ],
                   ),
                 ),
@@ -1702,9 +1708,9 @@ class _HourTable extends StatelessWidget {
     // 气温冷热标签
     Widget? tempTag;
     if (h.temp < 15) {
-      tempTag = _miniTag('冷', const Color(0xFFFF8A7A));
+      tempTag = _miniTag('冷', _Pal.accent); // 冷＝水蓝（用暖色标「冷」是反的）
     } else if (h.temp > 28) {
-      tempTag = _miniTag('热', _Pal.amber);
+      tempTag = _miniTag('热', _Pal.amber); // 热＝暖橙
     }
 
     // 气压升降
@@ -1751,14 +1757,16 @@ class _HourTable extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
       decoration: BoxDecoration(
-        // 当前时间行：明显提亮 + 左侧金色竖条，下拉浏览时一眼定位「现在」
+        // 当前时间行：明显提亮 + 左侧湖绿竖条，下拉浏览时一眼定位「现在」
         color: isNow
-            ? const Color(0xFF23456B)
+            ? _Pal.head
             : (i.isEven ? Colors.transparent : const Color(0x08FFFFFF)),
         border: Border(
           bottom: const BorderSide(color: _Pal.line, width: 0.6),
+          // 「现在」用湖绿亮阶，金色只留给「黄金时段」——
+          // 两种含义共用一个颜色，用户就分不出哪个是「现在」哪个是「好时段」。
           left: isNow
-              ? const BorderSide(color: _Pal.gold, width: 3)
+              ? const BorderSide(color: _Pal.lime, width: 3)
               : BorderSide.none,
         ),
       ),
@@ -1802,7 +1810,7 @@ class _HourTable extends StatelessWidget {
                             size: 9,
                             color: showSunrise
                                 ? _Pal.gold
-                                : const Color(0xFFFF9A5A)),
+                                : _Pal.amber),
                         const SizedBox(width: 1),
                         Text(
                             showSunrise
@@ -1813,7 +1821,7 @@ class _HourTable extends StatelessWidget {
                             style: TextStyle(
                                 color: showSunrise
                                     ? _Pal.gold
-                                    : const Color(0xFFFF9A5A),
+                                    : _Pal.amber,
                                 fontSize: 7.5,
                                 height: 1.1)),
                       ],
@@ -2022,7 +2030,7 @@ class _Th extends StatelessWidget {
       flex: flex,
       child: Text(text,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Color(0xFFCBDAEA), fontSize: 10)),
+          style: const TextStyle(color: _Pal.muted, fontSize: 10)),
     );
   }
 }
@@ -2041,9 +2049,9 @@ class _Th2 extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(main,
-              style: const TextStyle(color: Color(0xFFCBDAEA), fontSize: 10)),
+              style: const TextStyle(color: _Pal.muted, fontSize: 10)),
           Text(sub,
-              style: const TextStyle(color: Color(0xFF7F93AE), fontSize: 7.5)),
+              style: const TextStyle(color: _Pal.muted, fontSize: 7.5)),
         ],
       ),
     );
@@ -2065,8 +2073,11 @@ class _Td extends StatelessWidget {
 // 工具
 // ============================================================
 Color _scoreColor(int s) {
-  if (s >= 90) return _Pal.green;
-  if (s >= 80) return _Pal.lime;
+  // 四档要能一眼分出高低：爆护最亮（它就是用户扫表时在找的那几行），
+  // 有口次亮，口弱转橙（不是好鱼情），<45 直接降到次要文字色。
+  // 原来 ≥90 用暗绿、≥80 用亮绿，两档几乎同色，等于没有分级。
+  if (s >= 90) return _Pal.lime;
+  if (s >= 80) return _Pal.green;
   if (s >= 45) return _Pal.amber;
   return _Pal.muted;
 }
@@ -2085,7 +2096,7 @@ Widget _aiFactor(String text, bool good) => Padding(
           Expanded(
             child: Text(text,
                 style: const TextStyle(
-                    color: Color(0xFFBBC9DC), fontSize: 11.5, height: 1.5)),
+                    color: _Pal.muted, fontSize: 11.5, height: 1.5)),
           ),
         ],
       ),
@@ -2384,7 +2395,7 @@ class _AiBitePanelState extends State<_AiBitePanel> {
             const SizedBox(height: 10),
             Text(r.advice,
                 style: const TextStyle(
-                    color: Color(0xFFBBC9DC), fontSize: 12, height: 1.55)),
+                    color: _Pal.muted, fontSize: 12, height: 1.55)),
           ],
           const SizedBox(height: 8),
           Text(
