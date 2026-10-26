@@ -229,16 +229,20 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
                       ],
                     ),
                     child: Text(
+                      // ★ 这里原来用「📍 / 👆」当项目符号。emoji 依赖系统的
+                      //   NotoColorEmoji 字体，ROM 精简过或老 Android 上直接
+                      //   渲染成小方块 —— 用户看到的就是「定位那行有乱码」。
+                      //   App 自己的文案一律不用 emoji，要图形就用 Icon。
                       _picked == null
                           ? _locating
-                              ? '📍 正在读取当前位置…'
-                              : '👆 点地图微调位置 · 蓝点=我的位置 · 红标=钓点'
+                              ? '正在读取当前位置…'
+                              : '点地图微调位置 · 蓝点=我的位置 · 红标=钓点'
                           : _geoAddress == null
                               ? _resolvingAddress
-                                  ? '📍 已选钓点，正在解析地址…'
-                                  : '📍 已选钓点：${_picked!.latitude.toStringAsFixed(4)}, '
+                                  ? '已选钓点，正在解析地址…'
+                                  : '已选钓点：${_picked!.latitude.toStringAsFixed(4)}, '
                                       '${_picked!.longitude.toStringAsFixed(4)}'
-                              : '📍 已选钓点：${_geoAddress!.bestAddress}',
+                              : '已选钓点：${_geoAddress!.bestAddress}',
                       style: const TextStyle(fontSize: 13),
                     ),
                   ),
@@ -249,7 +253,7 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
                   right: 12,
                   child: FloatingActionButton.small(
                     backgroundColor: Colors.white,
-                    foregroundColor: AppTheme.accent,
+                    foregroundColor: AppTheme.primary,
                     onPressed: _locating ? null : _useMyLocation,
                     tooltip: '使用我的位置',
                     child: _locating
