@@ -101,11 +101,13 @@ class SectionHeader extends StatelessWidget {
                   children: [
                     // 文案只写链接名（如「更多」「7天预报」），箭头统一由图标渲染，
                     // 避免「更多 >>」变成「更多 >> ›」的重复箭头
+                    // 设计稿里「更多 ›」是中性灰：它只是导航，不该和
+                    // 内容里的黄绿强调抢注意力
                     Text(actionLabel!.replaceAll(RegExp(r'\s*>+\s*$'), ''),
                         style: const TextStyle(
-                            fontSize: 13, color: AppTheme.accent)),
+                            fontSize: 13, color: AppTheme.textSecondary)),
                     const Icon(Icons.chevron_right,
-                        size: 16, color: AppTheme.accent),
+                        size: 16, color: AppTheme.textTertiary),
                   ],
                 ),
               ),
