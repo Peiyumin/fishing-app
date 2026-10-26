@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import '../utils/text_safe.dart';
 import 'map_tile_source.dart';
 
 /// 一条线路的自检结果
@@ -148,6 +149,6 @@ class TileHealth {
 
   static String _short(Object e) {
     final s = e.toString().replaceAll('\n', ' ');
-    return s.length > 46 ? '${s.substring(0, 46)}…' : s;
+    return clipGrapheme(s, 46);
   }
 }
