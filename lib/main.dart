@@ -68,6 +68,31 @@ Future<void> _injectRootCerts() async {
   }
 }
 
+/// 把启动页底图解进图片缓存，让 Dart 首帧就能直接画出来
+///
+/// 只解码这一张（约 500KB JPEG），不做任何网络请求，最多等 800ms；
+/// 失败也不阻塞启动 —— 大不了退回「黑底 + 图片稍后淡入」。
+Future<void> _precacheSplash() async {
+  final completer = Completer<void>();
+  final stream = const AssetImage('assets/startup/splash_brand.jpg')
+      .resolve(ImageConfiguration.empty);
+  late final ImageStreamListener listener;
+  listener = ImageStreamListener(
+    (_, __) {
+      if (!completer.isCompleted) completer.complete();
+    },
+    onError: (_, __) {
+      if (!completer.isCompleted) completer.complete();
+    },
+  );
+  stream.addListener(listener);
+  await completer.future.timeout(
+    const Duration(milliseconds: 800),
+    onTimeout: () {},
+  );
+  stream.removeListener(listener);
+}
+
 void main() async {
   // Flutter 绑定初始化（必须在 async main 开头调用）
   WidgetsFlutterBinding.ensureInitialized();
@@ -94,6 +119,10 @@ void main() async {
   MessagePoller.instance.onNewItems = (items, summary) {
     _showFeedBanner(items, summary);
   };
+
+  // 预解码启动页底图：否则 Dart 首帧画出来时图还在解码，用户会多看到
+  // 两三百毫秒的纯黑（原生启动图本来就是黑的，视觉上像「黑屏一直不结束」）。
+  await _precacheSplash();
 
   runApp(
     // 用 Provider 在全局共享登录态
@@ -366,6 +395,12 @@ class _StartupGateState extends State<StartupGate> {
   bool _loading = true;
   AppBootstrap? _boot;
 
+  /// 启动封面自己的动画是否播完了。
+  /// ★ 不能只看 `_loading`：启动接口 200ms 就回来的话，进度条还没动
+  ///   就被切走了。现在由 [SplashScreen] 负责「至少亮 1.6 秒 + 把进度
+  ///   涨到 100%」，播完调 [onFinished]，这里才真正放行。
+  bool _splashDone = false;
+
   @override
   void initState() {
     super.initState();
@@ -401,7 +436,15 @@ class _StartupGateState extends State<StartupGate> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const SplashScreen();
+    if (!_splashDone) {
+      return SplashScreen(
+        ready: !_loading,
+        onFinished: () {
+          if (!mounted || _splashDone) return;
+          setState(() => _splashDone = true);
+        },
+      );
+    }
     final boot = _boot;
     if (boot == null || !boot.hasStartupContent) return const MainShell();
     if (boot.ads.isNotEmpty) {
@@ -483,8 +526,10 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
-  // 底部单个 tab（图标 + 文字）
-  // 选中态只变图标/文字颜色，不加背景块 —— 保持导航栏干净
+  // 底部单个 tab（图标 + 文字 + 选中指示条）
+  //
+  // 选中态：近黑图标 + 近黑加粗文字 + 下方一条短荧光黄绿横条。
+  // 不用「整块浅色底」，那样五个 tab 会变成五个色块，反而喧宾夺主。
   Widget _navItem(int index, IconData icon, IconData activeIcon, String label) {
     final selected = _currentIndex == index;
     return Expanded(
@@ -492,23 +537,33 @@ class _MainShellState extends State<MainShell> {
         onTap: () => _onTabTapped(index),
         borderRadius: BorderRadius.circular(14),
         child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-          padding: const EdgeInsets.symmetric(vertical: 6),
+          margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          padding: const EdgeInsets.symmetric(vertical: 4),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
                 selected ? activeIcon : icon,
                 size: 22,
-                color: selected ? AppTheme.primary : AppTheme.textSecondary,
+                color: selected ? AppTheme.primary : AppTheme.textTertiary,
               ),
               const SizedBox(height: 2),
               Text(
                 label,
                 style: TextStyle(
                   fontSize: 11,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                  color: selected ? AppTheme.primary : AppTheme.textSecondary,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: selected ? AppTheme.primary : AppTheme.textTertiary,
+                ),
+              ),
+              const SizedBox(height: 3),
+              // 选中指示条：3×14 的圆角黄绿短横
+              Container(
+                width: selected ? 14 : 0,
+                height: 3,
+                decoration: BoxDecoration(
+                  color: AppTheme.accent,
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
             ],
