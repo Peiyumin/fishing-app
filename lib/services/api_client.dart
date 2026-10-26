@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../utils/text_safe.dart';
 import 'api_config.dart';
 
 /// 轻量 HTTP 客户端：JSON 请求 + 手写 multipart 图片上传（零第三方依赖）
@@ -41,7 +42,7 @@ class ApiClient {
     final req = await _http.getUrl(Uri.parse(_buildUrl(path, query)));
     _setHeaders(req);
     final res = await req.close();
-    return _decode(await res.transform(utf8.decoder).join());
+    return _decode(await res.transform(_utf8).join());
   }
 
   static Future<dynamic> post(String path, [Map<String, dynamic>? data]) async {
@@ -51,14 +52,22 @@ class ApiClient {
     // 编码，含中文的昵称/内容会抛 ArgumentError（请求根本发不出去）
     req.add(utf8.encode(jsonEncode(data ?? {})));
     final res = await req.close();
-    return _decode(await res.transform(utf8.decoder).join());
+    return _decode(await res.transform(_utf8).join());
   }
+
+  /// 解码响应正文用的解码器。
+  ///
+  /// ★ 必须 `allowMalformed: true`：默认的 [utf8.decoder] 遇到非法字节会
+  ///   直接抛 `FormatException`，一个坏字节就让整页报「服务器无响应」。
+  ///   放开之后坏字节变成 U+FFFD，再由 [sanitizeDeep] 清掉 —— 只丢一个
+  ///   字符，其余内容照常显示。
+  static const Utf8Decoder _utf8 = Utf8Decoder(allowMalformed: true);
 
   static Future<dynamic> delete(String path) async {
     final req = await _http.deleteUrl(Uri.parse(_buildUrl(path)));
     _setHeaders(req);
     final res = await req.close();
-    return _decode(await res.transform(utf8.decoder).join());
+    return _decode(await res.transform(_utf8).join());
   }
 
   /// POST 但返回完整 JSON（不丢弃 ok/code/error），用于需要读取业务 code 的接口
@@ -69,10 +78,10 @@ class ApiClient {
     _setHeaders(req);
     req.add(utf8.encode(jsonEncode(data)));
     final res = await req.close();
-    final body = await res.transform(utf8.decoder).join();
+    final body = await res.transform(_utf8).join();
     if (body.isEmpty) throw Exception('服务器无响应');
     final json = jsonDecode(body);
-    if (json is Map) return json.cast<String, dynamic>();
+    if (json is Map) return sanitizeDeep(json.cast<String, dynamic>());
     throw Exception('响应格式错误');
   }
 
@@ -105,7 +114,7 @@ class ApiClient {
     if (_token != null) req.headers.set('Authorization', 'Bearer $_token');
     req.add(bb.takeBytes());
     final res = await req.close();
-    final data = _decode(await res.transform(utf8.decoder).join());
+    final data = _decode(await res.transform(_utf8).join());
     return List<String>.from(data as List);
   }
 
@@ -133,19 +142,26 @@ class ApiClient {
     if (_token != null) req.headers.set('Authorization', 'Bearer $_token');
     req.add(bb.takeBytes());
     final res = await req.close();
-    final data = _decode(await res.transform(utf8.decoder).join());
+    final data = _decode(await res.transform(_utf8).join());
     final list = List<String>.from(data as List);
     if (list.isEmpty) throw Exception('上传失败：服务器未返回文件地址');
     return list.first;
   }
 
   /// 统一解析后端 {ok, data, error} 响应
+  ///
+  /// ★ 返回值里的**所有字符串都过了 [sanitizeDeep]**。
+  ///   为什么放在这一层：昵称、钓点名、地址、评论来自用户输入 / 服务端 /
+  ///   第三方地名接口，只要有一次 UTF-8 被从中间截断，客户端就会拿到
+  ///   U+FFFD 或半个代理项 —— 在 Text 里就是一个小方块。挂在这里能一次
+  ///   覆盖全站，比在每个 model 的 fromJson 里各写一遍可靠得多。
   static dynamic _decode(String body) {
     if (body.isEmpty) throw Exception('服务器无响应');
     final json = jsonDecode(body);
     if (json is! Map || json['ok'] != true) {
-      throw Exception(json is Map ? (json['error'] ?? '请求失败') : '请求失败');
+      throw Exception(
+          json is Map ? safeText(json['error'] ?? '请求失败') : '请求失败');
     }
-    return json['data'];
+    return sanitizeDeep(json['data']);
   }
 }
