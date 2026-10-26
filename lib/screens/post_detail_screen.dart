@@ -36,14 +36,17 @@ import '../widgets/follow_button.dart';
 // 不照搬参考稿的黑黄配色。
 // ─────────────────────────────────────────────────────────────
 
-/// 深色卡片底（墨绿近黑）
-const _ink = Color(0xFF11241C);
-const _inkCell = Color(0xFF1D3529);
-const _inkLine = Color(0xFF2A4438);
+/// 深色卡片底：**中性近黑**（设计稿的深色只用一个色相，不再带墨绿调）
+/// v2.1.36：不再自己定一套黑 —— 直接引用 [AppTheme.ink*]，
+/// 否则详情页是 #0B0E13 / 天气页是 #07080C，同一部手机里两种深底。
+const _ink = AppTheme.inkBg;
+const _inkCell = AppTheme.inkSurface;
+const _inkLine = AppTheme.inkLine;
 
-/// 亮绿高亮（比主色更亮，用于大数字/进度）
-const _hi = Color(0xFF37D08D);
-const _hiDim = Color(0xFF7FE3B6);
+/// 高亮：荧光黄绿（深底上唯一的彩色，用于大数字/进度）
+const _hi = AppTheme.inkHi;
+/// 次高亮：同色系的暗一档（和天气页刻度条的「半满」同一值）
+const _hiDim = AppTheme.accentMid;
 
 /// 动态详情：渔获详情页
 class PostDetailScreen extends StatefulWidget {
@@ -363,7 +366,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [Color(0x00000000), Color(0xCC05100B)],
+                  colors: [Color(0x00000000), Color(0xCC07080C)],
                 ),
               ),
             ),
@@ -470,7 +473,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             fontSize: 12,
             height: 1.6,
             fontWeight: FontWeight.w600,
-            color: Color(0xFFCBD9D2),
+            color: AppTheme.inkMuted,
           ),
         ),
       ],
@@ -505,7 +508,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                       fontSize: 10,
                       height: 1.2,
                       fontWeight: FontWeight.w900,
-                      color: Color(0xFF06281C))),
+                      color: AppTheme.inkBg)),
             ),
             const SizedBox(width: 6),
             Text('$_mainFish图鉴',
@@ -615,7 +618,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       decoration: BoxDecoration(
         color: color ?? AppTheme.surface,
         borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-        border: Border.all(color: const Color(0x0F16241E)),
+        border: Border.all(color: const Color(0x0F07080C)),
       ),
       child: child,
     );
@@ -905,7 +908,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           const SizedBox(width: 10),
           _miniStat('${_post.likeCount}', '点赞', AppTheme.danger),
           const SizedBox(width: 10),
-          _miniStat('${_post.commentCount}', '评论', AppTheme.accent),
+          _miniStat('${_post.commentCount}', '评论', AppTheme.textPrimary),
         ],
       ),
     );
@@ -1058,7 +1061,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
               gradient: const LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0xFFDDEBE4), Color(0xFFF2F8F4)],
+                colors: [Color(0xFFEFF2F7), Color(0xFFF7F9FC)],
               ),
               border: Border.all(color: AppTheme.primaryBorder),
             ),
@@ -1141,7 +1144,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF10241C), Color(0xFF17352A)],
+          colors: [AppTheme.inkBg, AppTheme.inkSurface],
         ),
         borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         border: Border.all(color: _inkLine, width: .8),
@@ -1199,7 +1202,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                         fontSize: 11,
                         height: 1.2,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF06281C))),
+                        color: AppTheme.inkBg)),
               ),
             ],
           ),
@@ -1238,8 +1241,10 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     ? AppTheme.warning
                     : _hiDim),
             _indexCell(Icons.air_rounded, '风',
-                _hour == null ? '—' : _hour!.windMs.toStringAsFixed(1),
-                _hour == null ? '' : 'm/s',
+                _hour == null
+                    ? '—'
+                    : '${beaufortLevel(_hour!.windSpeed)}',
+                _hour == null ? '' : '级',
                 _hour == null ? '' : '${_windDir(_hour!.windDir)}风', _hi),
           ]),
           const SizedBox(height: 8),
@@ -1285,9 +1290,11 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           alignment: Alignment.centerLeft,
           children: [
             Row(children: [
-              seg(const Color(0xFF33513F), const Color(0xFF4A6B55), .40),
-              seg(const Color(0xFF3CB97C), const Color(0xFF4FD693), .32),
-              seg(const Color(0xFF9BF06A), const Color(0xFFCDEB52), .28),
+              // 三段是一条「越满越亮」的连续色带：石墨 → 橄榄 → 荧光黄绿。
+              // 相邻两段的端点取同一个值，接缝处不断色（v2.1.36）。
+              seg(AppTheme.inkLine, AppTheme.violet, .40),
+              seg(AppTheme.violet, AppTheme.accentMid, .32),
+              seg(AppTheme.accentMid, AppTheme.accent, .28),
             ]),
             if (score != null)
               Positioned(
@@ -1542,11 +1549,14 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   // ══════════════════════ 底部栏 ══════════════════════
 
   Widget _bottomBar() {
+    // ★ 原来这里用 🐟🔥😱📍 当贴纸图标。emoji 依赖系统彩色字体，
+    //   ROM 精简 / 老 Android 上会渲染成小方块。换成 Material 图标，
+    //   图标字体随包打包（uses-material-design: true），永远有字形。
     const quick = [
-      ('🐟', '好鱼！'),
-      ('🔥', '爆护了'),
-      ('😱', '这么大？'),
-      ('📍', '求钓点'),
+      (Icons.set_meal, '好鱼！'),
+      (Icons.local_fire_department, '爆护了'),
+      (Icons.sentiment_very_satisfied, '这么大？'),
+      (Icons.place, '求钓点'),
     ];
     return Container(
       decoration: const BoxDecoration(
@@ -1581,8 +1591,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                           ),
                           child: Row(
                             children: [
-                              Text(q.$1,
-                                  style: const TextStyle(fontSize: 14)),
+                              Icon(q.$1, size: 15, color: AppTheme.primaryDark),
                               const SizedBox(width: 5),
                               Text(q.$2,
                                   style: const TextStyle(
