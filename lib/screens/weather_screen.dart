@@ -23,21 +23,29 @@ import '../widgets/app_refresh.dart';
 /// 高亮从荧光黄绿换成湖绿亮阶，暖金统一到 [AppTheme.star]，气压箭头从
 /// 危险红改成暖橙（气压上升对钓鱼不是「错误」，用红色是误读）。
 class _Pal {
-  static const bg0 = Color(0xFF08130F); // 页面最底
-  static const bg1 = AppTheme.inkBg; // 深水面
-  static const card = AppTheme.inkSurface; // 卡面
-  static const cardAlt = AppTheme.inkSurfaceAlt; // 交替行
-  static const line = AppTheme.inkLine; // 分隔线
-  static const head = AppTheme.inkHead; // 表头
-  static const txt = AppTheme.inkText; // 主文字
-  static const muted = AppTheme.inkMuted; // 次要文字
-  static const gold = AppTheme.star; // 暖金（全站唯一暖色）
-  static const accent = Color(0xFF4CC3D9); // 水蓝（气温/湿度）
-  static const green = Color(0xFF6BD1A2); // 湖绿亮阶（口好）
-  static const lime = AppTheme.inkHi; // 高亮（指数/选中）
-  static const amber = AppTheme.warning; // 橙
-  static const rise = Color(0xFFE8A67A); // 气压上升：暖橙，别用危险红
-  static const fall = Color(0xFF5FD3AE);
+  // 天气页 = 浅底白卡（设计稿）：和首页、钓友圈同一套表面语言。
+  // 之前是深蓝夜空，进这个页面像换了个 App，也和白卡的水位卡对不上。
+  static const bg0 = AppTheme.background; // 页面最底：冷灰蓝
+  static const card = AppTheme.surface; // 卡面：纯白
+  static const cardAlt = AppTheme.primarySoft; // 交替行
+  static const line = AppTheme.divider; // 分隔线
+  static const head = AppTheme.primaryLight; // 表头 / 次级块
+  static const txt = AppTheme.textPrimary; // 主文字：近黑
+  static const muted = AppTheme.textTertiary; // 次要文字：冷灰
+  /// 暖金**文字**：白底上用深一号（#FFC93C 在白底只有 1.6:1，等于看不见）
+  static const gold = AppTheme.starDark;
+  static const accent = AppTheme.water; // 数据蓝（低温 / 湿度）
+  static const green = AppTheme.accentDark; // 「口好」：白底可读的黄绿深阶
+  /// 荧光黄绿：只做**填充/色条**，在白底上当文字会消失
+  static const lime = AppTheme.accent;
+  /// 白底上的黄绿**文字**
+  static const limeInk = AppTheme.accentDark;
+  // ★ v2.1.36：原来这里有 gold / amber / rise **三个橙**
+  //   （#B77700 / #C2762A / #D2691E，同色相不同值）。
+  //   一屏里三个"橙"是配色显得杂的典型来源，现在全部收到 [gold] 一档：
+  //   温度单位、热标签、气压上升箭头都是「暖」语义，用法一致才像一套。
+  static const rise = gold; // 气压上升：暖金，别用危险红（上升不是错误）
+  static const fall = AppTheme.water; // 气压下降：数据蓝
 }
 
 /// 小数小时 → 「HH:mm」（如 6.7 → 06:42）
@@ -223,10 +231,16 @@ class _WeatherScreenState extends State<WeatherScreen> {
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: true,
-        foregroundColor: Colors.white,
-        systemOverlayStyle: SystemUiOverlayStyle.light,
-        title: const Text('钓鱼天气预报',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+        foregroundColor: _Pal.txt,
+        systemOverlayStyle: SystemUiOverlayStyle.dark,
+        // ★ 必须显式给 titleTextStyle / iconTheme 上色：
+        //   AppBarTheme 里的 iconTheme 是写死的白色，只设 foregroundColor
+        //   管不到标题和图标 —— 换浅底之后「钓鱼天气预报」和刷新按钮
+        //   就是白字白底，等于整条顶栏消失。
+        titleTextStyle: const TextStyle(
+            fontSize: 17, fontWeight: FontWeight.w700, color: _Pal.txt),
+        iconTheme: const IconThemeData(color: _Pal.txt),
+        title: const Text('钓鱼天气预报'),
         actions: [
           IconButton(
             tooltip: '刷新',
@@ -235,23 +249,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
           ),
         ],
       ),
-      body: Stack(
-        children: [
-          const Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [_Pal.bg0, _Pal.bg1, _Pal.bg0],
-                ),
-              ),
-            ),
-          ),
-          Positioned.fill(child: CustomPaint(painter: _StarPainter())),
-          _content(),
-        ],
-      ),
+      body: _content(),
     );
   }
 
@@ -624,11 +622,11 @@ class _WeatherScreenState extends State<WeatherScreen> {
       if (result.negatives.isNotEmpty) ...[
         Row(
           children: [
-            const Icon(Icons.trending_down, size: 13, color: _Pal.amber),
+            const Icon(Icons.trending_down, size: 13, color: _Pal.gold),
             const SizedBox(width: 5),
             Text('压制开口（${result.negatives.length} 项）',
                 style: const TextStyle(
-                    color: _Pal.amber,
+                    color: _Pal.gold,
                     fontSize: 11.5,
                     fontWeight: FontWeight.w600)),
           ],
@@ -665,22 +663,22 @@ class _WeatherScreenState extends State<WeatherScreen> {
       Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: _Pal.cardAlt,
+          color: AppTheme.accentLight,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: _Pal.gold.withOpacity(0.35)),
+          border: Border.all(color: AppTheme.accent.withOpacity(0.55)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Row(
               children: [
-                Icon(Icons.wb_sunny_outlined, size: 14, color: _Pal.gold),
+                Icon(Icons.wb_sunny_outlined, size: 14, color: _Pal.txt),
                 SizedBox(width: 6),
                 Text('黄金时段',
                     style: TextStyle(
-                        color: _Pal.gold,
+                        color: _Pal.txt,
                         fontSize: 12.5,
-                        fontWeight: FontWeight.w600)),
+                        fontWeight: FontWeight.w700)),
               ],
             ),
             const SizedBox(height: 9),
@@ -690,7 +688,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
                     children: [
                       const Text('◷ ',
                           style: TextStyle(
-                              color: _Pal.gold, fontWeight: FontWeight.bold)),
+                              color: _Pal.txt, fontWeight: FontWeight.bold)),
                       Text(g,
                           style: const TextStyle(
                               color: _Pal.txt,
@@ -898,7 +896,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
           '气压箭头是 3 小时变压：缓降多为锋前促口，急降多为变天停口，'
           '骤升（冷锋过境）鱼需要时间适应。'),
       _explainItem('风',
-          '数字为风速 km/h，下方标签是风力等级与风向。2~4 级最利于作钓（推流增氧聚饵），'
+          '数字为风力等级（蒲福风级），下方的标签是风向。2~4 级最利于作钓（推流增氧聚饵），'
           '无风闷、6 级以上压口。喜风浪的鱼（翘嘴/鲅鱼/马口）反而要有点风。'),
       _explainItem('水温',
           '无免费实测接口，按「水体热惯性」从气温序列推算：取前后约 30 小时的气温加权均值，'
@@ -1151,13 +1149,15 @@ class _NowCard extends StatelessWidget {
             children: [
               _Stat(
                 label: '气压 (hPa)',
-                value: pres.toStringAsFixed(0),
-                extra: _trendText(pDelta, fontSize: 9),
+                // 数据源没给气压时显示「—」而不是 0 ——
+                // 「0 hPa」比空白更像 bug，也会让人以为气压崩了
+                value: pres > 0 ? pres.toStringAsFixed(0) : '—',
+                extra: pres > 0 ? _trendText(pDelta, fontSize: 9) : null,
               ),
               _Stat(
-                label:
-                    '风 · ${windDirText(windDir)}${_beaufort(wind)}级',
-                value: '${wind.toStringAsFixed(0)}km/h',
+                // ★ 只说「几级 + 什么风」，不再报 km/h（v2.1.36）
+                label: '风向风力',
+                value: windLevelText(wind, windDir),
               ),
               _Stat(
                 label: '湿度 (%)',
@@ -1285,18 +1285,12 @@ class _DateStrip extends StatelessWidget {
               width: 62,
               padding: const EdgeInsets.symmetric(vertical: 8),
               decoration: BoxDecoration(
-                gradient: sel
-                    ? const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [_Pal.head, _Pal.card],
-                      )
-                    : null,
-                color: sel ? null : Colors.transparent,
+                gradient: null,
+                color: sel ? AppTheme.primary : AppTheme.surface,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: sel ? _Pal.muted : _Pal.line,
-                  width: sel ? 1.2 : 1,
+                  color: sel ? AppTheme.primary : _Pal.line,
+                  width: 1,
                 ),
               ),
               child: Column(
@@ -1317,17 +1311,27 @@ class _DateStrip extends StatelessWidget {
                         fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 5),
+                  // 鱼情 3 档用「点」表示：原来是 3 个 8px 的 🐟，
+                  // 一屏 7 张日期卡就是 21 条彩色小鱼 —— emoji 自带
+                  // 橙红蓝绿，直接破坏「黑白灰 + 一个荧光黄绿」的体系，
+                  // 8px 下也只是一排小色块。改成同色系圆点，档位照样看得懂。
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: List.generate(
                       3,
-                      (k) => Text(
-                        '🐟',
-                        style: TextStyle(
-                          fontSize: 8,
+                      (k) => Container(
+                        width: 4,
+                        height: 4,
+                        margin: const EdgeInsets.symmetric(horizontal: 1.2),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
                           color: k < n
-                              ? (disabled ? _Pal.muted : _Pal.gold)
-                              : Colors.transparent,
+                              ? (disabled
+                                  ? _Pal.muted
+                                  : (sel ? AppTheme.accent : _Pal.limeInk))
+                              : (sel
+                                  ? Colors.white.withOpacity(.28)
+                                  : _Pal.line),
                         ),
                       ),
                     ),
@@ -1424,19 +1428,19 @@ class _SpeciesChips extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 14),
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: sel ? _Pal.lime.withOpacity(0.12) : Colors.transparent,
-                borderRadius: BorderRadius.circular(8),
+                color: sel ? AppTheme.primary : AppTheme.surface,
+                borderRadius: BorderRadius.circular(999),
                 border: Border.all(
-                  color: sel ? _Pal.lime : _Pal.line,
-                  width: sel ? 1.1 : 1,
+                  color: sel ? AppTheme.primary : _Pal.line,
+                  width: 1,
                 ),
               ),
               child: Text(
                 species[i].name,
                 style: TextStyle(
-                  color: sel ? _Pal.lime : _Pal.muted,
+                  color: sel ? AppTheme.accent : _Pal.muted,
                   fontSize: 12.5,
-                  fontWeight: sel ? FontWeight.w600 : FontWeight.normal,
+                  fontWeight: sel ? FontWeight.w700 : FontWeight.normal,
                 ),
               ),
             ),
@@ -1486,29 +1490,41 @@ class _TitleRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 58,
-                height: 5,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(3),
-                  gradient: const LinearGradient(
-                    colors: [
-                      _Pal.amber,
-                      _Pal.gold,
-                      _Pal.green
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 3),
-              const Row(
+              // 刻度条 + 两端的「低 / 高」：只写一个「高」时，
+              // 它到底是"指数很高"还是"右端代表高"根本读不出来，
+              // 而样机截图里这一行正好紧挨着 69 分（口弱），非常像数据错乱
+              Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text('宜钓指数',
-                      style: TextStyle(color: _Pal.muted, fontSize: 8.5)),
-                  SizedBox(width: 6),
-                  Text('高', style: TextStyle(color: _Pal.green, fontSize: 8.5)),
+                  const Text('低', style: TextStyle(color: _Pal.muted, fontSize: 8)),
+                  const SizedBox(width: 3),
+                  Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(3),
+                      // 刻度条：淡 → 橄榄 → 荧光黄绿，和详情页的 CATCH INDEX
+                      // 同一套「越满越亮」的语言
+                      gradient: const LinearGradient(
+                        colors: [
+                          AppTheme.primaryBorder,
+                          AppTheme.accentMid,
+                          AppTheme.accent,
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 3),
+                  const Text('高',
+                      style: TextStyle(
+                          color: _Pal.limeInk,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w700)),
                 ],
               ),
+              const SizedBox(height: 2),
+              const Text('宜钓指数',
+                  style: TextStyle(color: _Pal.muted, fontSize: 8.5)),
             ],
           ),
         ],
@@ -1673,7 +1689,7 @@ class _HourTable extends StatelessWidget {
                 const _Th('天气', _fWx),
                 const _Th2('气温', '°C', _fTemp),
                 const _Th2('气压', 'hPa', _fPres),
-                const _Th2('风', 'km/h', _fWind),
+                const _Th2('风', '级', _fWind),
                 const _Th2('水温', '°C', _fWater),
                 _Th2(mode.name == '海钓' ? '潮汐记录' : '水氧',
                     mode.name == '海钓' ? '潮位' : 'mg/L', _fO2),
@@ -1710,12 +1726,12 @@ class _HourTable extends StatelessWidget {
     if (h.temp < 15) {
       tempTag = _miniTag('冷', _Pal.accent); // 冷＝水蓝（用暖色标「冷」是反的）
     } else if (h.temp > 28) {
-      tempTag = _miniTag('热', _Pal.amber); // 热＝暖橙
+      tempTag = _miniTag('热', _Pal.gold); // 热＝暖橙
     }
 
     // 气压升降
     Widget presTrend;
-    if (r.prev == null) {
+    if (r.prev == null || h.pressure <= 0 || r.prev!.pressure <= 0) {
       presTrend = const Text('—',
           style: TextStyle(color: _Pal.muted, fontSize: 8.5));
     } else {
@@ -1759,14 +1775,16 @@ class _HourTable extends StatelessWidget {
       decoration: BoxDecoration(
         // 当前时间行：明显提亮 + 左侧湖绿竖条，下拉浏览时一眼定位「现在」
         color: isNow
-            ? _Pal.head
-            : (i.isEven ? Colors.transparent : const Color(0x08FFFFFF)),
+            ? AppTheme.todayTint
+            : (i.isEven
+                ? Colors.transparent
+                : AppTheme.primary.withOpacity(.02)),
         border: Border(
           bottom: const BorderSide(color: _Pal.line, width: 0.6),
           // 「现在」用湖绿亮阶，金色只留给「黄金时段」——
           // 两种含义共用一个颜色，用户就分不出哪个是「现在」哪个是「好时段」。
           left: isNow
-              ? const BorderSide(color: _Pal.lime, width: 3)
+              ? const BorderSide(color: AppTheme.primary, width: 3)
               : BorderSide.none,
         ),
       ),
@@ -1810,7 +1828,7 @@ class _HourTable extends StatelessWidget {
                             size: 9,
                             color: showSunrise
                                 ? _Pal.gold
-                                : _Pal.amber),
+                                : _Pal.gold),
                         const SizedBox(width: 1),
                         Text(
                             showSunrise
@@ -1821,7 +1839,7 @@ class _HourTable extends StatelessWidget {
                             style: TextStyle(
                                 color: showSunrise
                                     ? _Pal.gold
-                                    : _Pal.amber,
+                                    : _Pal.gold,
                                 fontSize: 7.5,
                                 height: 1.1)),
                       ],
@@ -1865,7 +1883,8 @@ class _HourTable extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(h.pressure.toStringAsFixed(1),
+                // 整数就够了：320dp 窄屏下「1008.0」会顶到相邻列
+                Text(h.pressure > 0 ? h.pressure.toStringAsFixed(0) : '—',
                     maxLines: 1,
                     softWrap: false,
                     overflow: TextOverflow.clip,
@@ -1880,7 +1899,10 @@ class _HourTable extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('${h.windSpeed.round()}',
+                // ★ 上「3级」下「东南风」：原来上行是 km/h 数字（12），
+                //   小签才是「3级·东南」。现在全站只说风级，把风级提到
+                //   主位置，风向留小签 —— 一列里仍然只有两层信息，行高不变。
+                Text('${beaufortLevel(h.windSpeed)}级',
                     maxLines: 1,
                     softWrap: false,
                     overflow: TextOverflow.clip,
@@ -1894,7 +1916,7 @@ class _HourTable extends StatelessWidget {
                     border: Border.all(color: _Pal.line),
                   ),
                   child: Text(
-                    '${_beaufort(h.windSpeed)}级·${windDirText(h.windDir)}',
+                    '${windDirText(h.windDir)}风',
                     maxLines: 1,
                     style: const TextStyle(color: _Pal.muted, fontSize: 7.5),
                   ),
@@ -1932,50 +1954,61 @@ class _HourTable extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // 黄金窗口期标记：金色 ★ + 「黄金」小签
-                if (isGolden)
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 2),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 3, vertical: 0.5),
-                    decoration: BoxDecoration(
-                      color: _Pal.gold.withOpacity(0.18),
-                      borderRadius: BorderRadius.circular(3),
-                      border: Border.all(color: _Pal.gold.withOpacity(0.45)),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.star, size: 8, color: _Pal.gold),
-                        SizedBox(width: 1),
-                        Text('黄金',
+                // 分数：一列里只留「★ + 数字 + 口弱」三样东西。
+                //
+                // 原来上面还压着一枚「★黄金」小签、下面还排 1~3 个 7.5px
+                // 的 🐟，同一个格子里四层信息：黄金行因此比普通行高出一截，
+                // 整张表的行高忽高忽低；🐟 在 7.5px 下也只是一排噪点。
+                // 现在黄金窗口只在数字前加一颗 ★（同一行，不改行高），
+                // 爆护（90+）用荧光黄绿底反白，扫表时一眼就能找到。
+                // FittedBox 兜底：320dp 下这一列只有 38dp 宽，
+                // ★ + 两位数在某些字体下会差 2~3px 顶出边界
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (isGolden) ...[
+                        const Text('★',
                             style: TextStyle(
-                                color: _Pal.gold,
-                                fontSize: 7.5,
-                                height: 1.1)),
+                                color: _Pal.limeInk,
+                                fontSize: 9,
+                                height: 1.1,
+                                fontWeight: FontWeight.w700)),
+                        const SizedBox(width: 1),
                       ],
-                    ),
+                      sc >= 90
+                          ? Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 4, vertical: 0.5),
+                              decoration: BoxDecoration(
+                                color: AppTheme.accent,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text('$sc',
+                                  maxLines: 1,
+                                  softWrap: false,
+                                  style: const TextStyle(
+                                      color: AppTheme.primary,
+                                      fontSize: 13,
+                                      height: 1.05,
+                                      fontWeight: FontWeight.w800)),
+                            )
+                          : Text('$sc',
+                              maxLines: 1,
+                              softWrap: false,
+                              overflow: TextOverflow.clip,
+                              style: TextStyle(
+                                  color: scColor,
+                                  fontSize: 15,
+                                  height: 1.05,
+                                  fontWeight: FontWeight.w700)),
+                    ],
                   ),
-                Text('$sc',
-                    maxLines: 1,
-                    softWrap: false,
-                    overflow: TextOverflow.clip,
-                    style: TextStyle(
-                        color: scColor,
-                        fontSize: 15,
-                        height: 1.05,
-                        fontWeight: FontWeight.w700)),
+                ),
                 const SizedBox(height: 1),
                 Text(Bite.label(sc),
                     style: TextStyle(color: scColor, fontSize: 8.5)),
-                const SizedBox(height: 1),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: List.generate(
-                    Bite.fishCount(sc),
-                    (_) => const Text('🐟', style: TextStyle(fontSize: 7.5)),
-                  ),
-                ),
               ],
             ),
           ),
@@ -2076,9 +2109,9 @@ Color _scoreColor(int s) {
   // 四档要能一眼分出高低：爆护最亮（它就是用户扫表时在找的那几行），
   // 有口次亮，口弱转橙（不是好鱼情），<45 直接降到次要文字色。
   // 原来 ≥90 用暗绿、≥80 用亮绿，两档几乎同色，等于没有分级。
-  if (s >= 90) return _Pal.lime;
+  if (s >= 90) return AppTheme.primary;
   if (s >= 80) return _Pal.green;
-  if (s >= 45) return _Pal.amber;
+  if (s >= 45) return _Pal.gold;
   return _Pal.muted;
 }
 
@@ -2090,7 +2123,7 @@ Widget _aiFactor(String text, bool good) => Padding(
         children: [
           Text(good ? '✓ ' : '! ',
               style: TextStyle(
-                  color: good ? _Pal.green : _Pal.amber,
+                  color: good ? _Pal.green : _Pal.gold,
                   fontSize: 11,
                   fontWeight: FontWeight.w700)),
           Expanded(
@@ -2111,38 +2144,6 @@ Widget _trendText(double d, {double fontSize = 9}) {
         fontSize: fontSize,
         fontWeight: FontWeight.w600),
   );
-}
-
-/// 蒲福风力等级（按 km/h）
-int _beaufort(double kmh) {
-  if (kmh < 1) return 0;
-  if (kmh < 6) return 1;
-  if (kmh < 12) return 2;
-  if (kmh < 20) return 3;
-  if (kmh < 29) return 4;
-  if (kmh < 39) return 5;
-  if (kmh < 50) return 6;
-  if (kmh < 62) return 7;
-  return 8;
-}
-
-/// 深空星点背景
-class _StarPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rnd = math.Random(20261020);
-    final p = Paint();
-    for (var i = 0; i < 90; i++) {
-      final x = rnd.nextDouble() * size.width;
-      final y = rnd.nextDouble() * size.height;
-      final r = 0.4 + rnd.nextDouble() * 1.2;
-      p.color = Colors.white.withOpacity(0.10 + rnd.nextDouble() * 0.42);
-      canvas.drawCircle(Offset(x, y), r, p);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 /// AI 大模型鱼口判断面板：点击后由后端大模型综合「逐时天气 + 鱼种习性」得出结论。
@@ -2273,11 +2274,11 @@ class _AiBitePanelState extends State<_AiBitePanel> {
           children: [
             Row(
               children: [
-                const Icon(Icons.info_outline, size: 14, color: _Pal.amber),
+                const Icon(Icons.info_outline, size: 14, color: _Pal.gold),
                 const SizedBox(width: 6),
                 const Text('AI 大模型暂不可用',
                     style: TextStyle(
-                        color: _Pal.amber,
+                        color: _Pal.gold,
                         fontSize: 12,
                         fontWeight: FontWeight.w600)),
               ],
@@ -2363,11 +2364,11 @@ class _AiBitePanelState extends State<_AiBitePanel> {
             const SizedBox(height: 10),
             Row(
               children: [
-                const Icon(Icons.trending_down, size: 13, color: _Pal.amber),
+                const Icon(Icons.trending_down, size: 13, color: _Pal.gold),
                 const SizedBox(width: 5),
                 Text('压制开口（${r.negatives.length} 项）',
                     style: TextStyle(
-                        color: _Pal.amber,
+                        color: _Pal.gold,
                         fontSize: 11.5,
                         fontWeight: FontWeight.w600)),
               ],
