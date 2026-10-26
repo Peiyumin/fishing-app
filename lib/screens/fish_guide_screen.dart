@@ -70,7 +70,7 @@ class _FishGuideScreenState extends State<FishGuideScreen>
         actions: [
           IconButton(
             tooltip: '我的池塘',
-            icon: const Icon(Icons.water, color: AppTheme.accent),
+            icon: const Icon(Icons.water, color: AppTheme.water),
             onPressed: () => Navigator.of(context).pushNamed('/fish-tank'),
           ),
         ],
@@ -251,12 +251,12 @@ class _FishGuideScreenState extends State<FishGuideScreen>
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text('🐟',
-                                  style: TextStyle(
-                                      fontSize: 13,
-                                      color: m.rarity == 'common'
-                                          ? AppTheme.primary
-                                          : AppTheme.warning)),
+                              // 原来写死 '🐟'：没有彩色 emoji 字体的机器上是方块
+                              Icon(Icons.set_meal,
+                                  size: 13,
+                                  color: m.rarity == 'common'
+                                      ? AppTheme.primary
+                                      : AppTheme.warning),
                               const SizedBox(width: 6),
                               Text(m.name,
                                   style: const TextStyle(
@@ -326,8 +326,11 @@ class _FishGuideScreenState extends State<FishGuideScreen>
                     final f = all[i];
                     return ListTile(
                       dense: true,
-                      leading: Text(f.isFresh ? '💧' : '🌊',
-                          style: const TextStyle(fontSize: 17)),
+                      // 咸淡水用图标区分（原来是 💧/🌊 emoji，缺字体=方块）
+                      leading: Icon(
+                          f.isFresh ? Icons.water_drop : Icons.waves,
+                          size: 18,
+                          color: AppTheme.water),
                       title: Text(f.name,
                           style: const TextStyle(
                               fontSize: 13.5, fontWeight: FontWeight.w600)),
