@@ -484,12 +484,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
               width: 20,
               height: 20,
               decoration: BoxDecoration(
+                // 徽章入口：近黑底 + 荧光黄绿奖章（不再用紫渐变）
                 gradient: const LinearGradient(
-                    colors: [Color(0xFF8E7CF0), Color(0xFFB7A6FF)]),
+                    colors: [AppTheme.primary, AppTheme.inkLine]),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: const Icon(Icons.military_tech,
-                  size: 13, color: Colors.white),
+                  size: 13, color: AppTheme.accent),
             ),
             const SizedBox(width: 8),
             Text('所获徽章 (${_myBadges.length})',
@@ -564,8 +565,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   /// 会员条：Lv + 等级名 + 会员中心
   Widget _memberBar() {
     final vip = _me?.vip ?? MemberStyle.normal;
-    final c1 = vip.isVip ? vip.color : const Color(0xFF6E7F8D);
-    final c2 = vip.isVip ? vip.color2 : const Color(0xFF9AA9B5);
+    // 非会员：冷灰条（原来 #6E7F8D → #9AA9B5 是自造的一对灰，
+    // 和 textTertiary/primaryBorder 差一档，一眼能看出"这两种灰不一样"）
+    final c1 = vip.isVip ? vip.color : AppTheme.textTertiary;
+    final c2 = vip.isVip ? vip.color2 : AppTheme.primaryBorder;
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
       height: 46,
@@ -885,10 +888,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       width: size,
       height: size,
       child: Center(
-        child: Text(
-          b.icon.isEmpty ? '🎖' : b.icon,
-          style: TextStyle(fontSize: size * 0.86),
-        ),
+        // 原来 icon 为空时兜底写死 '🎖'，设备没有彩色 emoji 字体就是方块
+        child: b.icon.isEmpty
+            ? Icon(Icons.military_tech,
+                size: size * 0.86, color: AppTheme.textSecondary)
+            : Text(
+                b.icon,
+                style: TextStyle(fontSize: size * 0.86),
+              ),
       ),
     );
   }
