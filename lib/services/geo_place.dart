@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'api_client.dart';
 import 'api_config.dart';
 import 'location_service.dart';
+import '../utils/text_safe.dart';
 
 /// 中文地名（由经纬度反查得到）
 ///
@@ -52,13 +53,16 @@ class GeoPlace {
         'display': display,
       };
 
+  /// ★ 全部字段过 [safeText]：地名来自第三方地名接口，偶发把 UTF-8 从
+  ///   中间截断（如「禹州市」截成「禹州\uFFFD」），不净化就会在首页顶部
+  ///   的定位胶囊里显示成一个小方块。
   factory GeoPlace.fromJson(Map<String, dynamic> j) => GeoPlace(
-        province: (j['province'] ?? '').toString(),
-        city: (j['city'] ?? '').toString(),
-        district: (j['district'] ?? '').toString(),
-        street: (j['street'] ?? '').toString(),
-        short: (j['short'] ?? '').toString(),
-        display: (j['display'] ?? '').toString(),
+        province: safeText(j['province']),
+        city: safeText(j['city']),
+        district: safeText(j['district']),
+        street: safeText(j['street']),
+        short: safeText(j['short']),
+        display: safeText(j['display']),
       );
 
   // ── 缓存 ──
@@ -136,13 +140,15 @@ class GeoPlace {
       final req = await _http.getUrl(uri);
       final res = await req.close();
       if (res.statusCode != 200) return null;
-      final raw = await res.transform(utf8.decoder).join();
+      final raw =
+          await res.transform(const Utf8Decoder(allowMalformed: true)).join();
       final j = jsonDecode(raw);
       if (j is! Map) return null;
 
-      final province = (j['principalSubdivision'] ?? '').toString().trim();
-      final city = (j['city'] ?? '').toString().trim();
-      final district = (j['locality'] ?? '').toString().trim();
+      // 第三方接口偶尔返回半截 UTF-8 → 解码后是 U+FFFD，一律清掉
+      final province = safeText(j['principalSubdivision']);
+      final city = safeText(j['city']);
+      final district = safeText(j['locality']);
 
       var street = '';
       final admin = j['localityInfo']?['administrative'];
@@ -150,7 +156,7 @@ class GeoPlace {
         for (final a in admin) {
           if (a is! Map) continue;
           if ((a['adminLevel'] as num?)?.toInt() == 8) {
-            final nm = (a['name'] ?? '').toString().trim();
+            final nm = safeText(a['name']);
             if (nm.isNotEmpty && nm.toLowerCase() != 'none') {
               street = nm;
               break;
