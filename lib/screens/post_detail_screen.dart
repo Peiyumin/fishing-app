@@ -967,7 +967,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text('$_post.likeCount 人夸过',
+            child: Text('${_post.likeCount} 人夸过',
                 textAlign: TextAlign.right,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
