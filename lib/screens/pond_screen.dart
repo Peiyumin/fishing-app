@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -97,19 +98,45 @@ class PondStore {
 class PondScreen extends StatefulWidget {
   const PondScreen({super.key});
 
+  /// 最大放大倍数。底图 1024px 宽，铺满一屏约 576px，3 倍时 2.25 倍插值
+  /// 已经能看清水花，再放就只剩马赛克了。
+  static const double maxZoom = 3.0;
+
   @override
   State<PondScreen> createState() => _PondScreenState();
 }
 
 class _PondScreenState extends State<PondScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   // ★ 用 Ticker + ValueNotifier 而不是 AnimationController:
   //   AnimationController.repeat() 到时长末尾会把 value 归零 → `value * 60`
   //   算出来的时间从 60 跳回 0，所有鱼瞬间位移一大截（每秒 60 帧里总有
   //   一帧会看到，表现为「抽搐」）。Ticker 的 elapsed 是单调递增的，
   //   永远不会回头，鱼也就不会跳。
   late final Ticker _ticker;
-  final ValueNotifier<double> _now = ValueNotifier<double>(0);
+  final ValueNotifier<double> _clock = ValueNotifier<double>(0);
+
+  /// 画布视口（缩放 + 平移）：用户说的「360 全景、能拉近看鱼」
+  final ValueNotifier<PondView> _view =
+      ValueNotifier<PondView>(const PondView(1, Offset.zero));
+
+  /// 把「时间」和「视口」合成一个 repaint 源交给 CustomPainter
+  ///
+  /// ★ 关键性能改动：以前是 `ValueListenableBuilder` 包着 CustomPaint —— 每帧
+  ///   重建整棵 widget 子树（含顶栏、面板、渐变），滑走的时候这些重建全都在
+  ///   跟转场动画抢帧，就是用户说的「向右滑关闭有卡顿」。
+  ///   现在 widget 树一帧都不重建，只把 listenable 交给 painter 重绘。
+  late final Listenable _repaint;
+
+  // 手势基准
+  double _gStartZoom = 1;
+  Offset _gStartPan = Offset.zero;
+  Offset _gFocal = Offset.zero;
+  Offset _tapPos = Offset.zero;
+  AnimationController? _zoomCtl;
+
+  /// 每帧复用的 Paint / Shader 缓存，避免每帧 new 几十个渐变
+  final PondPaintCache _cache = PondPaintCache();
 
   ui.Image? _bg;
   final Map<String, ui.Image> _images = {};
@@ -119,19 +146,69 @@ class _PondScreenState extends State<PondScreen>
   bool _loading = true;
   bool _immersive = false;
 
+  /// 放大后「复位」胶囊要不要显示（只在小范围重建，不带动整页）
+  final ValueNotifier<bool> _zoomed = ValueNotifier<bool>(false);
+
   @override
   void initState() {
     super.initState();
+    _repaint = Listenable.merge([_clock, _view]);
+    // ★ 时钟：`_base + raw`，冻结时把 `_base` 反向补偿掉已经流走的时间。
+    //   为什么不 `_ticker.stop()/_ticker.start()`：Ticker.start() 会把
+    //   elapsed 从 0 重新计，等于把时间倒回 0 —— 所有鱼的位置、摆尾相位
+    //   一起重置，回到页面那一帧会看到鱼「瞬移」。
     _ticker = createTicker((elapsed) {
-      _now.value = elapsed.inMicroseconds / 1000000.0;
+      final raw = elapsed.inMicroseconds / 1000000.0;
+      if (_frozen) {
+        _base -= raw - _lastRaw;
+        _lastRaw = raw;
+        return; // 不回写 → 不重绘：转场那几帧一次 paint 都不做
+      }
+      _lastRaw = raw;
+      _clock.value = _base + raw;
     })..start();
     _boot();
   }
 
+  bool _frozen = false;
+  double _base = 0;
+  double _lastRaw = 0;
+
+  /// 本页路由的转场动画（pop 时用它判断「该冻结画面了」）
+  ///
+  /// 必须在 didChangeDependencies 里取一次存下来：dispose() 阶段再去
+  /// `ModalRoute.of(context)` 会抛「Looking up a deactivated widget's
+  /// ancestor is unsafe」，而且那一抛会把后面的 _ticker.dispose() 一起跳过，
+  /// 引擎会报「An animation is still running after the widget tree was disposed」。
+  Animation<double>? _routeAnim;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final a = ModalRoute.of(context)?.animation;
+    if (!identical(a, _routeAnim)) {
+      _routeAnim?.removeListener(_onRouteAnim);
+      _routeAnim = a;
+      _routeAnim?.addListener(_onRouteAnim);
+    }
+  }
+
+  /// 开始 pop 时立刻冻结画面
+  ///
+  /// 转场那 300ms 里，池塘的动画帧和滑走动画在同一帧预算里，冻住最贵的
+  /// 那一半，滑走就顺了。回到本页（forward / completed）再解冻。
+  void _onRouteAnim() {
+    _frozen = _routeAnim?.status == AnimationStatus.reverse;
+  }
+
   @override
   void dispose() {
+    _routeAnim?.removeListener(_onRouteAnim);
+    _zoomCtl?.dispose();
     _ticker.dispose();
-    _now.dispose();
+    _clock.dispose();
+    _view.dispose();
+    _zoomed.dispose();
     super.dispose();
   }
 
@@ -246,36 +323,124 @@ class _PondScreenState extends State<PondScreen>
     if (mounted) setState(() {});
   }
 
+  // ══════════════════ 手势：缩放 / 环视 / 双击看鱼 ══════════════════
+
+
+  void _onScaleStart(ScaleStartDetails d) {
+    _gStartZoom = _view.value.zoom;
+    _gStartPan = _view.value.pan;
+    _gFocal = d.localFocalPoint;
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails d) {
+    final size = MediaQuery.of(context).size;
+    // 1 倍时不吃单指拖动：留着给系统的「向右滑返回」用
+    if (_gStartZoom <= 1.001 && d.scale < 1.01) return;
+    final zoom = (_gStartZoom * d.scale).clamp(1.0, PondScreen.maxZoom);
+    // 焦点保持：手指按住的那个点在放大过程中一直贴在手指下面
+    final scene = (_gFocal - _gStartPan) / _gStartZoom;
+    final pan = _clampPan(d.localFocalPoint - scene * zoom, zoom, size);
+    _view.value = PondView(zoom, pan);
+    _zoomed.value = zoom > 1.02;
+  }
+
+  void _onScaleEnd(ScaleEndDetails d) {
+    // 松手时如果几乎回到 1 倍，直接归位（避免停在 1.004 这种别扭状态）
+    if (_view.value.zoom < 1.05) _setView(const PondView(1, Offset.zero));
+  }
+
+  Offset _clampPan(Offset p, double zoom, Size s) =>
+      PondView.clampPan(p, zoom, s);
+
+  void _setView(PondView v) {
+    _view.value = v;
+    _zoomed.value = v.zoom > 1.02;
+  }
+
+  void _onDoubleTap() {
+    final size = MediaQuery.of(context).size;
+    if (_view.value.zoom > 1.05) {
+      _animateTo(const PondView(1, Offset.zero));
+      return;
+    }
+    // 双击放大：把双击的位置放到屏幕中心附近
+    const z = 2.4;
+    final p = _clampPan(size.center(Offset.zero) - _tapPos * z, z, size);
+    _animateTo(PondView(z, p));
+  }
+
+  /// 放大/复位做一小段过渡，直接跳会被吓一跳
+  void _animateTo(PondView target) {
+    final ctl = _zoomCtl ??= AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 240),
+    );
+    final from = _view.value;
+    ctl.reset();
+    void tick() {
+      final k = Curves.easeOutCubic.transform(ctl.value);
+      _setView(PondView(
+        from.zoom + (target.zoom - from.zoom) * k,
+        Offset.lerp(from.pan, target.pan, k)!,
+      ));
+    }
+
+    ctl.addListener(tick);
+    ctl.forward().whenComplete(() => ctl.removeListener(tick));
+  }
+
+  /// 「沉浸看鱼」：收起面板 + 拉近到 2.2 倍
+  void _immersiveZoom() {
+    setState(() => _immersive = true);
+    final size = MediaQuery.of(context).size;
+    const z = 2.2;
+    final p = _clampPan(size.center(Offset.zero) * (1 - z), z, size);
+    _animateTo(PondView(z, p));
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     return Scaffold(
       backgroundColor: const Color(0xFF10251C),
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          // 池塘画面
-          if (_bg != null)
-            ValueListenableBuilder<double>(
-              valueListenable: _now,
-              builder: (_, t, __) => CustomPaint(
-                painter: PondPainter(
-                  bg: _bg!,
-                  images: _images,
-                  fish: _placed,
-                  t: t,
+      body: GestureDetector(
+        onScaleStart: _onScaleStart,
+        onScaleUpdate: _onScaleUpdate,
+        onScaleEnd: _onScaleEnd,
+        onDoubleTapDown: (d) => _tapPos = d.localPosition,
+        onDoubleTap: _onDoubleTap,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // 池塘画面
+            //
+            // ★ 不再用 ValueListenableBuilder 包 CustomPaint：那样每帧重建整棵
+            //   子树。现在 painter 自己监听 `_repaint`（时钟 + 视口），widget
+            //   一帧都不重建；外面再套 RepaintBoundary，滑走时这一层直接当
+            //   纹理平移，不用重新栅格化。
+            if (_bg != null)
+              RepaintBoundary(
+                child: CustomPaint(
+                  painter: PondPainter(
+                    bg: _bg!,
+                    images: _images,
+                    fish: _placed,
+                    clock: _clock,
+                    view: _view,
+                    cache: _cache,
+                    repaint: _repaint,
+                  ),
+                ),
+              )
+            else
+              const Center(
+                child: SizedBox(
+                  width: 26,
+                  height: 26,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white70),
                 ),
               ),
-            )
-          else
-            const Center(
-              child: SizedBox(
-                width: 26,
-                height: 26,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Colors.white70),
-              ),
-            ),
 
           // 顶栏
           AnimatedPositioned(
@@ -306,7 +471,7 @@ class _PondScreenState extends State<PondScreen>
                             ),
                           ),
                           Text(
-                            '真实鱼图 · 水面会动 · 鱼会跃出来',
+                            '双指放大 · 拖动看鱼 · 双击拉近',
                             style: TextStyle(
                                 color: Colors.white70, fontSize: 10.5),
                           ),
@@ -352,7 +517,58 @@ class _PondScreenState extends State<PondScreen>
                 ),
               ),
             ),
+
+          // 放大后浮出的「倍数 + 复位」胶囊（只重建这一小块）
+          Positioned(
+            right: 12,
+            bottom: _immersive ? 74 : 150,
+            child: ValueListenableBuilder<bool>(
+              valueListenable: _zoomed,
+              builder: (_, on, __) => AnimatedOpacity(
+                opacity: on ? 1 : 0,
+                duration: const Duration(milliseconds: 180),
+                child: IgnorePointer(
+                  ignoring: !on,
+                  child: GestureDetector(
+                    onTap: () => _animateTo(const PondView(1, Offset.zero)),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(.42),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.white24),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ValueListenableBuilder<PondView>(
+                            valueListenable: _view,
+                            builder: (_, v, __) => Text(
+                              '${v.zoom.toStringAsFixed(1)}×',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          const Icon(Icons.close_fullscreen,
+                              size: 13, color: Colors.white70),
+                          const SizedBox(width: 2),
+                          const Text('复位',
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
+      ),
       ),
       // 横屏时提示转手机（池塘是竖构图，横过来会裁掉两岸）
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
@@ -480,7 +696,7 @@ class _PondScreenState extends State<PondScreen>
                     child: SizedBox(
                       height: 46,
                       child: OutlinedButton(
-                        onPressed: () => setState(() => _immersive = true),
+                        onPressed: _immersiveZoom,
                         style: OutlinedButton.styleFrom(
                           foregroundColor: Colors.white,
                           side: const BorderSide(color: Colors.white38),
@@ -516,42 +732,147 @@ const int kPondMaxFish = 24;
 /// 正弦线，在真实池塘照片上看起来就是一张贴在池底的渔网（用户原话：
 /// 「把动态水波纹显示的网格给隐藏掉」）。现在改成几团大而极淡的径向光斑，
 /// 边缘靠渐变化开，没有一条直边。
+/// 视口：缩放 + 平移（用户要的「360 全景、能拉近看鱼」）
+///
+/// 场景坐标系 = 首帧的屏幕矩形；屏幕上一点 = `scene * zoom + pan`。
+/// zoom = 1、pan = 0 时和以前完全一样，不会动到已经标定好的 [PondSpec]。
+class PondView {
+  final double zoom;
+  final Offset pan;
+  const PondView(this.zoom, this.pan);
+
+  /// 把平移夹在「刚好不留白」的范围内
+  ///
+  /// 场景坐标系就是首帧屏幕矩形，所以放大后可见区域是 [pan, pan + zoom*size]，
+  /// 要盖住 [0, size] 就必须 `size*(1-zoom) <= pan <= 0`。
+  /// 写成一个静态方法是为了能被单测直接验证（不依赖手势）。
+  static Offset clampPan(Offset p, double zoom, Size s) {
+    final minX = s.width * (1 - zoom);
+    final minY = s.height * (1 - zoom);
+    return Offset(p.dx.clamp(minX, 0.0), p.dy.clamp(minY, 0.0));
+  }
+}
+
+/// 跨帧复用的 Paint / Shader
+///
+/// ★ 为什么要这个：原来每帧都现做六七个 `RadialGradient` / `ImageShader`。
+///   平时看不出来，但「向右滑关闭池塘」那 300ms 里这些构造全在跟转场动画
+///   抢同一帧的时间，就是用户反馈的那一下卡顿。
+///   渐变 shader 只要矩形和颜色不变就能一直用 —— 半径改成「单位圆」建一次，
+///   绘制时用 `canvas.scale` 放大，省钱且效果一样。
+class PondPaintCache {
+  Size? size;
+  Rect? waterRect;
+
+  Paint? waterTint; // 水面青绿
+  Paint? vignette; // 暗角
+  Paint? glow; // 柔光斑（单位圆，白色径向）
+  Paint? shadow; // 鱼影（单位圆，中心深、边缘全透）
+
+  /// 每条鱼图的纹理 shader：图不变就一直复用
+  final Map<ui.Image, ui.ImageShader> tex = {};
+
+  ui.ImageShader texOf(ui.Image img) => tex.putIfAbsent(
+        img,
+        () => ui.ImageShader(
+          img,
+          TileMode.clamp,
+          TileMode.clamp,
+          Matrix4.identity().storage,
+        ),
+      );
+
+  void ensure(Size s, Rect water) {
+    if (size == s && waterRect == water && waterTint != null) return;
+    size = s;
+    waterRect = water;
+
+    vignette = Paint()
+      ..shader = RadialGradient(
+        colors: [Colors.transparent, Colors.black.withOpacity(.42)],
+        stops: const [.62, 1.0],
+      ).createShader(Offset.zero & s);
+
+    waterTint = Paint()
+      ..shader = RadialGradient(
+        colors: [
+          const Color(0xFF06231E).withOpacity(.30),
+          const Color(0xFF0B3A2E).withOpacity(.18),
+          const Color(0xFF1E6B52).withOpacity(.09),
+        ],
+        stops: const [0.0, 0.62, 1.0],
+      ).createShader(water);
+
+    glow = Paint()
+      ..shader = RadialGradient(
+        colors: [Colors.white.withOpacity(.05), Colors.white.withOpacity(0)],
+      ).createShader(Rect.fromCircle(center: Offset.zero, radius: 1));
+
+    shadow = Paint()
+      ..shader = RadialGradient(
+        colors: [
+          const Color(0xFF06231E).withOpacity(.34),
+          const Color(0xFF06231E).withOpacity(0),
+        ],
+        stops: const [.42, 1],
+      ).createShader(Rect.fromCircle(center: Offset.zero, radius: 1));
+  }
+}
+
+/// 池塘绘制：背景照片 → 水色 → 柔光斑 → 鱼群 → 水面波纹 → 跃水 → 暗角
+///
+/// 注意：**水面不要画直线网格**。上一版那层「焦散光网」是两组互相垂直的
+/// 正弦线，在真实池塘照片上看起来就是一张贴在池底的渔网（用户原话：
+/// 「把动态水波纹显示的网格给隐藏掉」）。现在改成几团大而极淡的径向光斑，
+/// 边缘靠渐变化开，没有一条直边。
 class PondPainter extends CustomPainter {
   final ui.Image bg;
   final Map<String, ui.Image> images;
   final List<PondFish> fish;
-  final double t; // 秒
+  final ValueListenable<double> clock;
+  final ValueListenable<PondView> view;
+  final PondPaintCache cache;
 
   PondPainter({
     required this.bg,
     required this.images,
     required this.fish,
-    required this.t,
-  }) : super(repaint: null);
+    required this.clock,
+    required this.view,
+    required this.cache,
+    required Listenable repaint,
+  }) : super(repaint: repaint);
 
   @override
   void paint(Canvas canvas, Size size) {
+    final t = clock.value;
+    final v = view.value;
+
+    // 整场（照片 + 鱼）一起缩放平移：放大后鱼跟着变大，才「看得清姿态」
+    canvas.save();
+    canvas.translate(v.pan.dx, v.pan.dy);
+    canvas.scale(v.zoom);
+
     // 背景「cover」铺满：池塘必须完整落在椭圆区域内
-    final scale =
-        math.max(size.width / bg.width, size.height / bg.height);
+    final scale = math.max(size.width / bg.width, size.height / bg.height);
     final dw = bg.width * scale;
     final dh = bg.height * scale;
     final dx = (size.width - dw) / 2;
     final dy = (size.height - dh) / 2;
-    final dst = Rect.fromLTWH(dx, dy, dw, dh);
     canvas.drawImageRect(
       bg,
       Rect.fromLTWH(0, 0, bg.width.toDouble(), bg.height.toDouble()),
-      dst,
+      Rect.fromLTWH(dx, dy, dw, dh),
       Paint()..filterQuality = FilterQuality.medium,
     );
 
-    // 水面椭圆（屏幕坐标）
+    // 水面椭圆（场景坐标）
     final water = Rect.fromCenter(
       center: Offset(dx + PondSpec.cx * dw, dy + PondSpec.cy * dh),
       width: PondSpec.rx * 2 * dw,
       height: PondSpec.ry * 2 * dh,
     );
+    cache.ensure(size, water);
 
     // 每帧只算一次位置：水里的和空中的用同一份数据，否则跃水时会「两个影子」
     final list =
@@ -570,59 +891,42 @@ class PondPainter extends CustomPainter {
     canvas.save();
     canvas.clipPath(Path()..addOval(water));
 
-    _paintWaterTint(canvas, water);
-    _paintLightPatches(canvas, water);
+    canvas.drawOval(water, cache.waterTint!);
+    _paintLightPatches(canvas, water, t);
     _paintFish(canvas, under);
-    _paintMicroRipples(canvas, water);
+    _paintMicroRipples(canvas, water, t);
 
     canvas.restore();
 
     _paintJumps(canvas, water, air);
-    _paintVignette(canvas, size);
-  }
+    canvas.restore();
 
-  /// 水色：中间深、边缘浅（岸边浅水透光），叠一层青绿
-  void _paintWaterTint(Canvas canvas, Rect water) {
-    final paint = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          const Color(0xFF06231E).withOpacity(.30),
-          const Color(0xFF0B3A2E).withOpacity(.18),
-          const Color(0xFF1E6B52).withOpacity(.09),
-        ],
-        stops: const [0.0, 0.62, 1.0],
-      ).createShader(water);
-    canvas.drawOval(water, paint);
+    // 暗角不跟着缩放，永远贴在屏幕上
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, size.width, size.height),
+      cache.vignette!,
+    );
   }
 
   /// 柔光斑：几团很大、很淡的径向渐变在水面下慢慢漂
   ///
-  /// 只用「圆的渐变」，没有任何线段——即使用户盯着看也看不出网格。
-  void _paintLightPatches(Canvas canvas, Rect water) {
-    const n = 6;
+  /// 只用「圆的渐变」，没有任何线段 —— 即使用户盯着看也看不出网格。
+  /// shader 是单位圆，靠 canvas.scale 放大成椭圆，不再每帧 new。
+  void _paintLightPatches(Canvas canvas, Rect water, double t) {
+    const n = 5;
+    final paint = cache.glow!;
     for (var i = 0; i < n; i++) {
       final ph = i * 1.73;
-      final cx = water.center.dx +
-          math.sin(t * .11 + ph) * water.width * .30;
-      final cy = water.center.dy +
-          math.cos(t * .09 + ph * 1.31) * water.height * .26;
+      final cx =
+          water.center.dx + math.sin(t * .11 + ph) * water.width * .30;
+      final cy =
+          water.center.dy + math.cos(t * .09 + ph * 1.31) * water.height * .26;
       final rw = water.width * (.24 + .05 * math.sin(t * .07 + ph));
-      final rect = Rect.fromCenter(
-        center: Offset(cx, cy),
-        width: rw * 2,
-        height: rw * 1.55,
-      );
-      final a = .045 + .018 * math.sin(t * .5 + ph);
-      canvas.drawOval(
-        rect,
-        Paint()
-          ..shader = RadialGradient(
-            colors: [
-              Colors.white.withOpacity(a),
-              Colors.white.withOpacity(0),
-            ],
-          ).createShader(rect),
-      );
+      canvas.save();
+      canvas.translate(cx, cy);
+      canvas.scale(rw, rw * .78);
+      canvas.drawCircle(Offset.zero, 1, paint);
+      canvas.restore();
     }
   }
 
@@ -631,12 +935,12 @@ class PondPainter extends CustomPainter {
       final img = images[
           FishAssets.pathOrFallback(s.fish.name, waterType: s.fish.water)];
       if (img == null) continue;
-      s.paint(canvas, img);
+      s.paint(canvas, img, cache);
     }
   }
 
   /// 水面上的零星星点：很小、很快散，让水「活着」但不抢戏
-  void _paintMicroRipples(Canvas canvas, Rect water) {
+  void _paintMicroRipples(Canvas canvas, Rect water, double t) {
     final squash = water.height / water.width;
     for (var i = 0; i < 4; i++) {
       final cycle = 2.6 + i * .9;
@@ -740,21 +1044,11 @@ class PondPainter extends CustomPainter {
     }
   }
 
-  void _paintVignette(Canvas canvas, Size size) {
-    final rect = Rect.fromLTWH(0, 0, size.width, size.height);
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..shader = RadialGradient(
-          colors: [Colors.transparent, Colors.black.withOpacity(.42)],
-          stops: const [.62, 1.0],
-        ).createShader(rect),
-    );
-  }
-
   @override
-  bool shouldRepaint(covariant PondPainter old) =>
-      old.t != t || old.fish != fish || old.images != images || old.bg != bg;
+  bool shouldRepaint(covariant PondPainter old) {
+    // 时间推进靠 `repaint`（clock + view）驱动，这里只管「换了一批鱼/图」。
+    return old.fish != fish || old.images != images || old.bg != bg;
+  }
 }
 
 /// 一条鱼的运行时状态
@@ -762,12 +1056,17 @@ class PondPainter extends CustomPainter {
 /// 位置 / 朝向 / 大小全部由「种子 + 当前时间」算出来，不保存任何动画状态：
 /// 任意一帧都能直接重绘，切后台再回来也不会错位或跳一下。
 ///
-/// ★ 上一版为什么「僵硬」：横坐标是一条三角波（0→1→0 直线折返），到端点那一帧
-///   速度方向凭空反号，同时 `dir` 从 1 变成 -1 → 画面上一帧还在往右、下一帧
-///   整体镜像往左，就是用户说的「姿态僵硬、像贴纸翻面」。
-///   现在改成两条不同频率的正弦叠加的漫游轨迹，朝向由**解析导数**算出：
-///   速度连续 → 朝向连续 → 转身是「身体缩短再展开」的连续过程，
-///   再叠一层摆尾的轻微扭头，鱼才有「活着」的感觉。
+/// ★ 为什么不「像真的在游」—— 前几版逐个踩坑，最后归结成四条：
+///   1. **整条鱼一起晃**（`rotate(sin(phase)*.05)`）→ 看起来是贴纸在摇。
+///      真实鱼是头几乎不动、**尾越靠后摆得越大**，所以振幅必须做成
+///      沿体轴递增的包络（头 1.6% → 尾 10%），并且去掉整体摇晃。
+///   2. **波长太短**（原来 2.9 rad ≈ 半条波）→ 鱼像在「扭腰」。
+///      carangiform 的鱼体上大约 1 个波，这里取 0.95 个波长，形成 S 形。
+///   3. **匀速巡航**（原来恒定角速度）→ 机械感。真实鱼是
+///      **爆发-滑行**：猛摆两下冲一段、再滑一段。用时间扭曲
+///      `tw = t + A·sin(ωt)` 实现：轨迹依然连续，速度却周期变化。
+///   4. **尾巴不跟身体**：相位必须沿体轴**延迟**（波从头部传向尾部），
+///      否则整条鱼一起左右平移，那是鱼雷不是鱼。
 class _Swimmer {
   final PondFish fish;
   final int seed;
@@ -775,9 +1074,11 @@ class _Swimmer {
   final Offset center; // 水面上的屏幕坐标
   final double heading; // 朝向（弧度，屏幕坐标 y 向下）
   final double facing; // 1 朝右 / -1 朝左（素材本身朝右）
-  final double foreshorten; // 身体被透视压短的比例 0.42~1
+  final double foreshorten; // 身体被透视压短的比例 0.55~1
   final double bodyLen; // 体长（像素）
   final double swimPhase; // 摆尾相位（弧度）
+  final double bob; // 慢速上浮/下沉相位
+  final double thrust; // 0.35~1：当前推力（爆发时大、滑行时小）
   final double jumpQ; // 跃水进度 0..1；不在空中为 -1
 
   const _Swimmer({
@@ -790,6 +1091,8 @@ class _Swimmer {
     required this.foreshorten,
     required this.bodyLen,
     required this.swimPhase,
+    required this.bob,
+    required this.thrust,
     required this.jumpQ,
   });
 
@@ -799,35 +1102,41 @@ class _Swimmer {
     final seed = index * 37 + 11;
     final depth = total <= 1 ? .55 : ((index * 3) % 10) / 9.0;
     // 绕一圈的时间：越近游得越快（近处鱼的视觉位移本来就大）
-    // ★ 上一版 26~33 秒才绕一圈，平均每秒只挪 5~6px，看起来像「贴纸在飘」。
-    //   真实池塘里的鱼横穿 10 米水面就几秒钟，这里压到 9~15 秒一圈。
     final period = 8.5 - depth * 2.5 + (seed % 5) * 0.6;
     final w = 2 * math.pi / period;
     final p1 = seed * .71;
     final p2 = seed * 1.37;
     final p3 = seed * 2.11;
 
+    // ── 爆发-滑行 ──────────────────────────────────────────────
+    // tw 是「被扭曲的时间」：轨迹 u(tw)、v(tw) 依旧光滑，
+    // 但 gain = dtw/dt 周期性变化 → 速度时快时慢，像真的在窜。
+    const warpA = .34;
+    final wg = .55 + depth * .30;
+    final gPh = wg * t + seed * .37;
+    final tw = t + warpA * math.sin(gPh);
+    final gain = 1 + warpA * wg * math.cos(gPh);
+
     // 归一化椭圆坐标：两个不同频率的正弦叠加 → 没有折角的漫游轨迹
-    // 纵向振幅给到 0.42：上一版只有 0.26，所有鱼都挤在池子中横线上，
-    // 看着像「排队」，没有池塘该有的散开感。|r| 最大约 0.75，仍在椭圆内。
     final u =
-        0.58 * math.sin(w * t + p1) + 0.10 * math.sin(1.9 * w * t + p3);
+        .58 * math.sin(w * tw + p1) + .10 * math.sin(1.9 * w * tw + p3);
     final v =
-        0.42 * math.sin(.63 * w * t + p2) + 0.10 * math.sin(1.31 * w * t + p1);
+        .42 * math.sin(.63 * w * tw + p2) + .10 * math.sin(1.31 * w * tw + p1);
 
-    // 速度（解析求导，不用差分）→ 朝向连续变化，不会左右硬翻
-    final du = 0.58 * w * math.cos(w * t + p1) +
-        0.10 * 1.9 * w * math.cos(1.9 * w * t + p3);
-    final dv = 0.42 * .63 * w * math.cos(.63 * w * t + p2) +
-        0.10 * 1.31 * w * math.cos(1.31 * w * t + p1);
+    // 速度（解析求导，含时间扭曲的链式项）→ 朝向连续，不会左右硬翻
+    final du = (.58 * w * math.cos(w * tw + p1) +
+            .10 * 1.9 * w * math.cos(1.9 * w * tw + p3)) *
+        gain;
+    final dv = (.42 * .63 * w * math.cos(.63 * w * tw + p2) +
+            .10 * 1.31 * w * math.cos(1.31 * w * tw + p1)) *
+        gain;
 
-    // 可用半径给椭圆的 44%：|r| 最大约 0.70，再留半个体长，鱼头不会顶到岸
+    // 可用半径给椭圆的 44%：再留半个体长，鱼头不会顶到岸
     final ex = water.width * .44;
     final ey = water.height * .44;
     final vx = du * ex;
     final vy = dv * ey;
     final heading = math.atan2(vy, vx);
-    final speed = math.sqrt(vx * vx + vy * vy);
     // 跃水要看出「整条鱼离开水面」，所以只让游在池子中间（水面最宽处）的鱼跳；
     // 靠岸的鱼一跳就会飞到岸上的芦苇里
     final radial = math.sqrt(u * u + v * v);
@@ -835,6 +1144,11 @@ class _Swimmer {
     // 每条鱼落在自己的「泳道」上下错开：不加的话同一时刻会叠在一起，
     // 池子看着像只有一条鱼。±0.10 池高，仍在椭圆内。
     final lane = (index % 3) - 1;
+
+    final bodyLen = water.width * (.175 + depth * .145);
+    // 摆尾频率 1.1~2.0 Hz（真实鲫鱼巡游 1~3 Hz）。频率按鱼固定，
+    // 推力另用 thrust 体现，避免「频率忽快忽慢」造成的抖动感。
+    final hz = 1.15 + (1 - depth) * .45 + (seed % 4) * .09;
 
     return _Swimmer(
       fish: f,
@@ -846,12 +1160,12 @@ class _Swimmer {
       ),
       heading: heading,
       facing: math.cos(heading) >= 0 ? 1 : -1,
-      // 朝镜头 / 背镜头时，投影上身体会变短 —— 转身因此是连续缩短再展开。
-      // 下限不用压太狠：压到 0.42 时鱼会缩成一小坨，反而像"抽搐"
+      // 朝镜头 / 背镜头时，投影上身体会变短 —— 转身因此是连续缩短再展开
       foreshorten: .55 + .45 * math.cos(heading).abs(),
-      bodyLen: water.width * (.175 + depth * .145),
-      // 摆尾频率跟游速走：游得快尾巴摆得快
-      swimPhase: t * (2.6 + speed * 3.6) + seed,
+      bodyLen: bodyLen,
+      swimPhase: t * 2 * math.pi * hz + seed,
+      bob: t * .62 + seed * .8,
+      thrust: (.66 + .34 * math.cos(gPh)).clamp(.35, 1.0),
       jumpQ: _jumpPhase(seed, t, depth, radial),
     );
   }
@@ -870,28 +1184,26 @@ class _Swimmer {
     return local / dur;
   }
 
-  void paint(Canvas canvas, ui.Image img) {
+  void paint(Canvas canvas, ui.Image img, PondPaintCache cache) {
     final h = bodyLen * img.height / img.width; // 身体厚度（垂直于身体方向）
 
-    // 投在水底的影子：让它像一条在水里的鱼，而不是一张贴纸浮在照片上
-    final shadow = Rect.fromCenter(
-      center: center + Offset(0, h * .55),
-      width: bodyLen * .92,
-      height: h * .85,
-    );
-    canvas.drawOval(
-      shadow,
-      Paint()
-        ..color = const Color(0xFF06231E).withOpacity(.20 * (1 - depth * .45))
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, h * .22),
-    );
+    // 投在水底的影子：用「单位圆径向渐变」代替 MaskFilter.blur。
+    // 效果几乎一样，但 blur 每条鱼都要开一个 layer 做高斯模糊 —— 24 条鱼
+    // 就是 24 次离屏模糊，滑走时特别贵。
+    canvas.save();
+    canvas.translate(center.dx, center.dy + h * .40);
+    canvas.rotate(heading);
+    canvas.scale(bodyLen * .52, h * .58);
+    canvas.drawCircle(Offset.zero, 1, cache.shadow!);
+    canvas.restore();
 
     final tint = Paint()
       ..filterQuality = FilterQuality.medium
       // 越深的鱼越被水「吃掉」一点：远的看着更淡、更融进水里。
       // 上限别太高 —— 0.30 那档远处的鱼几乎看不见，池子看起来是空的
       ..colorFilter = ColorFilter.mode(
-        const Color(0xFF0B4A3A).withOpacity(.15 - depth * .10),
+        const Color(0xFF0B4A3A)
+            .withOpacity((.15 - depth * .10).clamp(0.0, 1.0)),
         BlendMode.srcATop,
       );
 
@@ -901,22 +1213,12 @@ class _Swimmer {
     canvas.rotate(facing > 0 ? heading : heading + math.pi);
     canvas.scale(facing * foreshorten, 1);
 
-    // ① 整条鱼随水起伏：不是一根钉死的棍子
-    canvas.translate(0, math.sin(swimPhase * .9) * h * .06);
-    // ② 身体侧倾（俯视时的投影厚度会周期变化）
-    canvas.scale(1, 1 + .05 * math.sin(swimPhase * 1.27));
-    // ③ 游动时头会跟着甩尾轻微摆动 —— 这一层最容易被眼睛看见
-    canvas.rotate(math.sin(swimPhase * .95) * .05);
+    // 巡游时身体只有极轻微的上浮/下沉 —— 这一层只留 3% 体厚，
+    // 再大就会变成「一条船在浪里上下颠」，是很强的假信号
+    canvas.translate(0, math.sin(bob) * h * .03);
 
-    // ③ 真正的「游」：用三角网格把身体弯成一条行进波（carangiform 的 2D 近似）。
-    //    为什么不用「切 12 段 drawImageRect 拼」：相邻段位移不同 → 接缝处
-    //    出现可见的错位（第一版实测鱼身上有一条直线断带）。网格的顶点是
-    //    相邻三角形**共享**的，插值由 GPU 做，接缝天然连续。
-    //    权重 sin(pi*u) 让**头和尾根都不甩**，中后段幅度最大 ——
-    //    这样无论素材是头朝左还是朝右，都不会出现「脑袋乱晃」。
-    //    幅度只取体长 4%：真实鱼摆动的振幅本来就很小，给大了会把鱼扯变形。
-    if (bodyLen >= 46) {
-      _paintBentBody(canvas, img, h, tint);
+    if (bodyLen >= 42) {
+      _paintBentBody(canvas, img, h, tint, cache);
     } else {
       // 远处的小鱼看不出波动，整张画更省
       canvas.drawImageRect(
@@ -929,25 +1231,34 @@ class _Swimmer {
     canvas.restore();
   }
 
-  /// 弯着画一条鱼：10 段 × 2 行的网格，纹理是原图
-  void _paintBentBody(Canvas canvas, ui.Image img, double h, Paint tint) {
-    const cols = 10;
-    final amp = bodyLen * .085;
+  /// 弯着画一条鱼：14 列 × 2 行的三角网格，纹理是原图
+  ///
+  /// 为什么不用「切 N 段 drawImageRect 拼」：相邻段位移不同 → 接缝处出现
+  /// 可见错位（第一版实测鱼身上有一条直线断带）。网格顶点是相邻三角形
+  /// **共享**的，插值由 GPU 做，接缝天然连续。
+  ///
+  /// 振幅沿体轴递增：`env = 0.016 + 0.086 * q^1.55`（q=0 是头、q=1 是尾），
+  /// 尾端约 10% 体长、头部 1.6% —— 真实鱼的比例大约是 6~8 倍差。
+  void _paintBentBody(
+      Canvas canvas, ui.Image img, double h, Paint tint, PondPaintCache cache) {
+    const cols = 14;
+    final bigL = bodyLen;
     final dy = List<double>.filled(cols + 1, 0);
     for (var i = 0; i <= cols; i++) {
-      final u = i / cols;
-      // pow(sin, .8) 让波峰稍微靠后（更像尾部发力），两端仍为 0
-      dy[i] = amp *
-          math.pow(math.sin(math.pi * u), .8) *
-          math.sin(swimPhase - u * 2.9);
+      // 纹理左边是鱼尾、右边是鱼头（素材本身就是鱼头朝右）
+      final q = 1 - i / cols;
+      final env = .016 + .086 * math.pow(q, 1.55);
+      // 相位沿体轴延迟 0.95 个波长：波从头部传向尾部，身体才是 S 形
+      final ph = swimPhase - q * 2 * math.pi * .95;
+      dy[i] = bigL * env * thrust * math.sin(ph);
     }
     final w = img.width.toDouble();
     final ih = img.height.toDouble();
     final pos = <Offset>[];
-    final tex = <Offset>[];
+    final texOff = <Offset>[];
     for (var i = 0; i < cols; i++) {
-      final x0 = -bodyLen / 2 + bodyLen * i / cols;
-      final x1 = -bodyLen / 2 + bodyLen * (i + 1) / cols;
+      final x0 = -bigL / 2 + bigL * i / cols;
+      final x1 = -bigL / 2 + bigL * (i + 1) / cols;
       final tx0 = w * i / cols;
       final tx1 = w * (i + 1) / cols;
       final a = Offset(x0, -h / 2 + dy[i]);
@@ -960,31 +1271,22 @@ class _Swimmer {
       final td = Offset(tx0, ih);
       // 两个三角形：a-b-c、a-c-d
       pos.addAll([a, b, c]);
-      tex.addAll([ta, tb, tc]);
+      texOff.addAll([ta, tb, tc]);
       pos.addAll([a, c, d]);
-      tex.addAll([ta, tc, td]);
+      texOff.addAll([ta, tc, td]);
     }
-    final shader = ui.ImageShader(
-      img,
-      TileMode.clamp,
-      TileMode.clamp,
-      Matrix4.identity().storage,
-    );
+    tint.shader = cache.texOf(img);
     canvas.drawVertices(
       ui.Vertices(
         ui.VertexMode.triangles,
         pos,
-        textureCoordinates: tex,
+        textureCoordinates: texOff,
       ),
       BlendMode.srcOver,
-      tint..shader = shader,
+      tint,
     );
     tint.shader = null; // 这个 Paint 是复用的，用完把 shader 摘掉
   }
-
-  /// 尾根位置（画尾迹用）
-  Offset get tailPoint =>
-      center - Offset(math.cos(heading), math.sin(heading)) * bodyLen * .42;
 }
 
 // ══════════════════════════ 放鱼面板 ══════════════════════════
