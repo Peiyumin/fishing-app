@@ -5,7 +5,7 @@ import '../models/weather_forecast.dart';
 import '../services/weather_service.dart';
 
 /// 首页「钓鱼天气」卡片
-/// 显示气温、湿度、风速、气压 + 垂钓适宜指数与建议
+/// 显示气温、湿度、风力（几级什么风）、气压 + 垂钓适宜指数与建议
 ///
 /// ★ 时段口径（v2.1.19）：温度 / 湿度 / 风 / 气压 / 天气现象 / 垂钓指数
 ///   全部来自同一个整点（[FishingWeather.atLabel] 就是那个小时），
@@ -100,7 +100,12 @@ class WeatherCard extends StatelessWidget {
                 _Metric('${weather.temperature.toStringAsFixed(0)}℃',
                     weather.description),
                 _Metric('${weather.humidity}%', '湿度'),
-                _Metric('${weather.windSpeed.toStringAsFixed(0)}km/h', '风速'),
+                // ★ 风只报「几级 + 什么风」，不再写 km/h（v2.1.36 全站统一口径）
+                _Metric(
+                    '${beaufortLevel(weather.windSpeed)}级',
+                    weather.windDir == null
+                        ? '风力'
+                        : '${windDirText(weather.windDir)}风'),
                 _Metric(weather.pressure.toStringAsFixed(0), '气压hPa'),
               ],
             ),
