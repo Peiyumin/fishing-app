@@ -322,8 +322,8 @@ class _MemberCenterScreenState extends State<MemberCenterScreen> {
                         borderRadius: BorderRadius.circular(10),
                       ),
                       alignment: Alignment.center,
-                      child: Text(MemberService.perkIconOf(p.icon),
-                          style: const TextStyle(fontSize: 17)),
+                      child: Icon(MemberService.perkIconOf(p.icon),
+                          size: 18, color: AppTheme.primaryDark),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
