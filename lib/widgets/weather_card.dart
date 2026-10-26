@@ -19,12 +19,17 @@ class WeatherCard extends StatelessWidget {
   final String? placeLabel;
   const WeatherCard({super.key, required this.weather, this.placeLabel});
 
-  /// 分数 → 颜色（与天气页同一套分级：≥80 绿、≥60 金、≥40 橙、其余红）
+  /// 分数 → 颜色：四档语义分级（≥80 爆护 / ≥60 有口 / ≥40 一般 / 其余口差）
+  ///
+  /// 一律走 [AppTheme] 的语义色，别在页面里自己调一版绿金橙红 ——
+  /// 之前首页卡和天气页各有一套，同一个 72 分在两边是两个不同的橙色。
+  /// 深底页面要用亮一阶（见 weather_screen 的 _Pal），那是有意的：深底上
+  /// 这四色直接铺会发闷，但**色相和档位保持一致**。
   static Color scoreColor(int s) {
-    if (s >= 80) return const Color(0xFF2E9E5B);
-    if (s >= 60) return const Color(0xFFD9A02B);
-    if (s >= 40) return const Color(0xFFE07A29);
-    return const Color(0xFFD9534F);
+    if (s >= 80) return AppTheme.primary;
+    if (s >= 60) return AppTheme.star;
+    if (s >= 40) return AppTheme.warning;
+    return AppTheme.danger;
   }
 
   @override
