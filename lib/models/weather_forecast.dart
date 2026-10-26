@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../app_theme.dart';
+
 /// ============================================================
 /// 天气预报数据模型（对接 Open-Meteo 免费接口，无需 API Key）
 /// 支持：7 天日报 + 逐小时（温度/湿度/气压/降雨概率/降雨量/风/紫外线）
@@ -25,22 +27,26 @@ class Wmo {
 
   static String text(int? code) => _text[code] ?? '未知';
 
-  /// 天气图标颜色（与素材图一致：晴=金黄、云=灰蓝、雨=蓝、雪=浅蓝、雷=紫）
-  /// 同一套颜色同时用于首页卡片和天气页，避免「晴天却是青色太阳」
+  /// 天气图标颜色（晴=暖金、云=中性灰绿、雨=蓝、雪=浅蓝、雷=紫）
+  ///
+  /// 同一套颜色同时用于首页卡片和天气页，避免「晴天却是青色太阳」。
+  /// 雨/雪/雷保留蓝紫系 —— 这是天气图标的世界通用惯例，改成绿色反而读不懂；
+  /// 但阴、多云、雾原来是灰蓝（带明显蓝调），在湖绿的深底和浅底上都显脏，
+  /// 这里换成中性灰绿，跟主色同族又不抢眼。晴的暖金统一到 [AppTheme.star]。
   static Color color(int? code, {bool day = true}) {
     switch (code) {
       case 0:
         // 晴：日间暖金黄，夜间月白（配月亮图标，避免「夜里一个大金太阳」）
-        return day ? const Color(0xFFF5A623) : const Color(0xFFAFC3E2);
+        return day ? AppTheme.star : const Color(0xFFAFC3E2);
       case 1:
-        return day ? const Color(0xFFF5A623) : const Color(0xFF7C8FA6);
+        return day ? AppTheme.star : const Color(0xFF7C8FA6);
       case 2:
-        return const Color(0xFF8FA3B8); // 多云：浅灰蓝
+        return const Color(0xFF93A69B); // 多云：中性灰绿
       case 3:
-        return const Color(0xFF6B7F94); // 阴：深灰蓝
+        return const Color(0xFF75897D); // 阴：深灰绿
       case 45:
       case 48:
-        return const Color(0xFF9AA7B3); // 雾
+        return const Color(0xFF9DAEA4); // 雾
       case 51:
       case 53:
       case 55:
@@ -66,7 +72,7 @@ class Wmo {
       case 99:
         return const Color(0xFF8E7CC3); // 雷：紫
       default:
-        return const Color(0xFF9AA7B3);
+        return const Color(0xFF9DAEA4);
     }
   }
 
