@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../app_theme.dart';
+
 /// 钓点标记：红色定位针 + 白色鱼形
 ///
 /// 两套地图内核共用同一份画法：
@@ -14,7 +16,7 @@ class SpotPinPainter extends CustomPainter {
   static const double unitW = 120;
   static const double unitH = 156;
 
-  static const Color pinColor = Color(0xFFE53935);
+  static const Color pinColor = AppTheme.danger;
 
   @override
   void paint(Canvas canvas, Size size) {
