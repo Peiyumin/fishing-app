@@ -43,10 +43,11 @@ class FishDexCard extends StatelessWidget {
     this.onOpenTank,
   });
 
-  static const Color _cardBg = Color(0xFF0D1A16);
-  static const Color _cellBg = Color(0xFF16241F);
-  static const Color _lime = AppTheme.inkHi; // 统一到湖绿亮阶，别用荧光黄绿
-  static const Color _muted = Color(0xFF7C8C85);
+  // 深色卡：中性近黑 + 荧光黄绿高亮（设计稿里唯一的彩色）
+  static const Color _cardBg = AppTheme.inkBg;
+  static const Color _cellBg = AppTheme.inkSurface;
+  static const Color _lime = AppTheme.accent;
+  static const Color _muted = AppTheme.inkMuted;
 
   List<FishSpecies> get _all => [...guide.fresh, ...guide.salt];
   List<FishSpecies> get _unlocked => _all.where((f) => f.unlocked).toList();
@@ -66,7 +67,7 @@ class FishDexCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: _cardBg,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF1E2E27)),
+        border: Border.all(color: AppTheme.inkLine),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -219,7 +220,7 @@ class FishDexCard extends StatelessWidget {
                             ? 0
                             : (unlocked.length / total).clamp(0.0, 1.0),
                         minHeight: 4,
-                        backgroundColor: const Color(0xFF22322B),
+                        backgroundColor: AppTheme.inkLine,
                         valueColor:
                             const AlwaysStoppedAnimation(AppTheme.inkHi),
                       ),
@@ -263,7 +264,7 @@ class FishDexCard extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         const Icon(Icons.photo_camera_outlined,
-                            size: 17, color: Color(0xFF10240F)),
+                            size: 17, color: Color(0xFF07080C)),
                         const SizedBox(width: 6),
                         Flexible(
                           child: Text(
@@ -275,7 +276,7 @@ class FishDexCard extends StatelessWidget {
                             style: const TextStyle(
                               fontSize: 12.5,
                               fontWeight: FontWeight.w800,
-                              color: Color(0xFF10240F),
+                              color: Color(0xFF07080C),
                             ),
                           ),
                         ),
@@ -300,7 +301,7 @@ class FishDexCard extends StatelessWidget {
                   child: Row(
                     children: [
                       const Icon(Icons.water,
-                          size: 16, color: Color(0xFF8FE3D2)),
+                          size: 16, color: Color(0xFFC6FF3D)),
                       const SizedBox(width: 5),
                       const Text(
                         '池塘',
@@ -329,7 +330,7 @@ class FishDexCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(9),
         border: Border.all(
           color: f == null
-              ? const Color(0xFF1B2A24)
+              ? AppTheme.inkLine
               : AppTheme.inkHi.withOpacity(0.30),
         ),
       ),
@@ -382,7 +383,7 @@ class FishDexCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: _cellBg,
           borderRadius: BorderRadius.circular(9),
-          border: Border.all(color: const Color(0xFF1B2A24)),
+          border: Border.all(color: AppTheme.inkLine),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -421,7 +422,7 @@ class FishDexCard extends StatelessWidget {
         gradient: const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFF1D6E60), Color(0xFF0B3A34)],
+          colors: [AppTheme.inkSurface, AppTheme.inkBg],
         ),
       ),
       child: Stack(
@@ -440,7 +441,9 @@ class FishDexCard extends StatelessWidget {
                   width: 7,
                   height: hh,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF2F7A4A).withOpacity(0.55),
+                    // 装饰水草条：深底上不再用墨绿（色板里没有绿），
+                    // 改用品牌黄绿的极淡一档，和卡内高亮同色系
+                    color: AppTheme.accent.withOpacity(0.20),
                     borderRadius: BorderRadius.vertical(
                         top: Radius.circular(hh / 2)),
                   ),
