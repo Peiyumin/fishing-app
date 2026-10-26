@@ -19,7 +19,7 @@ class PublishHubScreen extends StatelessWidget {
   /// 类别定义：图标 / 名称 / 副标题 / 主题色
   static const List<_HubItem> _items = [
     _HubItem('post', Icons.phishing, '发布渔获', '晒渔获晒鱼情', AppTheme.primary),
-    _HubItem('ask', Icons.help_outline, '钓鱼问答', '有问题大家帮', AppTheme.accent),
+    _HubItem('ask', Icons.help_outline, '钓鱼问答', '有问题大家帮', AppTheme.primary),
     _HubItem('say', Icons.chat_bubble_outline, '随便说说', '点滴心情随记', AppTheme.violet),
     _HubItem('sell', Icons.sell_outlined, '出售二手', '闲置渔具变现', AppTheme.danger),
     _HubItem('buy', Icons.shopping_cart_outlined, '求购二手', '发布求购需求', AppTheme.star),
