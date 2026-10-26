@@ -5,9 +5,10 @@ import '../app_theme.dart';
 import '../widgets/emoji_panel.dart';
 import 'package:provider/provider.dart';
 
+import '../models/badge.dart';
 import '../models/post.dart';
 import '../services/api_config.dart';
-import '../services/follow_service.dart';
+import '../services/badge_hub.dart';
 import '../services/post_service.dart';
 import '../services/session_provider.dart';
 import '../widgets/location_label.dart';
@@ -18,6 +19,7 @@ import 'user_profile_screen.dart';
 import 'publish_catch_screen.dart';
 import '../services/refresh_bus.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/follow_button.dart';
 
 /// 动态详情：大图 + 正文 + 评论区 + 发表评论
 class PostDetailScreen extends StatefulWidget {
@@ -34,9 +36,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   final _ctrl = TextEditingController();
   bool _loading = true;
 
-  /// 作者关注状态（详情页头像行右侧「加关注」）
+  /// 作者关注状态（详情页作者行右侧「关注」，交给 FollowButton 维护）
   bool _following = false;
-  bool _followBusy = false;
 
   @override
   void initState() {
@@ -45,36 +46,6 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     _following = widget.post.isFollowing;
     _loadComments();
     _trackView();
-  }
-
-  /// 加关注 / 取消关注（未登录先去登录）
-  Future<void> _toggleFollow() async {
-    if (_followBusy || _post.isMe) return;
-    final sp = Provider.of<SessionProvider>(context, listen: false);
-    if (!sp.isLoggedIn) {
-      await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const AuthScreen()),
-      );
-      return;
-    }
-    setState(() => _followBusy = true);
-    try {
-      final r = await FollowService.toggleFollow(
-        _post.userId,
-        _following,
-      );
-      if (!mounted) return;
-      setState(() {
-        _following = r.following;
-        _post = _post.copyWith(isFollowing: r.following);
-      });
-      // ignore: use_build_context_synchronously
-      CenterToast.show(context, r.following ? '已关注' : '已取消关注');
-    } catch (e) {
-      if (mounted) CenterToast.show(context, '操作失败：$e');
-    } finally {
-      if (mounted) setState(() => _followBusy = false);
-    }
   }
 
   /// 编辑自己的动态：进入发布页（预填），返回 true 表示已保存，回列表刷新
@@ -121,15 +92,15 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     }
   }
 
-  /// 等级徽章（淡蓝底 + LV 数字，与社区常见样式一致）
+  /// 等级标签（绿底绿字，与 App 主色一致）
   Widget _levelBadge(int level) {
     final lv = level <= 0 ? 1 : level;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
-        color: const Color(0xFFE8F3FF),
+        color: AppTheme.primaryLight,
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: const Color(0xFFB7DBFF), width: 0.8),
+        border: Border.all(color: AppTheme.primaryBorder, width: 0.8),
       ),
       child: Text(
         'LV$lv',
@@ -137,10 +108,81 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           fontSize: 10.5,
           height: 1.25,
           fontWeight: FontWeight.w700,
-          color: Color(0xFF1677FF),
+          color: AppTheme.primary,
         ),
       ),
     );
+  }
+
+  /// 等级后面的徽章（最多 3 枚）。数据来源同首页卡片：
+  /// 动态自带就用自带的，否则由 BadgeHub 按作者 id 批量拉。
+  Widget _authorBadges() {
+    BadgeHub.warm([_post.userId]);
+    return ValueListenableBuilder<int>(
+      valueListenable: BadgeHub.revision,
+      builder: (_, __, ___) {
+        final badges = _post.badges.isNotEmpty
+            ? _post.badges.take(3).toList()
+            : BadgeHub.of(_post.userId).take(3).toList();
+        if (badges.isEmpty) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(left: 5),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final b in badges)
+                Padding(
+                  padding: const EdgeInsets.only(right: 3),
+                  child: _badgeChip(b),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _badgeChip(BadgeItem b) {
+    final url = b.isImage ? ApiConfig.mediaUrl(b.icon) : null;
+    final tint = _hexColor(b.color) ?? AppTheme.primary;
+    return Tooltip(
+      message: b.name,
+      child: Container(
+        width: 17,
+        height: 17,
+        decoration: BoxDecoration(
+          color: tint.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(5),
+        ),
+        alignment: Alignment.center,
+        child: url != null && url.isNotEmpty
+            ? ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: Image.network(
+                  url,
+                  width: 17,
+                  height: 17,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) =>
+                      Icon(Icons.military_tech, size: 13, color: tint),
+                ),
+              )
+            : (b.icon.isNotEmpty
+                ? Text(b.icon, style: const TextStyle(fontSize: 11, height: 1))
+                : Icon(Icons.military_tech, size: 13, color: tint)),
+      ),
+    );
+  }
+
+  Color? _hexColor(String s) {
+    var v = s.trim().replaceAll('#', '');
+    if (v.length == 3) {
+      v = v.split('').map((c) => '$c$c').join();
+    }
+    if (v.length != 6) return null;
+    final n = int.tryParse(v, radix: 16);
+    if (n == null) return null;
+    return Color(0xFF000000 | n);
   }
 
   /// 标题下方的作者行：头像 + 昵称 + 等级 + 时间/地区 + 加关注
@@ -187,6 +229,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   ),
                   const SizedBox(width: 6),
                   _levelBadge(_post.userLevel),
+                  _authorBadges(),
                 ],
               ),
               const SizedBox(height: 3),
@@ -219,27 +262,13 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             ],
           ),
         ),
-        if (!_post.isMe)
-          SizedBox(
-            height: 30,
-            child: ElevatedButton(
-              onPressed: _followBusy ? null : _toggleFollow,
-              style: ElevatedButton.styleFrom(
-                backgroundColor:
-                    _following ? AppTheme.primarySoft : const Color(0xFF1677FF),
-                foregroundColor:
-                    _following ? AppTheme.textSecondary : Colors.white,
-                elevation: 0,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(6)),
-              ),
-              child: Text(
-                _followBusy ? '…' : (_following ? '已关注' : '加关注'),
-                style: const TextStyle(
-                    fontSize: 12.5, fontWeight: FontWeight.w600),
-              ),
-            ),
+        if (!_post.isMe && ApiConfig.enabled)
+          // 与首页信息流作者行同一个组件（绿底白字「关注」），不再用蓝色加关注
+          FollowButton(
+            userId: _post.userId,
+            tiny: true,
+            initialFollowing: _following,
+            onChanged: (v) => _following = v,
           ),
       ],
     );
