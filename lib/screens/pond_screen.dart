@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -15,14 +16,16 @@ import '../widgets/fish_photo.dart';
 
 /// 池塘在背景图里的位置（归一化坐标，按图片宽高算）
 ///
-/// 数值是**量着 assets/pond/pond_bg.jpg 里真实水面**标出来的（把椭圆画在照片上
-/// 逐次对齐，见 .verify/pond_calib.png）。上一版是 0.455 / 0.435 / 0.190 / 0.168，
-/// 中心偏上了约 40px、半径也偏小 —— 结果鱼全挤在池塘上沿，看着像趴在岸边。
+/// 数值是**量着 assets/pond/pond_bg.jpg 里真实水面**标出来的
+/// （把椭圆描红画在照片上逐次对齐，见 .verify/pond_calib2.png）。
+/// 上一版 0.474 / 0.487 / 0.216 / 0.191 的椭圆比真实水面**大一圈**
+/// —— 左、上、下三边各多出 30~40px，鱼游到那一带就压到岸上的草里。
+/// 这一版把水面 bbox（照片像素 x 95~300、y 285~545）换算后取内切。
 class PondSpec {
-  static const double cx = 0.474;
-  static const double cy = 0.487;
-  static const double rx = 0.216;
-  static const double ry = 0.191;
+  static const double cx = 0.502;
+  static const double cy = 0.493;
+  static const double rx = 0.170;
+  static const double ry = 0.148;
 }
 
 /// 池塘里的一条鱼（纯本地存档）
@@ -100,10 +103,13 @@ class PondScreen extends StatefulWidget {
 
 class _PondScreenState extends State<PondScreen>
     with SingleTickerProviderStateMixin {
-  // 必须在 initState 里就建好：写成延迟初始化的话，如果首帧时背景图还没
-  // 到位（build 里没用到它），它会一直到 dispose() 才第一次创建，
-  // 那时 element 已经失效 → 「Looking up a deactivated widget's ancestor」。
-  late final AnimationController _clock;
+  // ★ 用 Ticker + ValueNotifier 而不是 AnimationController:
+  //   AnimationController.repeat() 到时长末尾会把 value 归零 → `value * 60`
+  //   算出来的时间从 60 跳回 0，所有鱼瞬间位移一大截（每秒 60 帧里总有
+  //   一帧会看到，表现为「抽搐」）。Ticker 的 elapsed 是单调递增的，
+  //   永远不会回头，鱼也就不会跳。
+  late final Ticker _ticker;
+  final ValueNotifier<double> _now = ValueNotifier<double>(0);
 
   ui.Image? _bg;
   final Map<String, ui.Image> _images = {};
@@ -116,14 +122,16 @@ class _PondScreenState extends State<PondScreen>
   @override
   void initState() {
     super.initState();
-    _clock = AnimationController(vsync: this, duration: const Duration(seconds: 60))
-      ..repeat();
+    _ticker = createTicker((elapsed) {
+      _now.value = elapsed.inMicroseconds / 1000000.0;
+    })..start();
     _boot();
   }
 
   @override
   void dispose() {
-    _clock.dispose();
+    _ticker.dispose();
+    _now.dispose();
     super.dispose();
   }
 
@@ -174,29 +182,42 @@ class _PondScreenState extends State<PondScreen>
     setState(() => _images.addAll(loaded));
   }
 
-  /// 放鱼 / 收鱼：同种最多 3 条
+  /// 投放 / 收回
+  ///
+  /// ★ 投放上限 = **图鉴里该鱼种已记录的条数**（FishSpecies.count）。
+  ///   发一条鱼获 → 后端按识别出的鱼种给图鉴 +1 → 这里就能多投一条。
+  ///   不再是无限制往池里加（用户明确要求「有多少条就可以投放多少条」）。
   Future<void> _toggle(FishSpecies f) async {
-    final same = _placed.where((e) => e.id == f.id).length;
+    final quota = f.count;
+    final same = _countOf(f.id);
+    if (quota <= 0) {
+      _toast('图鉴里还没有「${f.name}」\n发一条这种鱼的鱼获，图鉴 +1 后才能投放');
+      return;
+    }
     List<PondFish> next;
-    if (same == 0) {
-      next = [..._placed, PondFish.fromSpecies(f)];
-    } else if (same < 3) {
+    if (same >= quota) {
+      // 已经投满 → 再点收回一条
+      final idx = _placed.lastIndexWhere((e) => e.id == f.id);
+      if (idx < 0) return;
+      next = [..._placed]..removeAt(idx);
+    } else {
       if (_placed.length >= kPondMaxFish) {
         // 一屏画一百多条既看不清也掉帧，到上限就提示先收走几条
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('池塘养满了（$kPondMaxFish 条），先收走几条再放'),
-          duration: const Duration(seconds: 2),
-        ));
+        _toast('池塘养满了（$kPondMaxFish 条），先收走几条再投');
         return;
       }
       next = [..._placed, PondFish.fromSpecies(f)];
-    } else {
-      // 已经 3 条 → 再点就是全部收回
-      next = _placed.where((e) => e.id != f.id).toList();
     }
     setState(() => _placed = next);
     await PondStore.save(next);
     await _ensureFishImages(next);
+  }
+
+  void _toast(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      duration: const Duration(seconds: 2),
+    ));
   }
 
   int _countOf(String id) => _placed.where((e) => e.id == id).length;
@@ -210,7 +231,8 @@ class _PondScreenState extends State<PondScreen>
       ));
       return;
     }
-    final unlocked = _all.where((f) => f.unlocked).toList();
+    // 只有图鉴里有条数的鱼才能投（count > 0）
+    final unlocked = _all.where((f) => f.count > 0).toList();
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -234,14 +256,14 @@ class _PondScreenState extends State<PondScreen>
         children: [
           // 池塘画面
           if (_bg != null)
-            AnimatedBuilder(
-              animation: _clock,
-              builder: (_, __) => CustomPaint(
+            ValueListenableBuilder<double>(
+              valueListenable: _now,
+              builder: (_, t, __) => CustomPaint(
                 painter: PondPainter(
                   bg: _bg!,
                   images: _images,
                   fish: _placed,
-                  t: _clock.value * 60.0,
+                  t: t,
                 ),
               ),
             )
@@ -551,7 +573,7 @@ class PondPainter extends CustomPainter {
     _paintWaterTint(canvas, water);
     _paintLightPatches(canvas, water);
     _paintFish(canvas, under);
-    _paintRipples(canvas, water);
+    _paintMicroRipples(canvas, water);
 
     canvas.restore();
 
@@ -613,37 +635,25 @@ class PondPainter extends CustomPainter {
     }
   }
 
-  /// 水面波纹：一圈圈从水面某点推出去的椭圆环
-  ///
-  /// 两处对齐了池塘面积（用户反馈「动态范围没和池塘面积匹配上」）：
-  ///   · 最大半径 ≈ 半个池宽（以前只有 15%，看起来像几粒小气泡）
-  ///   · 波纹的椭圆比例跟水面椭圆的透视一致（不是正圆，也不是拉扁的圆）
-  void _paintRipples(Canvas canvas, Rect water) {
+  /// 水面上的零星星点：很小、很快散，让水「活着」但不抢戏
+  void _paintMicroRipples(Canvas canvas, Rect water) {
     final squash = water.height / water.width;
-    const n = 5;
-    for (var i = 0; i < n; i++) {
-      final cycle = 6.0 + i * 1.35;
-      final q = ((t / cycle) + i * .37) % 1.0;
+    for (var i = 0; i < 4; i++) {
+      final cycle = 2.6 + i * .9;
+      final q = ((t / cycle) + i * .31) % 1.0;
+      if (q > .55) continue; // 大部分时间是干净的，只偶尔冒一个
       final c = Offset(
-        water.center.dx + math.sin(i * 2.399) * water.width * .21,
-        water.center.dy + math.cos(i * 1.917) * water.height * .19,
+        water.center.dx + math.sin(i * 3.1 + t * .07) * water.width * .27,
+        water.center.dy + math.cos(i * 1.7 + t * .05) * water.height * .24,
       );
-      final fade = math.pow(1 - q, 1.5).toDouble();
-      // 双环：同一次扰动推出去两道，像真的涟漪而不是一个描边框
-      for (var k = 0; k < 2; k++) {
-        final qk = q - k * .13;
-        if (qk <= 0) continue;
-        final r = water.width * (.045 + .42 * qk);
-        final p = Paint()
+      final r = water.width * (.012 + .05 * q);
+      canvas.drawOval(
+        Rect.fromCenter(center: c, width: r * 2, height: r * 2 * squash),
+        Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.0 + (1 - qk) * .9
-          ..color = Colors.white
-              .withOpacity(.105 * fade * (k == 0 ? 1.0 : .55));
-        canvas.drawOval(
-          Rect.fromCenter(center: c, width: r * 2, height: r * 2 * squash),
-          p,
-        );
-      }
+          ..strokeWidth = .9
+          ..color = Colors.white.withOpacity(.10 * (1 - q / .55)),
+      );
     }
   }
 
@@ -789,29 +799,31 @@ class _Swimmer {
     final seed = index * 37 + 11;
     final depth = total <= 1 ? .55 : ((index * 3) % 10) / 9.0;
     // 绕一圈的时间：越近游得越快（近处鱼的视觉位移本来就大）
-    final period = 26.0 - depth * 11.0 + (seed % 5) * 1.7;
+    // ★ 上一版 26~33 秒才绕一圈，平均每秒只挪 5~6px，看起来像「贴纸在飘」。
+    //   真实池塘里的鱼横穿 10 米水面就几秒钟，这里压到 9~15 秒一圈。
+    final period = 8.5 - depth * 2.5 + (seed % 5) * 0.6;
     final w = 2 * math.pi / period;
     final p1 = seed * .71;
     final p2 = seed * 1.37;
     final p3 = seed * 2.11;
 
     // 归一化椭圆坐标：两个不同频率的正弦叠加 → 没有折角的漫游轨迹
-    // 纵向振幅压在 0.35 以内：池塘最开阔的一段就在椭圆中带，再往上就是岸边芦苇
+    // 纵向振幅给到 0.42：上一版只有 0.26，所有鱼都挤在池子中横线上，
+    // 看着像「排队」，没有池塘该有的散开感。|r| 最大约 0.75，仍在椭圆内。
     final u =
         0.58 * math.sin(w * t + p1) + 0.10 * math.sin(1.9 * w * t + p3);
     final v =
-        0.26 * math.sin(.63 * w * t + p2) + 0.09 * math.sin(1.31 * w * t + p1);
+        0.42 * math.sin(.63 * w * t + p2) + 0.10 * math.sin(1.31 * w * t + p1);
 
     // 速度（解析求导，不用差分）→ 朝向连续变化，不会左右硬翻
     final du = 0.58 * w * math.cos(w * t + p1) +
         0.10 * 1.9 * w * math.cos(1.9 * w * t + p3);
-    final dv = 0.26 * .63 * w * math.cos(.63 * w * t + p2) +
-        0.09 * 1.31 * w * math.cos(1.31 * w * t + p1);
+    final dv = 0.42 * .63 * w * math.cos(.63 * w * t + p2) +
+        0.10 * 1.31 * w * math.cos(1.31 * w * t + p1);
 
-    // 可用半径只给椭圆的 40%：池塘不是标准椭圆，上沿和两侧明显更窄，
-    // 给满 46% 时鱼在左上角会压到岸边芦苇上，看着像趴在草地上
-    final ex = water.width * .40;
-    final ey = water.height * .40;
+    // 可用半径给椭圆的 44%：|r| 最大约 0.70，再留半个体长，鱼头不会顶到岸
+    final ex = water.width * .44;
+    final ey = water.height * .44;
     final vx = du * ex;
     final vy = dv * ey;
     final heading = math.atan2(vy, vx);
@@ -820,11 +832,18 @@ class _Swimmer {
     // 靠岸的鱼一跳就会飞到岸上的芦苇里
     final radial = math.sqrt(u * u + v * v);
 
+    // 每条鱼落在自己的「泳道」上下错开：不加的话同一时刻会叠在一起，
+    // 池子看着像只有一条鱼。±0.10 池高，仍在椭圆内。
+    final lane = (index % 3) - 1;
+
     return _Swimmer(
       fish: f,
       seed: seed,
       depth: depth,
-      center: Offset(water.center.dx + u * ex, water.center.dy + v * ey),
+      center: Offset(
+        water.center.dx + u * ex,
+        water.center.dy + v * ey + lane * water.height * .10,
+      ),
       heading: heading,
       facing: math.cos(heading) >= 0 ? 1 : -1,
       // 朝镜头 / 背镜头时，投影上身体会变短 —— 转身因此是连续缩短再展开。
@@ -853,8 +872,6 @@ class _Swimmer {
 
   void paint(Canvas canvas, ui.Image img) {
     final h = bodyLen * img.height / img.width; // 身体厚度（垂直于身体方向）
-    final src =
-        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());
 
     // 投在水底的影子：让它像一条在水里的鱼，而不是一张贴纸浮在照片上
     final shadow = Rect.fromCenter(
@@ -869,27 +886,105 @@ class _Swimmer {
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, h * .22),
     );
 
+    final tint = Paint()
+      ..filterQuality = FilterQuality.medium
+      // 越深的鱼越被水「吃掉」一点：远的看着更淡、更融进水里。
+      // 上限别太高 —— 0.30 那档远处的鱼几乎看不见，池子看起来是空的
+      ..colorFilter = ColorFilter.mode(
+        const Color(0xFF0B4A3A).withOpacity(.15 - depth * .10),
+        BlendMode.srcATop,
+      );
+
     canvas.save();
     canvas.translate(center.dx, center.dy);
     // 朝向 = 游动方向；朝左时整体镜像（素材本身朝右）
     canvas.rotate(facing > 0 ? heading : heading + math.pi);
     canvas.scale(facing * foreshorten, 1);
-    canvas.rotate(math.sin(swimPhase) * .045); // 摆尾带动的轻微扭头
-    canvas.drawImageRect(
-      img,
-      src,
-      Rect.fromCenter(center: Offset.zero, width: bodyLen, height: h),
-      Paint()
-        ..filterQuality = FilterQuality.medium
-        // 越深的鱼越被水「吃掉」一点：远的看着更淡、更融进水里。
-        // 上限别太高 —— 0.30 那档远处的鱼几乎看不见，池子看起来是空的
-        ..colorFilter = ColorFilter.mode(
-          const Color(0xFF0B4A3A).withOpacity(.20 - depth * .13),
-          BlendMode.srcATop,
-        ),
-    );
+
+    // ① 整条鱼随水起伏：不是一根钉死的棍子
+    canvas.translate(0, math.sin(swimPhase * .9) * h * .06);
+    // ② 身体侧倾（俯视时的投影厚度会周期变化）
+    canvas.scale(1, 1 + .05 * math.sin(swimPhase * 1.27));
+    // ③ 游动时头会跟着甩尾轻微摆动 —— 这一层最容易被眼睛看见
+    canvas.rotate(math.sin(swimPhase * .95) * .05);
+
+    // ③ 真正的「游」：用三角网格把身体弯成一条行进波（carangiform 的 2D 近似）。
+    //    为什么不用「切 12 段 drawImageRect 拼」：相邻段位移不同 → 接缝处
+    //    出现可见的错位（第一版实测鱼身上有一条直线断带）。网格的顶点是
+    //    相邻三角形**共享**的，插值由 GPU 做，接缝天然连续。
+    //    权重 sin(pi*u) 让**头和尾根都不甩**，中后段幅度最大 ——
+    //    这样无论素材是头朝左还是朝右，都不会出现「脑袋乱晃」。
+    //    幅度只取体长 4%：真实鱼摆动的振幅本来就很小，给大了会把鱼扯变形。
+    if (bodyLen >= 46) {
+      _paintBentBody(canvas, img, h, tint);
+    } else {
+      // 远处的小鱼看不出波动，整张画更省
+      canvas.drawImageRect(
+        img,
+        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+        Rect.fromCenter(center: Offset.zero, width: bodyLen, height: h),
+        tint,
+      );
+    }
     canvas.restore();
   }
+
+  /// 弯着画一条鱼：10 段 × 2 行的网格，纹理是原图
+  void _paintBentBody(Canvas canvas, ui.Image img, double h, Paint tint) {
+    const cols = 10;
+    final amp = bodyLen * .085;
+    final dy = List<double>.filled(cols + 1, 0);
+    for (var i = 0; i <= cols; i++) {
+      final u = i / cols;
+      // pow(sin, .8) 让波峰稍微靠后（更像尾部发力），两端仍为 0
+      dy[i] = amp *
+          math.pow(math.sin(math.pi * u), .8) *
+          math.sin(swimPhase - u * 2.9);
+    }
+    final w = img.width.toDouble();
+    final ih = img.height.toDouble();
+    final pos = <Offset>[];
+    final tex = <Offset>[];
+    for (var i = 0; i < cols; i++) {
+      final x0 = -bodyLen / 2 + bodyLen * i / cols;
+      final x1 = -bodyLen / 2 + bodyLen * (i + 1) / cols;
+      final tx0 = w * i / cols;
+      final tx1 = w * (i + 1) / cols;
+      final a = Offset(x0, -h / 2 + dy[i]);
+      final b = Offset(x1, -h / 2 + dy[i + 1]);
+      final c = Offset(x1, h / 2 + dy[i + 1]);
+      final d = Offset(x0, h / 2 + dy[i]);
+      final ta = Offset(tx0, 0);
+      final tb = Offset(tx1, 0);
+      final tc = Offset(tx1, ih);
+      final td = Offset(tx0, ih);
+      // 两个三角形：a-b-c、a-c-d
+      pos.addAll([a, b, c]);
+      tex.addAll([ta, tb, tc]);
+      pos.addAll([a, c, d]);
+      tex.addAll([ta, tc, td]);
+    }
+    final shader = ui.ImageShader(
+      img,
+      TileMode.clamp,
+      TileMode.clamp,
+      Matrix4.identity().storage,
+    );
+    canvas.drawVertices(
+      ui.Vertices(
+        ui.VertexMode.triangles,
+        pos,
+        textureCoordinates: tex,
+      ),
+      BlendMode.srcOver,
+      tint..shader = shader,
+    );
+    tint.shader = null; // 这个 Paint 是复用的，用完把 shader 摘掉
+  }
+
+  /// 尾根位置（画尾迹用）
+  Offset get tailPoint =>
+      center - Offset(math.cos(heading), math.sin(heading)) * bodyLen * .42;
 }
 
 // ══════════════════════════ 放鱼面板 ══════════════════════════
@@ -940,7 +1035,7 @@ class _PondPickerSheetState extends State<_PondPickerSheet> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '同种最多 3 条 · 池里最多 $kPondMaxFish 条 · 退出 App 也还在',
+                    '按图鉴条数投放 · 池里最多 $kPondMaxFish 条 · 退出 App 也还在',
                     style: TextStyle(
                         fontSize: 11, color: AppTheme.textSecondary),
                   ),
@@ -974,6 +1069,8 @@ class _PondPickerSheetState extends State<_PondPickerSheet> {
                     itemBuilder: (_, i) {
                       final f = widget.all[i];
                       final n = widget.countOf(f.id);
+                      final quota = f.count;
+                      final full = n >= quota;
                       return InkWell(
                         borderRadius: BorderRadius.circular(12),
                         onTap: () {
@@ -1008,15 +1105,18 @@ class _PondPickerSheetState extends State<_PondPickerSheet> {
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 6, vertical: 1),
                                         decoration: BoxDecoration(
-                                          color: AppTheme.primary,
+                                          // 投满变灰：一眼看出这条鱼不能再加了
+                                          color: full
+                                              ? AppTheme.textSecondary
+                                              : AppTheme.primary,
                                           borderRadius:
                                               BorderRadius.circular(9),
                                         ),
                                         child: Text(
-                                          '×$n',
+                                          '$n/$quota',
                                           style: const TextStyle(
                                               color: Colors.white,
-                                              fontSize: 10,
+                                              fontSize: 9.5,
                                               fontWeight: FontWeight.w700),
                                         ),
                                       ),
@@ -1030,6 +1130,12 @@ class _PondPickerSheetState extends State<_PondPickerSheet> {
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                     fontSize: 12, fontWeight: FontWeight.w600),
+                              ),
+                              Text(
+                                n > 0 ? '已投 $n / 共 $quota' : '可投 $quota 条',
+                                style: TextStyle(
+                                    fontSize: 9.5,
+                                    color: AppTheme.textSecondary),
                               ),
                             ],
                           ),
