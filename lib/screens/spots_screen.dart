@@ -430,7 +430,7 @@ class _SpotsScreenState extends State<SpotsScreen>
                           Text(distance,
                               style: const TextStyle(
                                   fontSize: 11.5,
-                                  color: AppTheme.accent,
+                                  color: AppTheme.textSecondary,
                                   fontWeight: FontWeight.w600)),
                         ],
                       ],
@@ -604,7 +604,7 @@ class _SpotsScreenState extends State<SpotsScreen>
                         fontSize: 15,
                         height: 1.1,
                         fontWeight: FontWeight.w700,
-                        color: AppTheme.accent)),
+                        color: AppTheme.primary)),
                 const Text('个',
                     style: TextStyle(fontSize: 11, height: 1.2)),
                 const SizedBox(height: 8),
