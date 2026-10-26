@@ -13,6 +13,7 @@ import '../app_theme.dart';
 import '../data/fish_assets.dart';
 import '../models/fish.dart';
 import '../services/fish_service.dart';
+import '../widgets/fish_top_view.dart';
 import '../widgets/fish_photo.dart';
 
 /// 池塘在背景图里的位置（归一化坐标，按图片宽高算）
@@ -1276,201 +1277,21 @@ class _Swimmer {
         Offset(center.dx, center.dy + math.sin(bob) * bodyLen * .004));
   }
 
-  /// 俯视（从池子上方往下看）画一条鱼 —— **只露出水里的鱼背**
+  /// 俯视鱼背 —— 真正的绘制在 [FishTopView]
   ///
-  /// 为什么不贴素材：图鉴那 46 张鱼图是鱼的正侧面（能看到眼睛、胸鳍、
-  /// 侧线），而池塘是航拍俯视的实景照片。把侧影摊在池面上，看起来就是
-  /// 「一条翻着肚子的鱼躺在水面」—— 用户说的「躺着游」正是这个。
-  ///
-  /// 也不能把侧视纹理拉到俯视轮廓上：素材沿 y 是「背深腹白」、沿 x 是
-  /// 头尾渐变 + 鳞片，拉过去会变成一条「玉米棒」。所以：
-  ///  1. **轮廓** 程序化纺锤形（俯视看鱼就是中间宽、两头尖），沿体轴行波
-  ///  2. **颜色** 用加载时采到的「背部主色」（见 [PondPainter.sampleBodyColor]），
-  ///     再叠横向受光渐变 —— 中脊离水面最近所以最亮，两侧渐暗
-  ///  3. **水下感** 边缘羽化 + 水色压暗 + 越深越淡
+  /// 单独拆出去的原因：鱼形是这套画面最容易翻车的地方（侧视素材贴俯视底图
+  /// 就是「躺着的鱼」），拆出来以后可以脱离池塘、在纯色背景上放大到 200px
+  /// 逐帧对比，改一个参数立刻能看见。
   void _paintTopView(Canvas canvas, Color body) {
-    final l = bodyLen;
-    // 俯视半宽 = 体长 x .094（整宽 ≈ 体长的 1/5）。
-    // 这是照用户给的真实鱼群航拍照片量出来的：鱼身约 70px 长、14px 宽，5:1 的
-    // 细长鱼雷形。之前 .155（3.2:1）太胖，配上眼睛和胸鳍，一眼看过去就是
-    // 「鱼和老鼠的结合体」。
-    final halfW = l * .094;
-    const cols = 18;
-
-    // ── 中心线：行波从头部传向尾部（和真鱼一样）+ 俯视宽度轮廓
-    final px = List<double>.filled(cols + 1, 0);
-    final py = List<double>.filled(cols + 1, 0);
-    final pw = List<double>.filled(cols + 1, 0);
-    for (var i = 0; i <= cols; i++) {
-      final u = i / cols; // 0 = 尾柄，1 = 吻端
-      final q = 1 - u; // 0 = 头，1 = 尾
-      px[i] = -l / 2 + l * u;
-      // 摆幅：前半身几乎笔直（.4%），只有尾柄到尾巴摆（5.5%）。
-      // 照片里的鱼基本都是「一条直线 + 尾巴小幅摆动」；之前头尾一起 S 形扭
-      // （8%）是「像虫子 / 像老鼠尾巴」的第二个来源。
-      final env = .003 + .034 * math.pow(q, 2.4);
-      // 相位沿体轴延迟 0.62 个波长 → 只有后半段弯，波从体侧传向尾巴
-      final ph = swimPhase - q * 2 * math.pi * .62;
-      py[i] = l * env * thrust * math.sin(ph);
-      pw[i] = halfW * _topWidth(u);
-    }
-
-    // ── 尾鳍先画，压在身体下面
-    _paintTailFin(canvas, px[0], py[0], l, body);
-
-    // ── 鱼身：18 列 × 4 段三角网格（顶点共享 → 弯曲不出接缝）
-    //
-    // 横向 t 取 -1.18..1.18：|t|>1 之后还有 .16 的宽度把 alpha 降到 0，
-    // 形成「水下的柔边」。硬轮廓在实景照片上特别假 —— 水下看鱼背没有清晰边。
-    const rows = 5;
-    const tMax = 1.30;
-    final pos = <Offset>[];
-    final colors = <Color>[];
-    for (var i = 0; i < cols; i++) {
-      final u0 = i / cols, u1 = (i + 1) / cols;
-      for (var j = 0; j < rows; j++) {
-        final t0 = -tMax + 2 * tMax * j / rows;
-        final t1 = -tMax + 2 * tMax * (j + 1) / rows;
-        final a = Offset(px[i], py[i] + pw[i] * t0);
-        final b = Offset(px[i + 1], py[i + 1] + pw[i + 1] * t0);
-        final c = Offset(px[i + 1], py[i + 1] + pw[i + 1] * t1);
-        final d = Offset(px[i], py[i] + pw[i] * t1);
-        pos.addAll([a, b, c, a, c, d]);
-        final ca = _bodyShade(body, t0, u0, depth);
-        final cb = _bodyShade(body, t0, u1, depth);
-        final cc = _bodyShade(body, t1, u1, depth);
-        final cd = _bodyShade(body, t1, u0, depth);
-        colors.addAll([ca, cb, cc, ca, cc, cd]);
-      }
-    }
-    canvas.drawVertices(
-      ui.Vertices(ui.VertexMode.triangles, pos, colors: colors),
-      BlendMode.srcOver,
-      Paint(),
-    );
-
-    // ── 背鳍 / 胸鳍 / 眼睛：全部不画 ────────────────────────────
-    //
-    // 真实俯视照片里这三样根本看不见：眼睛被头骨和水挡着、胸鳍贴在体侧、
-    // 背鳍只剩中脊一条暗线。之前画了「两颗带高光的眼 + 一对胸鳍 + 燕尾鳍条」，
-    // 放大看就是「有眼睛、有耳朵、有四条腿」—— 正是用户说的老鼠。
-    // 俯视画鱼只要一个干净的纺锤剪影 + 摆动的尾巴就够了。
-  }
-
-  /// 俯视轮廓宽度：u = 0 尾柄、1 吻端
-  ///
-  /// 真人俯视看一条鱼，宽度曲线是**三段**，不是一条对称的尖叶：
-  ///   尾柄 .17（很细）→ 前 22% 快速变粗到 .66 → 中段缓慢到最宽 1.0（u=.70，
-  ///   鳃盖后）→ 头前 30% 快速收到吻端 .32（圆钝）。
-  /// 之前用「从尾到头单调变宽 + 头端快速收」，结果最宽处落在正中，
-  /// 整条鱼就是一片**对称的柳叶**——用户看到的「落叶」就是这个。
-  static double _topWidth(double u) {
-    if (u >= .70) {
-      // 头前段：最宽 1.0 → 吻端 .34。用 pow 而不是 smoothstep：
-      // smoothstep 前段收得太快，头会变成一个尖锥（像根针）。
-      final k = (u - .70) / .30;
-      var w = 1.0 - .66 * math.pow(k, 1.55);
-      if (u > .96) {
-        // 圆头：最后 4% 快速收口。不收口的话网格最后一列是一条竖直线，
-        // 放大看就是「鱼头被切了一刀」。
-        final r = (u - .96) / .04;
-        w *= (1 - r * r * .50);
-      }
-      return w;
-    }
-    if (u >= .22) {
-      // 中段：.66 → 1.0（缓慢变宽）
-      final k = (u - .22) / .48;
-      final s = k * k * (3 - 2 * k);
-      return .66 + .34 * s;
-    }
-    // 尾柄：.17 → .66（急剧变粗）
-    final k = u / .22;
-    return .17 + .49 * math.pow(k, .90);
-  }
-
-  /// 顶点色：**水下剪影**，不是立体模型
-  ///
-  /// 参考用户给的真实鱼群航拍照片：一条鱼就是一个深色纺锤影子，
-  /// 几乎看不到高光、眼睛、鳞片。所以这里只做三件事：
-  ///  1. 亮度按「离水面远近」定（近处浓、远处淡，远处再叠一层 alpha）
-  ///  2. 横向只留 14% 的中脊亮差 —— 差再多就成「圆管 / 老鼠背」
-  ///  3. 边缘羽化 + 往池水色偏一点（水会吸收红光）
-  static Color _bodyShade(Color base, double t, double u, double depth) {
-    final at = t.abs().clamp(0.0, 1.30);
-    final hsv = HSVColor.fromColor(base);
-    // 亮度：近水面 .30 → 深水 .17。素材是白底摄影棚光，直接用会像「浮在水面的亮纸」；
-    // 压到这里，鱼才会像参考照片那样「比水暗一档」的剪影。
-    final lum = .17 + .13 * depth;
-    // 横向：中脊略亮（离水面最近），体侧微微压暗
-    final side = 1.0 - .11 * math.pow((at / 1.30).clamp(0.0, 1.0), .85);
-    // 纵向：**头亮尾暗**。鱼头离水面近、尾柄细且被水吃掉，所以尾巴一定要
-    // 渐隐。两端都暗的话整条鱼就成了「一片对称的叶子」。
-    final endFade = .94 + .06 * u.clamp(0.0, 1.0);
-    // 饱和度留一点：鲫鱼灰绿、鲤鱼金褐的差别全靠它，全压平就成一团灰影
-    final sat = (hsv.saturation * .70 + .10).clamp(0.0, .80);
-    var c = HSVColor.fromAHSV(
-            1, hsv.hue, sat, (lum * side * endFade).clamp(0.0, 1.0))
-        .toColor();
-    // 往池水色偏：水下本来就不该是暖色调（别过头，过了就和水糊成一片）
-    c = Color.lerp(c, const Color(0xFF22372C), .16)!;
-    // 边缘羽化：|t| 超过 1.0 之后 .16 的宽度内 alpha 降到 0。
-    // 别给到 .30 —— 那宽度在深色水面上会糊成一团「水渍」，轮廓全没了。
-    final edge = at <= 1.0 ? 1.0 : (1 - (at - 1.0) / .30).clamp(0.0, 1.0);
-    // 深的鱼更淡：隔着更厚的水，轮廓本来就会「化」掉
-    final a = (255 * edge * (.72 + .28 * depth)).round();
-    return c.withAlpha(a);
-  }
-
-  /// 尾鳍：俯视看是从尾柄张开的半透明小**扇**，绕尾柄摆（不是平移）
-  ///
-  /// 这是俯视下唯一能一眼认出「这是鱼」的部件，所以几何必须真的是扇形：
-  /// 展开半宽 = 体长 5.2%（约尾柄的 3 倍）、长度 = 体长 13%、外缘外凸、
-  /// 中间一个浅燕尾凹口。之前那版路径控制点全部按体长 2%~3% 取，
-  /// 在 40px 的鱼身上就是 1px 的一条线，抗锯齿一糊 → 鱼屁股上贴了个
-  /// 「亮白方角」，那才是「不像鱼」的主因。
-  void _paintTailFin(Canvas canvas, double x0, double y0, double l, Color body) {
-    final finLen = l * .11;
-    final spread = l * .042;
-    final rootH = l * .022;
-    // 绕尾柄摆 ±0.42 弧度（±24°）
-    final swing = math.sin(swimPhase - 2 * math.pi * .70) * .42;
-    final ca = math.cos(swing), sa = math.sin(swing);
-
-    // (back, side) 是「沿体轴向后 / 垂直体轴」的局部坐标，再绕尾柄转到全局
-    Offset p(double back, double side) =>
-        Offset(x0 - back * ca - side * sa, y0 - back * sa + side * ca);
-
-    final a0 = p(0, -rootH);
-    final a1 = p(finLen * .62, -spread * 1.06);
-    final a2 = p(finLen, -spread * .92);
-    final a3 = p(finLen * .82, -spread * .40);
-    final a4 = p(finLen * .62, 0);
-    final a5 = p(finLen * .82, spread * .40);
-    final a6 = p(finLen, spread * .92);
-    final a7 = p(finLen * .62, spread * 1.06);
-    final a8 = p(0, rootH);
-
-    final path = Path()
-      ..moveTo(a0.dx, a0.dy)
-      ..quadraticBezierTo(a1.dx, a1.dy, a2.dx, a2.dy) // 上叶外缘
-      ..quadraticBezierTo(a3.dx, a3.dy, a4.dx, a4.dy) // 收进凹口
-      ..quadraticBezierTo(a5.dx, a5.dy, a6.dx, a6.dy) // 下叶外缘
-      ..quadraticBezierTo(a7.dx, a7.dy, a8.dx, a8.dy) // 回到尾柄
-      ..close();
-
-    // 尾鳍是半透明薄膜：颜色只比体色亮一点点，别调白 ——
-    // 调白 + 不透明就是「鱼身后拖着一片叶子」。
-    // ★ 不画鳍条：真实俯视照片里鳍条根本看不见，画上去只会让鱼显脏。
-    // 颜色**比体色更暗**（不是更亮）：真实俯视照片里尾鳍是半透明的深色薄膜，
-    // 比身体还淡、还暗。之前往浅色 lerp，结果鱼屁股上贴了个亮三角。
-    final finColor = Color.lerp(body, const Color(0xFF15261E), .45)!;
-    canvas.drawPath(
-      path,
-      Paint()..color = finColor.withOpacity((.34 - depth * .08).clamp(.0, 1.0)),
+    FishTopView.paint(
+      canvas,
+      len: bodyLen,
+      phase: swimPhase,
+      body: body,
+      depth: depth,
+      thrust: thrust,
     );
   }
-
 }
 
 // ══════════════════════════ 放鱼面板 ══════════════════════════
