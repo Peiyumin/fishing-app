@@ -285,7 +285,7 @@ class _MallScreenState extends State<MallScreen> {
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                     fontSize: 11,
-                                    color: Color(0xFFB26A00),
+                                    color: AppTheme.starDark,
                                     fontWeight: FontWeight.w600)),
                           ),
                         ],
