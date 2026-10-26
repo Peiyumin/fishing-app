@@ -14,13 +14,15 @@ import '../services/fish_service.dart';
 import '../widgets/fish_photo.dart';
 
 /// 池塘在背景图里的位置（归一化坐标，按图片宽高算）
-/// 数值是量着 assets/pond/pond_bg.jpg 里水面描出来的：略小一圈更保险，
-/// 鱼不会游到岸上的草里。
+///
+/// 数值是**量着 assets/pond/pond_bg.jpg 里真实水面**标出来的（把椭圆画在照片上
+/// 逐次对齐，见 .verify/pond_calib.png）。上一版是 0.455 / 0.435 / 0.190 / 0.168，
+/// 中心偏上了约 40px、半径也偏小 —— 结果鱼全挤在池塘上沿，看着像趴在岸边。
 class PondSpec {
-  static const double cx = 0.455;
-  static const double cy = 0.435;
-  static const double rx = 0.190;
-  static const double ry = 0.168;
+  static const double cx = 0.474;
+  static const double cy = 0.487;
+  static const double rx = 0.216;
+  static const double ry = 0.191;
 }
 
 /// 池塘里的一条鱼（纯本地存档）
@@ -179,6 +181,14 @@ class _PondScreenState extends State<PondScreen>
     if (same == 0) {
       next = [..._placed, PondFish.fromSpecies(f)];
     } else if (same < 3) {
+      if (_placed.length >= kPondMaxFish) {
+        // 一屏画一百多条既看不清也掉帧，到上限就提示先收走几条
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('池塘养满了（$kPondMaxFish 条），先收走几条再放'),
+          duration: const Duration(seconds: 2),
+        ));
+        return;
+      }
       next = [..._placed, PondFish.fromSpecies(f)];
     } else {
       // 已经 3 条 → 再点就是全部收回
@@ -472,7 +482,18 @@ class _PondScreenState extends State<PondScreen>
 
 // ══════════════════════════ 画面绘制 ══════════════════════════
 
-/// 池塘绘制：背景照片 → 水色 → 焦散光网 → 鱼群 → 跃水 → 水面涟漪 → 暗角
+/// 池里同时最多画多少条鱼
+///
+/// 图鉴全点亮理论上能放 138 条（46 种 × 3），但一屏一百多条既看不清、
+/// 也会明显掉帧，池塘本来也养不下这么多。放鱼超过这个数会提示先收走几条。
+const int kPondMaxFish = 24;
+
+/// 池塘绘制：背景照片 → 水色 → 柔光斑 → 鱼群 → 水面波纹 → 跃水 → 暗角
+///
+/// 注意：**水面不要画直线网格**。上一版那层「焦散光网」是两组互相垂直的
+/// 正弦线，在真实池塘照片上看起来就是一张贴在池底的渔网（用户原话：
+/// 「把动态水波纹显示的网格给隐藏掉」）。现在改成几团大而极淡的径向光斑，
+/// 边缘靠渐变化开，没有一条直边。
 class PondPainter extends CustomPainter {
   final ui.Image bg;
   final Map<String, ui.Image> images;
@@ -510,17 +531,31 @@ class PondPainter extends CustomPainter {
       height: PondSpec.ry * 2 * dh,
     );
 
+    // 每帧只算一次位置：水里的和空中的用同一份数据，否则跃水时会「两个影子」
+    final list =
+        fish.length > kPondMaxFish ? fish.sublist(0, kPondMaxFish) : fish;
+    final swimmers = <_Swimmer>[];
+    for (var i = 0; i < list.length; i++) {
+      swimmers.add(_Swimmer.of(list[i], i, list.length, t, water));
+    }
+    final under = <_Swimmer>[
+      ...swimmers.where((s) => !s.airborne),
+    ]..sort((a, b) => a.depth.compareTo(b.depth));
+    final air = <_Swimmer>[
+      ...swimmers.where((s) => s.airborne),
+    ]..sort((a, b) => a.depth.compareTo(b.depth));
+
     canvas.save();
     canvas.clipPath(Path()..addOval(water));
 
     _paintWaterTint(canvas, water);
-    _paintCaustics(canvas, water);
-    _paintFish(canvas, water);
+    _paintLightPatches(canvas, water);
+    _paintFish(canvas, under);
     _paintRipples(canvas, water);
 
     canvas.restore();
 
-    _paintJumping(canvas, water);
+    _paintJumps(canvas, water, air);
     _paintVignette(canvas, size);
   }
 
@@ -529,71 +564,48 @@ class PondPainter extends CustomPainter {
     final paint = Paint()
       ..shader = RadialGradient(
         colors: [
-          const Color(0xFF06231E).withOpacity(.34),
-          const Color(0xFF0B3A2E).withOpacity(.20),
-          const Color(0xFF1E6B52).withOpacity(.10),
+          const Color(0xFF06231E).withOpacity(.30),
+          const Color(0xFF0B3A2E).withOpacity(.18),
+          const Color(0xFF1E6B52).withOpacity(.09),
         ],
         stops: const [0.0, 0.62, 1.0],
       ).createShader(water);
     canvas.drawOval(water, paint);
   }
 
-  /// 焦散光网：两组正弦线交叉，缓慢流动（水下那种会游动的光斑）
-  void _paintCaustics(Canvas canvas, Rect water) {
-    final p = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.1
-      ..color = Colors.white.withOpacity(.055);
-    final paint2 = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.1
-      ..color = Colors.white.withOpacity(.045);
-
-    final n = 13;
+  /// 柔光斑：几团很大、很淡的径向渐变在水面下慢慢漂
+  ///
+  /// 只用「圆的渐变」，没有任何线段——即使用户盯着看也看不出网格。
+  void _paintLightPatches(Canvas canvas, Rect water) {
+    const n = 6;
     for (var i = 0; i < n; i++) {
-      final path = Path();
-      for (var k = 0; k <= 24; k++) {
-        final fx = k / 24;
-        final x = water.left + fx * water.width;
-        final phase = t * .28 + i * .55 + fx * 4.2;
-        final y = water.top +
-            water.height * (i / n) +
-            math.sin(phase) * water.height * .035;
-        if (k == 0) {
-          path.moveTo(x, y);
-        } else {
-          path.lineTo(x, y);
-        }
-      }
-      canvas.drawPath(path, i.isEven ? p : paint2);
-    }
-    for (var i = 0; i < n; i++) {
-      final path = Path();
-      for (var k = 0; k <= 20; k++) {
-        final fy = k / 20;
-        final y = water.top + fy * water.height;
-        final phase = t * .22 + i * .7 + fy * 3.6;
-        final x = water.left +
-            water.width * (i / n) +
-            math.sin(phase) * water.width * .03;
-        if (k == 0) {
-          path.moveTo(x, y);
-        } else {
-          path.lineTo(x, y);
-        }
-      }
-      canvas.drawPath(path, i.isEven ? p : paint2);
+      final ph = i * 1.73;
+      final cx = water.center.dx +
+          math.sin(t * .11 + ph) * water.width * .30;
+      final cy = water.center.dy +
+          math.cos(t * .09 + ph * 1.31) * water.height * .26;
+      final rw = water.width * (.24 + .05 * math.sin(t * .07 + ph));
+      final rect = Rect.fromCenter(
+        center: Offset(cx, cy),
+        width: rw * 2,
+        height: rw * 1.55,
+      );
+      final a = .045 + .018 * math.sin(t * .5 + ph);
+      canvas.drawOval(
+        rect,
+        Paint()
+          ..shader = RadialGradient(
+            colors: [
+              Colors.white.withOpacity(a),
+              Colors.white.withOpacity(0),
+            ],
+          ).createShader(rect),
+      );
     }
   }
 
-  void _paintFish(Canvas canvas, Rect water) {
-    if (fish.isEmpty) return;
-    final sprites = <_Sprite>[];
-    for (var i = 0; i < fish.length; i++) {
-      sprites.add(_Sprite.of(fish[i], i, fish.length, t, water));
-    }
-    sprites.sort((a, b) => a.depth.compareTo(b.depth));
-    for (final s in sprites) {
+  void _paintFish(Canvas canvas, List<_Swimmer> list) {
+    for (final s in list) {
       final img = images[
           FishAssets.pathOrFallback(s.fish.name, waterType: s.fish.water)];
       if (img == null) continue;
@@ -601,86 +613,121 @@ class PondPainter extends CustomPainter {
     }
   }
 
-  /// 水面涟漪：几条慢慢散开的椭圆环
+  /// 水面波纹：一圈圈从水面某点推出去的椭圆环
+  ///
+  /// 两处对齐了池塘面积（用户反馈「动态范围没和池塘面积匹配上」）：
+  ///   · 最大半径 ≈ 半个池宽（以前只有 15%，看起来像几粒小气泡）
+  ///   · 波纹的椭圆比例跟水面椭圆的透视一致（不是正圆，也不是拉扁的圆）
   void _paintRipples(Canvas canvas, Rect water) {
-    for (var i = 0; i < 3; i++) {
-      final cycle = 5.5 + i * 1.7;
-      final q = ((t + i * 2.1) % cycle) / cycle;
+    final squash = water.height / water.width;
+    const n = 5;
+    for (var i = 0; i < n; i++) {
+      final cycle = 6.0 + i * 1.35;
+      final q = ((t / cycle) + i * .37) % 1.0;
       final c = Offset(
-        water.center.dx + math.sin(i * 2.3) * water.width * .22,
-        water.center.dy + math.cos(i * 1.7) * water.height * .18,
+        water.center.dx + math.sin(i * 2.399) * water.width * .21,
+        water.center.dy + math.cos(i * 1.917) * water.height * .19,
       );
-      final r = water.width * (.03 + q * .12);
-      final p = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.2
-        ..color = Colors.white.withOpacity(.10 * (1 - q));
-      canvas.drawOval(
-        Rect.fromCenter(
-            center: c, width: r * 2, height: r * 1.5),
-        p,
-      );
-    }
-  }
-
-  /// 跃出水面的鱼：只有靠浅处的鱼会跳
-  void _paintJumping(Canvas canvas, Rect water) {
-    if (fish.isEmpty) return;
-    for (var i = 0; i < fish.length; i++) {
-      final s = _Sprite.of(fish[i], i, fish.length, t, water);
-      if (s.depth > .55) continue;
-      final jump = _jumpPhase(s.seed);
-      if (jump < 0 || jump > 1) continue;
-      final img = images[
-          FishAssets.pathOrFallback(fish[i].name, waterType: fish[i].water)];
-      if (img == null) continue;
-
-      // 起跳点固定在这个 sprite 的水面位置（不能每帧随机，否则凭空出现）
-      final base = s.center;
-      final arc = math.sin(jump * math.pi);
-      final dy = -water.height * .34 * arc;
-      final wPx = s.lenPx * .95;
-      final hPx = wPx * img.height / img.width;
-      final rect = Rect.fromCenter(
-        center: Offset(base.dx, base.dy + dy),
-        width: wPx,
-        height: hPx,
-      );
-      canvas.save();
-      canvas.translate(rect.center.dx, rect.center.dy);
-      canvas.rotate((s.dir >= 0 ? -1 : 1) * (-.7 + jump * 1.6));
-      canvas.scale(s.dir >= 0 ? 1 : -1, 1);
-      canvas.drawImageRect(
-        img,
-        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
-        Rect.fromCenter(
-            center: Offset.zero, width: rect.width, height: rect.height),
-        Paint()..filterQuality = FilterQuality.medium,
-      );
-      canvas.restore();
-
-      // 落水的水花：起跳和落水各一圈
-      if (jump < .12 || jump > .88) {
-        final k = jump < .12 ? jump / .12 : (1 - jump) / .12;
+      final fade = math.pow(1 - q, 1.5).toDouble();
+      // 双环：同一次扰动推出去两道，像真的涟漪而不是一个描边框
+      for (var k = 0; k < 2; k++) {
+        final qk = q - k * .13;
+        if (qk <= 0) continue;
+        final r = water.width * (.045 + .42 * qk);
+        final p = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0 + (1 - qk) * .9
+          ..color = Colors.white
+              .withOpacity(.105 * fade * (k == 0 ? 1.0 : .55));
         canvas.drawOval(
-          Rect.fromCenter(
-              center: base,
-              width: water.width * .05 * (1.2 - k),
-              height: water.width * .02 * (1.2 - k)),
-          Paint()..color = Colors.white.withOpacity(.22 * k),
+          Rect.fromCenter(center: c, width: r * 2, height: r * 2 * squash),
+          p,
         );
       }
     }
   }
 
-  /// 每 9~17 秒跳一次，返回 0..1 的进度（不在跳跃窗口时返回 -1）
-  double _jumpPhase(int seed) {
-    final cycle = 9.0 + (seed % 5) * 1.6;
-    final offset = (seed % 7) * 1.3;
-    final local = (t + offset) % cycle;
-    const dur = 1.25;
-    if (local > dur) return -1;
-    return local / dur;
+  /// 跃出水面的鱼：出水 → 抛物线 → 落回水面，两头各炸一圈水花
+  void _paintJumps(Canvas canvas, Rect water, List<_Swimmer> list) {
+    for (final s in list) {
+      final img = images[
+          FishAssets.pathOrFallback(s.fish.name, waterType: s.fish.water)];
+      if (img == null) continue;
+      final q = s.jumpQ;
+      final stride = s.bodyLen * .9;
+      // 起跳点 → 落水点：整段都在同一条朝向上往前挪，不会瞬移
+      final launch = s.center;
+      final landing = Offset(
+        launch.dx + math.cos(s.heading) * stride,
+        launch.dy + math.sin(s.heading) * stride,
+      );
+      final now = Offset.lerp(launch, landing, q)!;
+      final height = water.height * .24 * 4 * q * (1 - q);
+      final h = s.bodyLen * img.height / img.width;
+      final grow = 1 + .10 * math.sin(math.pi * q);
+
+      canvas.save();
+      canvas.translate(now.dx, now.dy - height);
+      // 朝向沿用游动方向（含左右镜像），再叠一层绕自身的翻转：
+      // 出水时鼻尖朝上、顶点大致水平、入水时朝下
+      canvas.rotate(s.facing > 0 ? s.heading : s.heading + math.pi);
+      canvas.scale(s.facing, 1);
+      canvas.rotate(-.85 + q * 1.7);
+      canvas.drawImageRect(
+        img,
+        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+        Rect.fromCenter(
+          center: Offset.zero,
+          width: s.bodyLen * grow,
+          height: h * grow,
+        ),
+        Paint()
+          ..filterQuality = FilterQuality.medium
+          ..colorFilter = ColorFilter.mode(
+            const Color(0xFF0B4A3A).withOpacity(.06),
+            BlendMode.srcATop,
+          ),
+      );
+      canvas.restore();
+
+      // 出水 / 落水的水花
+      if (q < .18) _splash(canvas, launch, q / .18, water);
+      if (q > .82) _splash(canvas, landing, (q - .82) / .18, water);
+    }
+  }
+
+  /// 水花：k = 0（刚砸下去）→ 1（散完）
+  void _splash(Canvas canvas, Offset at, double k, Rect water) {
+    if (k <= 0 || k >= 1) return;
+    final squash = water.height / water.width;
+    final rMax = water.width * .13;
+    final fade = (1 - k) * (1 - k);
+    for (var i = 0; i < 3; i++) {
+      final q = k - i * .16;
+      if (q <= 0) continue;
+      final r = rMax * q;
+      canvas.drawOval(
+        Rect.fromCenter(center: at, width: r * 2, height: r * 2 * squash),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0 + (1 - q) * 1.2
+          ..color = Colors.white.withOpacity(.30 * fade * (1 - i * .26)),
+      );
+    }
+    // 溅起来的小水珠
+    final lift = water.height * .045;
+    for (var d = 0; d < 7; d++) {
+      final a = -math.pi * (.18 + .64 * (d / 6));
+      final dist = rMax * .8 * k;
+      canvas.drawCircle(
+        Offset(
+          at.dx + math.cos(a) * dist,
+          at.dy + math.sin(a) * dist - lift * math.sin(math.pi * k),
+        ),
+        1.1 + 1.5 * (1 - k),
+        Paint()..color = Colors.white.withOpacity(.40 * fade),
+      );
+    }
   }
 
   void _paintVignette(Canvas canvas, Size size) {
@@ -704,83 +751,142 @@ class PondPainter extends CustomPainter {
 ///
 /// 位置 / 朝向 / 大小全部由「种子 + 当前时间」算出来，不保存任何动画状态：
 /// 任意一帧都能直接重绘，切后台再回来也不会错位或跳一下。
-class _Sprite {
+///
+/// ★ 上一版为什么「僵硬」：横坐标是一条三角波（0→1→0 直线折返），到端点那一帧
+///   速度方向凭空反号，同时 `dir` 从 1 变成 -1 → 画面上一帧还在往右、下一帧
+///   整体镜像往左，就是用户说的「姿态僵硬、像贴纸翻面」。
+///   现在改成两条不同频率的正弦叠加的漫游轨迹，朝向由**解析导数**算出：
+///   速度连续 → 朝向连续 → 转身是「身体缩短再展开」的连续过程，
+///   再叠一层摆尾的轻微扭头，鱼才有「活着」的感觉。
+class _Swimmer {
   final PondFish fish;
   final int seed;
   final double depth; // 0 远（小、淡、慢）→ 1 近（大、清、快）
-  final Rect water;
-  final double dir; // 1 向右 / -1 向左
-  final double pos; // 0..1，在水面椭圆里的水平位置
-  final double lenPx; // 屏幕上的体长
-  final Offset center; // 屏幕坐标
-  final double tilt; // 轻微俯仰，别让所有鱼像贴纸一样水平
-  final double alpha;
+  final Offset center; // 水面上的屏幕坐标
+  final double heading; // 朝向（弧度，屏幕坐标 y 向下）
+  final double facing; // 1 朝右 / -1 朝左（素材本身朝右）
+  final double foreshorten; // 身体被透视压短的比例 0.42~1
+  final double bodyLen; // 体长（像素）
+  final double swimPhase; // 摆尾相位（弧度）
+  final double jumpQ; // 跃水进度 0..1；不在空中为 -1
 
-  const _Sprite({
+  const _Swimmer({
     required this.fish,
     required this.seed,
     required this.depth,
-    required this.water,
-    required this.dir,
-    required this.pos,
-    required this.lenPx,
     required this.center,
-    required this.tilt,
-    required this.alpha,
+    required this.heading,
+    required this.facing,
+    required this.foreshorten,
+    required this.bodyLen,
+    required this.swimPhase,
+    required this.jumpQ,
   });
 
-  factory _Sprite.of(
-      PondFish f, int index, int total, double t, Rect water) {
+  bool get airborne => jumpQ >= 0;
+
+  factory _Swimmer.of(PondFish f, int index, int total, double t, Rect water) {
     final seed = index * 37 + 11;
     final depth = total <= 1 ? .55 : ((index * 3) % 10) / 9.0;
-    // 单程时间：越近游得越快（近处的鱼视觉位移本来就大）
-    final span = 9.5 - depth * 4.5;
-    final raw = (t / span + index * .37) % 2.0;
-    final forward = raw < 1.0;
-    final phase = forward ? raw : 2.0 - raw; // 0..1 来回折返
-    final x = .17 + phase * .66;
-    final y = .32 + depth * .40 + math.sin(t * .8 + index) * .028;
-    final center = Offset(
-      water.left + x * water.width,
-      water.top + y * water.height,
-    );
-    // 鱼的长度按池塘宽度给：池塘只占画面一半，比例太小就完全看不清
-    final lenPx = water.width * (.155 + depth * .135);
-    return _Sprite(
+    // 绕一圈的时间：越近游得越快（近处鱼的视觉位移本来就大）
+    final period = 26.0 - depth * 11.0 + (seed % 5) * 1.7;
+    final w = 2 * math.pi / period;
+    final p1 = seed * .71;
+    final p2 = seed * 1.37;
+    final p3 = seed * 2.11;
+
+    // 归一化椭圆坐标：两个不同频率的正弦叠加 → 没有折角的漫游轨迹
+    // 纵向振幅压在 0.35 以内：池塘最开阔的一段就在椭圆中带，再往上就是岸边芦苇
+    final u =
+        0.58 * math.sin(w * t + p1) + 0.10 * math.sin(1.9 * w * t + p3);
+    final v =
+        0.26 * math.sin(.63 * w * t + p2) + 0.09 * math.sin(1.31 * w * t + p1);
+
+    // 速度（解析求导，不用差分）→ 朝向连续变化，不会左右硬翻
+    final du = 0.58 * w * math.cos(w * t + p1) +
+        0.10 * 1.9 * w * math.cos(1.9 * w * t + p3);
+    final dv = 0.26 * .63 * w * math.cos(.63 * w * t + p2) +
+        0.09 * 1.31 * w * math.cos(1.31 * w * t + p1);
+
+    // 可用半径只给椭圆的 40%：池塘不是标准椭圆，上沿和两侧明显更窄，
+    // 给满 46% 时鱼在左上角会压到岸边芦苇上，看着像趴在草地上
+    final ex = water.width * .40;
+    final ey = water.height * .40;
+    final vx = du * ex;
+    final vy = dv * ey;
+    final heading = math.atan2(vy, vx);
+    final speed = math.sqrt(vx * vx + vy * vy);
+    // 跃水要看出「整条鱼离开水面」，所以只让游在池子中间（水面最宽处）的鱼跳；
+    // 靠岸的鱼一跳就会飞到岸上的芦苇里
+    final radial = math.sqrt(u * u + v * v);
+
+    return _Swimmer(
       fish: f,
       seed: seed,
       depth: depth,
-      water: water,
-      dir: forward ? 1 : -1,
-      pos: x,
-      lenPx: lenPx,
-      center: center,
-      tilt: math.sin(t * .9 + index) * .045,
-      alpha: .95 - depth * .42,
+      center: Offset(water.center.dx + u * ex, water.center.dy + v * ey),
+      heading: heading,
+      facing: math.cos(heading) >= 0 ? 1 : -1,
+      // 朝镜头 / 背镜头时，投影上身体会变短 —— 转身因此是连续缩短再展开。
+      // 下限不用压太狠：压到 0.42 时鱼会缩成一小坨，反而像"抽搐"
+      foreshorten: .55 + .45 * math.cos(heading).abs(),
+      bodyLen: water.width * (.175 + depth * .145),
+      // 摆尾频率跟游速走：游得快尾巴摆得快
+      swimPhase: t * (2.6 + speed * 3.6) + seed,
+      jumpQ: _jumpPhase(seed, t, depth, radial),
     );
   }
 
+  /// 每 8.5~15 秒跳一次，返回 0..1（不在跳跃窗口时返回 -1）
+  ///
+  /// `radial` 是鱼在归一化椭圆里的半径：只有游在池子中间的鱼才跳，
+  /// 靠岸的鱼一跳就会飞进岸边的芦苇丛里。
+  static double _jumpPhase(int seed, double t, double depth, double radial) {
+    if (depth > .62) return -1; // 只有靠浅处的鱼才跳
+    if (radial > .55) return -1; // 太靠边不跳
+    final cycle = 8.5 + (seed % 5) * 1.6;
+    final local = (t + (seed % 7) * 1.3) % cycle;
+    const dur = 1.15;
+    if (local > dur) return -1;
+    return local / dur;
+  }
+
   void paint(Canvas canvas, ui.Image img) {
-    final h = lenPx * img.height / img.width;
+    final h = bodyLen * img.height / img.width; // 身体厚度（垂直于身体方向）
     final src =
         Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());
-    final paint = Paint()
-      ..filterQuality = FilterQuality.medium
-      ..color = Colors.white.withOpacity(alpha)
-      // 水色覆盖：越深的鱼越被水「吃掉」一点，看着才在水里而不是浮在照片上
-      ..colorFilter = ColorFilter.mode(
-        const Color(0xFF0B4A3A).withOpacity(.10 + depth * .22),
-        BlendMode.srcATop,
-      );
+
+    // 投在水底的影子：让它像一条在水里的鱼，而不是一张贴纸浮在照片上
+    final shadow = Rect.fromCenter(
+      center: center + Offset(0, h * .55),
+      width: bodyLen * .92,
+      height: h * .85,
+    );
+    canvas.drawOval(
+      shadow,
+      Paint()
+        ..color = const Color(0xFF06231E).withOpacity(.20 * (1 - depth * .45))
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, h * .22),
+    );
+
     canvas.save();
     canvas.translate(center.dx, center.dy);
-    canvas.rotate(tilt);
-    canvas.scale(dir, 1);
+    // 朝向 = 游动方向；朝左时整体镜像（素材本身朝右）
+    canvas.rotate(facing > 0 ? heading : heading + math.pi);
+    canvas.scale(facing * foreshorten, 1);
+    canvas.rotate(math.sin(swimPhase) * .045); // 摆尾带动的轻微扭头
     canvas.drawImageRect(
       img,
       src,
-      Rect.fromCenter(center: Offset.zero, width: lenPx, height: h),
-      paint,
+      Rect.fromCenter(center: Offset.zero, width: bodyLen, height: h),
+      Paint()
+        ..filterQuality = FilterQuality.medium
+        // 越深的鱼越被水「吃掉」一点：远的看着更淡、更融进水里。
+        // 上限别太高 —— 0.30 那档远处的鱼几乎看不见，池子看起来是空的
+        ..colorFilter = ColorFilter.mode(
+          const Color(0xFF0B4A3A).withOpacity(.20 - depth * .13),
+          BlendMode.srcATop,
+        ),
     );
     canvas.restore();
   }
@@ -834,7 +940,7 @@ class _PondPickerSheetState extends State<_PondPickerSheet> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '同种最多 3 条，再点一次收走 · 退出 App 也还在',
+                    '同种最多 3 条 · 池里最多 $kPondMaxFish 条 · 退出 App 也还在',
                     style: TextStyle(
                         fontSize: 11, color: AppTheme.textSecondary),
                   ),
