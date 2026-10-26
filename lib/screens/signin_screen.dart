@@ -104,7 +104,9 @@ class _SigninScreenState extends State<SigninScreen> {
                   shape: BoxShape.circle,
                 ),
                 alignment: Alignment.center,
-                child: const Text('🎁', style: TextStyle(fontSize: 32)),
+                // 原来是 '🎁' emoji：缺彩色 emoji 字体时是方块
+                child: const Icon(Icons.card_giftcard,
+                    size: 34, color: AppTheme.starDark),
               ),
               const SizedBox(height: 14),
               const Text('签到成功',
@@ -828,7 +830,7 @@ class _SigninDialogState extends State<_SigninDialog> {
                         color: AppTheme.starLight,
                         borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                       ),
-                      child: Text('🎉 获得 ${_got!.describe(_status.pointsName)}',
+                      child: Text('签到成功，获得 ${_got!.describe(_status.pointsName)}',
                           textAlign: TextAlign.center,
                           style: const TextStyle(
                               fontSize: 13,
