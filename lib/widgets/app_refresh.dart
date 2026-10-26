@@ -161,7 +161,7 @@ class _AppRefreshState extends State<AppRefresh>
   Widget _hintBar() {
     return Container(
       decoration: const BoxDecoration(
-        color: Color(0xFFF2F4F3),
+        color: AppTheme.primarySoft,
         border: Border(
           bottom: BorderSide(color: AppTheme.divider),
         ),
