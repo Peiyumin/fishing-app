@@ -133,7 +133,7 @@ class WaterfallPostCard extends StatelessWidget {
                     Row(
                       children: [
                         const Icon(Icons.place_outlined,
-                            size: 11, color: Color(0xFF9AA1A7)),
+                            size: 11, color: AppTheme.textTertiary),
                         const SizedBox(width: 2),
                         Expanded(
                           child: Text(
@@ -141,7 +141,7 @@ class WaterfallPostCard extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                                fontSize: 10, color: Color(0xFF9AA1A7)),
+                                fontSize: 10, color: AppTheme.textTertiary),
                           ),
                         ),
                       ],
@@ -199,11 +199,11 @@ class WaterfallPostCard extends StatelessWidget {
         Icon(
           post.likedByMe ? Icons.thumb_up : Icons.thumb_up_outlined,
           size: 11,
-          color: post.likedByMe ? AppTheme.primary : const Color(0xFF9AA1A7),
+          color: post.likedByMe ? AppTheme.primary : AppTheme.textTertiary,
         ),
         const SizedBox(width: 2),
         Text('${post.likeCount}',
-            style: const TextStyle(fontSize: 10, color: Color(0xFF9AA1A7))),
+            style: const TextStyle(fontSize: 10, color: AppTheme.textTertiary)),
       ],
     );
   }
