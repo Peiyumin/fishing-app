@@ -270,11 +270,11 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
                     if (s.verified) ...[
                       const SizedBox(width: 8),
                       const Icon(Icons.verified,
-                          size: 16, color: AppTheme.accent),
+                          size: 16, color: AppTheme.water),
                       const SizedBox(width: 4),
                       const Text('官方核实',
                           style: TextStyle(
-                              fontSize: 12, color: AppTheme.accent)),
+                              fontSize: 12, color: AppTheme.water)),
                     ],
                     const Spacer(),
                     const Icon(Icons.star, size: 16, color: AppTheme.star),
@@ -507,17 +507,19 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 4, vertical: 0.5),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFE8F3FF),
+                        // LV 角标：和钓友圈卡片的 LV 同一套（冷灰底 + 近黑字）。
+                        // 原来是支付宝蓝 #1677FF 底 #E8F3FF —— 全站唯一的蓝底小签。
+                        color: AppTheme.primaryLight,
                         borderRadius: BorderRadius.circular(3),
                         border: Border.all(
-                            color: const Color(0xFFB7DBFF), width: 0.7),
+                            color: AppTheme.primaryBorder, width: 0.7),
                       ),
                       child: Text('LV${c.userLevel}',
                           style: const TextStyle(
                               fontSize: 9.5,
                               height: 1.2,
                               fontWeight: FontWeight.w700,
-                              color: Color(0xFF1677FF))),
+                              color: AppTheme.primary)),
                     ),
                     const Spacer(),
                     Text(c.timeAgo,
