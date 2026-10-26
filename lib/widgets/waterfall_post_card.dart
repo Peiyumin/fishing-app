@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import '../app_theme.dart';
 import '../models/post.dart';
 import '../services/api_config.dart';
-import 'fish_photo.dart';
 import 'user_avatar.dart';
 
 /// 双列瀑布流里的一张「渔获卡」
@@ -266,9 +265,6 @@ class WaterfallPostCard extends StatelessWidget {
           ),
         ),
 
-        // 左上：叠起来的小鱼图 + 条数
-        Positioned(left: 6, top: 6, child: _speciesChips()),
-
         // 右上：评论数
         Positioned(
           right: 6,
@@ -388,76 +384,6 @@ class WaterfallPostCard extends StatelessWidget {
     );
   }
 
-  /// 左上角：最多 3 张小圆角鱼图叠在一起 + 总条数
-  ///
-  /// 参考图是「小方图互相压 5px」，用 Stack + 固定步长画，
-  /// 不靠 Row 负 margin（负 padding 在 Row 里会把父约束算错）。
-  /// 没有鱼获的纯动态（say/ask）不画这个角标 —— 否则会出现一个只剩
-  /// 数字「1」的空黑胶囊，比不显示更怪。
-  Widget _speciesChips() {
-    final names = _fishNames.take(3).toList();
-    if (names.isEmpty) return const SizedBox.shrink();
-
-    const chip = 21.0;
-    const step = 15.0;
-    final width = chip + step * (names.length - 1);
-
-    // 三种底色轮着用，让叠在一起的小图互相区分（都压得很淡，不抢鱼图）
-    const tints = [
-      Color(0xFF2E7D62),
-      Color(0xFF7C7A33),
-      Color(0xFF9C5A72),
-    ];
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(3, 3, 5, 3),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(.58),
-        borderRadius: BorderRadius.circular(9),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: width,
-            height: chip,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                for (var i = 0; i < names.length; i++)
-                  Positioned(
-                    left: i * step,
-                    top: 0,
-                    child: Container(
-                      width: chip,
-                      height: chip,
-                      decoration: BoxDecoration(
-                        color: tints[i % tints.length].withOpacity(.85),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                            color: Colors.black.withOpacity(.35), width: .7),
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      alignment: Alignment.center,
-                      child: FishPhoto(name: names[i], height: 15),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 3),
-          Text(
-            '$_fishCount',
-            style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                height: 1.15,
-                fontWeight: FontWeight.w800),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 /// 双列瀑布流容器
