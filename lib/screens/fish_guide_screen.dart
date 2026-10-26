@@ -364,7 +364,25 @@ class _FishGuideScreenState extends State<FishGuideScreen>
       final g = await FishService.unlock(speciesId, image: image);
       if (!mounted) return;
       setState(() => _guide = g);
-      CenterToast.show(context, '已激活图鉴');
+      // 图鉴条数 +1 之后，直接告诉用户能去池塘投几条（投放上限=图鉴条数）
+      final all = [...g.fresh, ...g.salt];
+      FishSpecies? sp;
+      for (final e in all) {
+        if (e.id == speciesId) {
+          sp = e;
+          break;
+        }
+      }
+      final name = sp?.name ?? '这条鱼';
+      final cnt = sp?.count ?? 1;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('图鉴已记录「$name」$cnt 条，可投放进池塘'),
+        action: SnackBarAction(
+          label: '去投放',
+          onPressed: () => Navigator.of(context).pushNamed('/fish-tank'),
+        ),
+        duration: const Duration(seconds: 4),
+      ));
     } catch (e) {
       if (mounted) {
         CenterToast.show(context, e.toString().replaceAll('Exception: ', ''));
