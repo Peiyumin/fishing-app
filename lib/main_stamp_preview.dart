@@ -44,7 +44,7 @@ class _StampPreviewState extends State<StampPreview> {
         WatermarkLine('2026-10-23 21:03', 26, FontWeight.w700,
             const Color(0xFFFFFFFF), 4),
         const WatermarkLine(
-            '多云 22℃ · 湿度68% · 风12km/h · 气压1012hPa',
+            '多云 22℃ · 湿度68% · 东风 3级 · 气压1012hPa',
             12.5,
             FontWeight.w500,
             Color(0xEBFFFFFF)),
