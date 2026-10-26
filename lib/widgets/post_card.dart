@@ -450,8 +450,8 @@ class _PostCardState extends State<PostCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // 作者行（点头像/昵称进 TA 的主页）
-              // 徽章紧跟在头像后面：拿到的徽章自动出现，没拿到就自动消失，
-              // 不占位（宽度为 0），所以老数据 / 后端没升级时版式完全不受影响。
+              // 徽章紧跟在**昵称**后面（按要求不是头像后面），拿到就出现，
+              // 没拿到宽度为 0 不占位，老数据 / 后端没升级时版式不受影响。
               Row(
                 children: [
                   GestureDetector(
@@ -462,14 +462,24 @@ class _PostCardState extends State<PostCard> {
                       radius: 16,
                     ),
                   ),
-                  _authorBadges(),
                   const SizedBox(width: 8),
                   Expanded(
                     child: GestureDetector(
                       onTap: _openAuthor,
-                      child: Text(
-                        _post.username ?? '钓友',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              _post.username ?? '钓友',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          _authorBadges(),
+                        ],
                       ),
                     ),
                   ),
