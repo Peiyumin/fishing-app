@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 import '../models/member_plan.dart';
 import 'api_client.dart';
 import 'api_config.dart';
@@ -52,30 +54,34 @@ class MemberService {
   }
 
   /// 会员图标（权益网格）
-  static String perkIconOf(String key) {
+  ///
+  /// ★ 原来返回的是 emoji 字符串（📍🐟💰🎖🤖🎧🛡🔔🏆⭐👑）。
+  ///   emoji 靠系统彩色字体渲染，ROM 精简过或老 Android 上直接显示
+  ///   小方块。改回 [IconData]：图标字体随 APK 打包，任何设备都有字形。
+  static IconData perkIconOf(String key) {
     switch (key) {
       case 'nearby':
-        return '📍';
+        return Icons.place;
       case 'fish':
-        return '🐟';
+        return Icons.set_meal;
       case 'wallet':
-        return '💰';
+        return Icons.account_balance_wallet;
       case 'medal':
-        return '🎖';
+        return Icons.military_tech;
       case 'ai':
-        return '🤖';
+        return Icons.smart_toy;
       case 'service':
-        return '🎧';
+        return Icons.headset_mic;
       case 'shield':
-        return '🛡';
+        return Icons.shield;
       case 'notice':
-        return '🔔';
+        return Icons.notifications_active;
       case 'trophy':
-        return '🏆';
+        return Icons.emoji_events;
       case 'star':
-        return '⭐';
+        return Icons.star;
       default:
-        return '👑';
+        return Icons.workspace_premium;
     }
   }
 
