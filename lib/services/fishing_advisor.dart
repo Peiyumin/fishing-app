@@ -77,14 +77,14 @@ class FishingAdvisor {
         ? AppTheme.primary
         : (score >= 80
             ? AppTheme.primaryLight
-            : (score >= 45 ? AppTheme.accent : AppTheme.danger));
+            : (score >= 45 ? AppTheme.accentDark : AppTheme.danger));
 
     final tips = <String>[];
     final reasons = <String>[];
 
     // —— 雷暴一票否决，优先提示安全 ——
     if (weatherCode >= 95) {
-      tips.add('⛈ 当前有雷暴，切勿出钓，安全第一！');
+      tips.add('雷暴预警：当前有雷暴，切勿出钓，安全第一！');
       reasons.add('雷暴');
     }
 
@@ -102,17 +102,19 @@ class FishingAdvisor {
     }
 
     // —— 风 ——
+    // ★ 只说风级（v2.1.36）：和天气页 / 首页卡同一口径，不再出现 m/s
+    final lv = beaufortLevel(windMs * 3.6);
     final dirTxt = windDirDeg == null ? '' : windDirText(windDirDeg);
     if (windMs < 2) {
-      tips.add('风力很小（${windMs.toStringAsFixed(1)}m/s），水面平静，注意隐蔽、轻手轻脚，避免惊鱼。');
+      tips.add('$lv 级风，水面平静，注意隐蔽、轻手轻脚，避免惊鱼。');
     } else if (windMs <= 4) {
-      final d = dirTxt.isEmpty ? '' : '，$dirTxt风';
-      tips.add('微风 ${windMs.toStringAsFixed(1)}m/s$d，下风口水氧高、食物聚集，优先钓迎风岸。');
+      final d = dirTxt.isEmpty ? '' : '$dirTxt风';
+      tips.add('$lv 级$d，下风口水氧高、食物聚集，优先钓迎风岸。');
       reasons.add('微风');
     } else if (windMs <= 6) {
-      tips.add('风力较大（${windMs.toStringAsFixed(1)}m/s），选避风湾子、加重铅坠，注意安全。');
+      tips.add('风力较大（$lv 级），选避风湾子、加重铅坠，注意安全。');
     } else {
-      tips.add('大风（${windMs.toStringAsFixed(1)}m/s），不建议出钓；若坚持，务必选背风深水区。');
+      tips.add('大风（$lv 级），不建议出钓；若坚持，务必选背风深水区。');
       reasons.add('风大');
     }
 
