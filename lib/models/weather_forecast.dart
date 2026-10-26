@@ -27,26 +27,28 @@ class Wmo {
 
   static String text(int? code) => _text[code] ?? '未知';
 
-  /// 天气图标颜色（晴=暖金、云=中性灰绿、雨=蓝、雪=浅蓝、雷=紫）
+  /// 天气图标颜色（晴=暖金、云雨天=冷蓝三档、雷=危险红）
   ///
   /// 同一套颜色同时用于首页卡片和天气页，避免「晴天却是青色太阳」。
-  /// 雨/雪/雷保留蓝紫系 —— 这是天气图标的世界通用惯例，改成绿色反而读不懂；
-  /// 但阴、多云、雾原来是灰蓝（带明显蓝调），在湖绿的深底和浅底上都显脏，
-  /// 这里换成中性灰绿，跟主色同族又不抢眼。晴的暖金统一到 [AppTheme.star]。
+  /// 这套是按设计稿取样对齐的：设计稿里云是**冷蓝白**（不是灰、更不是灰绿），
+  /// 太阳是琥珀黄 [AppTheme.star]。
+  /// v2.1.36 收敛：原来 5 个零散冷蓝 + 一个紫，现在只走
+  /// skyLight / sky / skyDeep 三档 + water；**雷暴改红**（原来是紫，
+  /// 全站唯一的紫，一屏里只有它跑出色板，而且「雷=危险」本来就该红）。
   static Color color(int? code, {bool day = true}) {
     switch (code) {
       case 0:
         // 晴：日间暖金黄，夜间月白（配月亮图标，避免「夜里一个大金太阳」）
-        return day ? AppTheme.star : const Color(0xFFAFC3E2);
+        return day ? AppTheme.star : AppTheme.skyLight;
       case 1:
-        return day ? AppTheme.star : const Color(0xFF7C8FA6);
+        return day ? AppTheme.star : AppTheme.sky;
       case 2:
-        return const Color(0xFF93A69B); // 多云：中性灰绿
+        return AppTheme.sky; // 多云：冷蓝
       case 3:
-        return const Color(0xFF75897D); // 阴：深灰绿
+        return AppTheme.skyDeep; // 阴：更深的冷蓝
       case 45:
       case 48:
-        return const Color(0xFF9DAEA4); // 雾
+        return AppTheme.skyLight; // 雾：浅冷蓝
       case 51:
       case 53:
       case 55:
@@ -59,20 +61,20 @@ class Wmo {
       case 80:
       case 65:
       case 82:
-        return const Color(0xFF4A90D9); // 雨：蓝
+        return AppTheme.water; // 雨：数据蓝
       case 71:
       case 73:
       case 75:
       case 77:
       case 85:
       case 86:
-        return const Color(0xFF7FB3D5); // 雪：浅蓝
+        return AppTheme.sky; // 雪：浅冷蓝
       case 95:
       case 96:
       case 99:
-        return const Color(0xFF8E7CC3); // 雷：紫
+        return AppTheme.danger; // 雷：危险红
       default:
-        return const Color(0xFF9DAEA4);
+        return AppTheme.skyLight;
     }
   }
 
@@ -129,6 +131,40 @@ String windDirText(num? deg) {
   final d = ((deg % 360) + 360) % 360;
   final idx = ((d + 22.5) / 45).floor() % 8;
   return dirs[idx];
+}
+
+/// 蒲福风力等级（按 km/h）→ 0~12 级整型
+///
+/// ★ 全站唯一的「风」口径（v2.1.36）：界面上不再出现 km/h / m/s 的风速数字，
+///   一律只说「几级 + 什么风」。原因：
+///   ① 钓鱼人看的本来就是风级 —— 2~4 级推流聚饵、6 级以上压口，
+///      风速 12km/h 要先在脑子里换算一次才知道能不能钓；
+///   ② 之前首页写 12km/h、天气页主卡写 12km/h、逐时表却写「3级」，
+///      同一个数在三处用两种单位，用户会以为数据不一致。
+///   分界值按蒲福风级标准（km/h 档），与旧 _beaufort 完全一致，仅补足 9~12 级。
+int beaufortLevel(double kmh) {
+  if (kmh.isNaN || kmh < 1) return 0;
+  if (kmh < 6) return 1;
+  if (kmh < 12) return 2;
+  if (kmh < 20) return 3;
+  if (kmh < 29) return 4;
+  if (kmh < 39) return 5;
+  if (kmh < 50) return 6;
+  if (kmh < 62) return 7;
+  if (kmh < 75) return 8;
+  if (kmh < 89) return 9;
+  if (kmh < 103) return 10;
+  if (kmh < 118) return 11;
+  return 12;
+}
+
+/// 「东南风 3级」—— 界面统一文案（不报风速数字）
+///
+/// 风向缺失时只说风力，不硬套一个「北风」出来（旧缓存没有风向字段）。
+String windLevelText(double kmh, num? dirDeg) {
+  final lv = beaufortLevel(kmh);
+  final dir = windDirText(dirDeg);
+  return dir == '--' ? '$lv级' : '$dir风 $lv级';
 }
 
 /// 气压变化趋势（基于逐小时气压序列的 3 小时变压）：陡降/缓降/急升/回升/平稳
@@ -478,13 +514,27 @@ class WeatherBundle {
       return null;
     }
 
+    // 气压可能有三个来源：海平面气压（ECMWF/GFS）、CMA 的对应字段、
+    // 以及地面气压（部分接口只给这个）。**按顺序找，别只认一个键** ——
+    // 只认 pressure_msl 时，一旦数据源换了字段名，整页气压会静默变成 0，
+    // 更糟的是下面「两模型平均」会拿 0 去平均，得出 506 hPa 这种荒谬值。
+    double? presAt(int i) {
+      for (final k in const [
+        'pressure_msl',
+        'pressure_msl_cma_grapes_global',
+        'surface_pressure',
+      ]) {
+        final v = at(hourly, k, i);
+        if (v != null) return v.toDouble();
+      }
+      return null;
+    }
+
     // —— 逐小时 ——
     final hTimes = (hourly?['time'] as List?) ?? const [];
     // 先取出气压序列，便于算逐时趋势
-    final presArr = List<double>.generate(hTimes.length, (i) {
-      final v = at(hourly, 'pressure_msl', i);
-      return v == null ? 1013.0 : v.toDouble();
-    });
+    final presArr = List<double>.generate(
+        hTimes.length, (i) => presAt(i) ?? 1013.0);
     // 当天最高 / 最低气温（用于「温差」维度）
     final dayMax = <String, double>{};
     final dayMin = <String, double>{};
@@ -504,11 +554,16 @@ class WeatherBundle {
       final t = DateTime.tryParse(hTimes[i].toString());
       if (t == null) continue;
       var temp = (at(hourly, 'temperature_2m', i) ?? 0).toDouble();
-      var pres = (at(hourly, 'pressure_msl', i) ?? 0).toDouble();
+      final presRaw = presAt(i);
+      // 0 = 数据源没给气压（不是"气压为 0"），页面据此显示「—」，
+      // 不拿一个编出来的 1013 冒充实测值
+      var pres = presRaw ?? 0.0;
       final e = ens[t];
       if (e != null) {
         temp = (temp + e[0]) / 2;
-        pres = (pres + e[1]) / 2;
+        // 本模型有气压才等权平均；没有就整段用第二模型，
+        // 绝不能拿 0 去平均（会算出 506 hPa 这种荒谬值）
+        pres = presRaw == null ? e[1] : (presRaw + e[1]) / 2;
       }
       final k = '${t.year}-${t.month}-${t.day}';
       final hi = dayMax[k], lo = dayMin[k];
@@ -639,6 +694,7 @@ class WeatherBundle {
         0;
     final curPresV = nearest?.pressure ??
         (cur?['pressure_msl'] as num?)?.toDouble() ??
+        (cur?['surface_pressure'] as num?)?.toDouble() ??
         0;
 
     // ★ 时段统一（v2.1.19）：所有「当前」字段一律取自同一个整点 [nearest]。
