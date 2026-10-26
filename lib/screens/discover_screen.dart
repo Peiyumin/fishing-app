@@ -38,10 +38,38 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   ];
 
   int _tab = 0;
-  List<Post> _posts = [];
+
+  /// 每个 tab 的结果各自缓存：切回来秒显，不再整块消失重新请求
+  final Map<String, List<Post>> _cache = {};
+
+  /// 只有「当前 tab 一条数据都没有」时才全屏转圈。
+  ///
+  /// ★ 这里以前是 `_load()` 一进来就无条件 `_loading = true`，把整个内容区
+  ///   连同外层的 `AppRefresh` / `RefreshIndicator` 一起换成一个小转圈，于是：
+  ///
+  ///   ① 每次下拉刷新，列表**整个消失**闪一下白；
+  ///   ② 列表被销毁重建 → **滚动位置归零**，刚翻到的位置跳回顶部；
+  ///   ③ `RefreshIndicator` 被销毁后立刻重建，手指还在屏幕上的话会被再次
+  ///      判定成一次下拉 → 又刷新 → 0.3~0.7 秒闪一次的自激循环
+  ///      （用户录屏里前 11 秒闪着不停就是这个）；
+  ///   ④ `AppRefresh` 的「垂钓圈 为您玩命加载…」提示条刚滑出就被销毁，
+  ///      **从来没机会显示**。
+  ///
+  ///   现在只有首次进页面 / 切到一个还没数据的 tab 才转圈，刷新一律保留旧列表。
   bool _loading = true;
+
   String? _emptyHint; // 空列表时的说明（如同城未授权）
   String? _city; // 当前定位城市（同城 Tab）
+
+  /// 正在请求中的 tab：连点同一个 tab 不重复打请求
+  final Set<String> _inflight = {};
+
+  /// 每个 tab 上一次真正发起请求的时间。
+  /// 用来掐掉「刷新刚结束又被触发」的连击 —— 手指还在屏幕上时，
+  /// RefreshIndicator 反复重建会让 onRefresh 被连着叫好几次。
+  final Map<String, DateTime> _lastLoadAt = {};
+
+  static const Duration _minGap = Duration(milliseconds: 600);
 
   @override
   void initState() {
@@ -51,13 +79,29 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   String get _tabKey => _tabDefs[_tab][2];
 
+  /// 当前 tab 要显示的列表（有缓存就用缓存，切回来不闪）
+  List<Post> get _posts => _cache[_tabKey] ?? const <Post>[];
+
   Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _emptyHint = null;
-    });
+    final tab = _tabKey;
+    final hasData = (_cache[tab] ?? const <Post>[]).isNotEmpty;
+    if (mounted) {
+      setState(() {
+        // 有旧数据就继续显示，让下面的提示条去转圈；无数据才全屏等
+        _loading = !hasData;
+        _emptyHint = null;
+      });
+    }
+    if (_inflight.contains(tab)) return; // 同一个 tab 已有请求在飞，等它回来
+    if (hasData) {
+      // 已经有内容了：0.6 秒内的重复触发直接吞掉（不影响首次进页面/tab）
+      final now = DateTime.now();
+      final last = _lastLoadAt[tab];
+      if (last != null && now.difference(last) < _minGap) return;
+      _lastLoadAt[tab] = now;
+    }
+    _inflight.add(tab);
     try {
-      final tab = _tabKey;
       String? city;
       if (tab == 'city') {
         // 同城：先取定位城市；失败则给出引导提示
@@ -65,22 +109,27 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         if (city == null || city.isEmpty) {
           if (mounted) {
             setState(() {
-              _posts = [];
-              _loading = false;
-              _emptyHint = '未能获取定位城市，请在系统设置中允许定位权限后下拉刷新';
+              _cache[tab] = const <Post>[];
+              if (_tabKey == tab) {
+                _loading = false;
+                _emptyHint = '未能获取定位城市，请在系统设置中允许定位权限后下拉刷新';
+              }
             });
           }
           return;
         }
       }
       if (tab == 'follow' && ApiConfig.enabled) {
+        if (!mounted) return; // await 过定位，可能已经离场
         final sp = Provider.of<SessionProvider>(context, listen: false);
         if (!sp.isLoggedIn) {
           if (mounted) {
             setState(() {
-              _posts = [];
-              _loading = false;
-              _emptyHint = '登录后即可查看已关注钓友的动态';
+              _cache[tab] = const <Post>[];
+              if (_tabKey == tab) {
+                _loading = false;
+                _emptyHint = '登录后即可查看已关注钓友的动态';
+              }
             });
           }
           return;
@@ -99,22 +148,37 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         } on FollowNotAvailableException {
           if (mounted) {
             setState(() {
-              _posts = [];
-              _loading = false;
-              _emptyHint = '关注功能需升级后端后启用';
+              _cache[tab] = const <Post>[];
+              if (_tabKey == tab) {
+                _loading = false;
+                _emptyHint = '关注功能需升级后端后启用';
+              }
             });
           }
           return;
         }
       }
-      if (tab == 'city' && result.isEmpty) {
-        _emptyHint = '当前城市（${city ?? '未知'}）暂无动态，发布动态后会自动展示在这里';
+      if (mounted) {
+        setState(() {
+          // 请求期间用户可能已经切走：结果照样进缓存，但不改别的 tab 的界面
+          _cache[tab] = result;
+          if (_tabKey == tab) {
+            _loading = false;
+            _emptyHint = (tab == 'city' && result.isEmpty)
+                ? '当前城市（${city ?? '未知'}）暂无动态，发布动态后会自动展示在这里'
+                : null;
+          }
+        });
       }
-      if (mounted) setState(() => _posts = result);
     } catch (e) {
-      if (mounted) CenterToast.show(context, '加载失败：$e');
+      if (mounted) {
+        setState(() {
+          if (_tabKey == tab) _loading = false;
+        });
+        CenterToast.show(context, '加载失败：$e');
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      _inflight.remove(tab);
     }
   }
 
@@ -130,21 +194,16 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       backgroundColor: AppTheme.background,
       body: Column(
         children: [
-          // ── 绿色头部：和首页那条深绿顶栏同一套配色 ──
+          // ── 浅色头部：和设计稿一致 ──
           //
-          // 之前这里是白底黑字大标题 + 黑色胶囊 tab，切到发现页像进了另一个
-          // App。现在统一成 primaryDark → primary 的竖向渐变，状态栏图标转白。
+          // 钓友圈是「内容流」页面，头部让位给内容：底色就是页面底，
+          // 黑色大标题 + 冷灰副标，唯一的色块是选中那颗黑胶囊。
+          // 状态栏图标转深色（浅底上白字等于看不见）。
           AnnotatedRegion<SystemUiOverlayStyle>(
-            value: SystemUiOverlayStyle.light,
+            value: SystemUiOverlayStyle.dark,
             child: Container(
               width: double.infinity,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [AppTheme.primaryDark, AppTheme.primary],
-                ),
-              ),
+              color: AppTheme.background,
               child: SafeArea(
                 bottom: false,
                 child: Column(
@@ -155,24 +214,23 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             ),
           ),
           Expanded(
-            child: ClipRRect(
-              // 内容区从绿色下方「浮」上来，和首页卡片区同一层次关系
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
-              child: Container(
-                color: AppTheme.background,
-                child: _loading
-                    ? const Center(
-                        child: SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    : AppRefresh(
-                        onRefresh: _load,
-                        child: _posts.isEmpty ? _empty() : _grid(),
+            child: Container(
+              color: AppTheme.background,
+              child: _loading
+                  ? const Center(
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       ),
-              ),
+                    )
+                  : AppRefresh(
+                      onRefresh: _load,
+                      // 每个 tab 各记一份「最后更新」，别把热门的刷新时间
+                      // 显示在关注 tab 上
+                      memoKey: 'discover_$_tabKey',
+                      child: _posts.isEmpty ? _empty() : _grid(),
+                    ),
             ),
           ),
         ],
@@ -197,17 +255,17 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                   fontSize: 26,
                   fontWeight: FontWeight.w800,
                   height: 1.1,
-                  color: Colors.white,
+                  color: AppTheme.textPrimary,
                   letterSpacing: .5,
                 ),
               ),
               const SizedBox(width: 8),
-              // 右上角一片很淡的光斑，让纯色绿有层次（不抢标题）
+              // 右上角一个小圆点，让纯色标题行有节奏（不抢标题）
               Container(
                 width: 6,
                 height: 6,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(.34),
+                decoration: const BoxDecoration(
+                  color: AppTheme.accent,
                   shape: BoxShape.circle,
                 ),
               ),
@@ -216,16 +274,18 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           const SizedBox(height: 2),
           Text(
             '看渔获 · 找钓友 · $place',
-            style: TextStyle(fontSize: 12.5, color: Colors.white.withOpacity(.74)),
+            style: const TextStyle(
+                fontSize: 12.5, color: AppTheme.textTertiary),
           ),
         ],
       ),
     );
   }
 
-  /// 四个胶囊 tab：选中白底深绿字，未选半透明白底白字
+  /// 四个胶囊 tab：选中黑底 + 荧光黄绿字，未选白底 + 冷灰字
   ///
-  /// 全在深绿底上，所以「选中」用的是**反白**（白胶囊），不再用黑胶囊。
+  /// 设计稿里「选中」不是加粗或变色，而是直接翻成黑胶囊 —— 一屏只有这一处
+  /// 纯黑大色块，视线自然落上去；黄绿只在黑底上用，白底上它是看不见的。
   Widget _tabs() {
     return SizedBox(
       height: 58,
@@ -239,16 +299,22 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           return GestureDetector(
             onTap: () {
               if (_tab == i) return;
-              setState(() => _tab = i);
+              // 切 tab 和「要不要转圈」放在同一次 setState 里：
+              // 否则会先按新 tab 的空缓存渲染一帧「暂无内容」，再切成转圈
+              setState(() {
+                _tab = i;
+                _loading = (_cache[_tabDefs[i][2]] ?? const <Post>[]).isEmpty;
+                _emptyHint = null;
+              });
               _load();
             },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
               decoration: BoxDecoration(
-                color: on ? Colors.white : Colors.white.withOpacity(.13),
+                color: on ? AppTheme.primary : AppTheme.surface,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: on ? Colors.white : Colors.white.withOpacity(.24),
+                  color: on ? AppTheme.primary : AppTheme.border,
                 ),
               ),
               child: Column(
@@ -260,7 +326,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                       fontSize: 14,
                       height: 1.1,
                       fontWeight: FontWeight.w700,
-                      color: on ? AppTheme.primaryDark : Colors.white,
+                      color: on ? AppTheme.accent : AppTheme.textPrimary,
                     ),
                   ),
                   const SizedBox(height: 1),
@@ -270,10 +336,10 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                       fontSize: 8,
                       height: 1.1,
                       letterSpacing: .6,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w700,
                       color: on
-                          ? AppTheme.primary.withOpacity(.70)
-                          : Colors.white.withOpacity(.62),
+                          ? AppTheme.accent.withOpacity(.78)
+                          : AppTheme.textTertiary,
                     ),
                   ),
                 ],
@@ -287,6 +353,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   Widget _grid() {
     return WaterfallGrid(
+      // 每个 tab 一个独立的 element / 存储桶：来回切不会串滚动位置，
+      // 同一 tab 内重建也能把位置还原回去
+      key: PageStorageKey('discover_grid_$_tabKey'),
       posts: _posts,
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 110),
       onTap: (p) => Navigator.of(context).push(
