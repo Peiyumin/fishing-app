@@ -298,8 +298,9 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
+                      // 去掉 👆：emoji 在没装彩色 emoji 字体的机器上是方块
                       _picked == null
-                          ? '👆 点击地图或点「获取定位」选择${_isShop ? '渔具店' : '钓点'}位置'
+                          ? '点击地图或点「获取定位」选择${_isShop ? '渔具店' : '钓点'}位置'
                           : '已选${_isShop ? '渔具店' : '钓点'}坐标（WGS84）：'
                               '${_picked!.latitude.toStringAsFixed(5)}, '
                               '${_picked!.longitude.toStringAsFixed(5)}',
@@ -312,7 +313,7 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
                   right: 12,
                   child: FloatingActionButton.small(
                     backgroundColor: Colors.white,
-                    foregroundColor: AppTheme.accent,
+                    foregroundColor: AppTheme.primary,
                     tooltip: '使用我的位置',
                     onPressed: _useMyLocation,
                     child: const Icon(Icons.my_location),
