@@ -652,7 +652,7 @@ class FishScore {
     }
     final wd = dim['wind'];
     if (wd != null && wd >= 85) {
-      out.add('${h.windMs.toStringAsFixed(1)}m/s 的风刚好推流聚饵，又不影响观漂');
+      out.add('${windLevelText(h.windSpeed, h.windDir)}，刚好推流聚饵又不影响观漂');
     }
     final wx = dim['weather'];
     if (wx != null && wx >= 85) {
@@ -695,8 +695,8 @@ class FishScore {
     final wd = dim['wind'];
     if (wd != null && wd < 72) {
       out.add(sp.likesWave
-          ? '风速 ${h.windMs.toStringAsFixed(1)}m/s 偏小，水面太静，${sp.name}不聚边、追饵不积极'
-          : '风速 ${h.windMs.toStringAsFixed(1)}m/s 偏大，观漂困难、鱼受惊躲深水');
+          ? '风力 ${beaufortLevel(h.windSpeed)} 级偏小，水面太静，${sp.name}不聚边、追饵不积极'
+          : '风力 ${beaufortLevel(h.windSpeed)} 级偏大，观漂困难、鱼受惊躲深水');
     }
     final wx = dim['weather'];
     if (wx != null && wx < 72) {
