@@ -1,93 +1,122 @@
 import 'package:flutter/material.dart';
 
-/// 全局设计系统：湖光 · 青绿（专业级视觉规范）
+/// 全局设计系统：极简黑 · 荧光黄绿（按设计稿 1:1 取色）
 ///
-/// 设计语言：
-///  - 主色采用「深湖绿」，辅助色采用「水蓝」，二者同属冷色水系，和谐统一；
-///  - 暖金（星标）作为唯一暖色点缀，制造焦点对比；
-///  - 卡片以 18px 大圆角 + 1px 细边框取代生硬阴影，干净通透；
-///  - 统一的字阶、间距与语义色，配合中文字体回退，整体精致现代。
+/// 设计语言（从 5 张设计稿逐像素取样得出）：
+///  - 主色 = 近黑 #07080C：所有「重量」都由黑色承担（主按钮、选中态、标题、
+///    顶部 Hero），不用彩色抢注意力；
+///  - 强调色 = 荧光黄绿 #C6FF3D：整个 App 只有一个彩色，只出现在
+///    ① 深底上的文字/图标 ② 填充色块（配黑字）③ 选中指示条。
+///    **它不能当白底上的文字**（对比度 1.1:1，等于看不见），白底要文字
+///    就用 accentDark；
+///  - 中性色 = 冷灰蓝（#EDF1F6 页面底 / #FFFFFF 卡片 / #7D8694 次要文字），
+///    不用带绿调的灰 —— 带绿调的灰和荧光黄绿并置会显脏；
+///  - 形状 = 大圆角 + 细描边，不用重阴影；
+///  - 数据可视化保留功能色：高温红 #F44336 / 低温蓝 #46A0FB。
 class AppTheme {
-  // ───────────────────────── 品牌主色 ─────────────────────────
-  /// 主色：深湖绿（导航、按钮、强调）
-  static const Color primary = Color(0xFF0F7A53);
-  static const Color primaryDark = Color(0xFF0A5C3C);
-  static const Color primaryLight = Color(0xFFE3F1EA);
-  /// 极浅绿灰（占位背景、轻表面）
-  static const Color primarySoft = Color(0xFFF0F6F3);
+  // ───────────────────────── 品牌主色（近黑） ─────────────────────────
+  /// 主色：近黑。按钮、选中态、标题、深色 Hero
+  static const Color primary = Color(0xFF07080C);
+  static const Color primaryDark = Color(0xFF000000);
+  /// 主色的浅色底（选中芯片底、图标容器）：中性冷灰，不带色相
+  static const Color primaryLight = Color(0xFFEFF2F7);
+  /// 极浅冷灰（占位背景、轻表面）
+  static const Color primarySoft = Color(0xFFF7F9FC);
   /// 主色描边（虚线框、图标描边）
-  static const Color primaryBorder = Color(0xFFC9DED5);
+  static const Color primaryBorder = Color(0xFFDDE4EE);
 
-  /// 辅助色：水蓝（天气、链接、次级强调）
-  static const Color accent = Color(0xFF0E91A8);
-  static const Color accentDark = Color(0xFF0B7488);
-  static const Color accentLight = Color(0xFFE0F3F6);
+  // ───────────────────────── 强调色（荧光黄绿） ─────────────────────────
+  /// 品牌强调：荧光黄绿。
+  /// **只用于深底文字/图标、填充色块（配黑字）、选中指示条、数据高亮**。
+  static const Color accent = Color(0xFFC6FF3D);
+  /// 强调色的深阶：白底上唯一可读的「黄绿系」文字色（对比度 4.6:1）
+  static const Color accentDark = Color(0xFF5C7800);
+  /// 强调色的极浅底（图表填充、选中行底）
+  static const Color accentLight = Color(0xFFF4FFD9);
+  /// 强调色的中间档：「三段进度 / 刻度条」里代表「半满」的那一格。
+  /// 淡灰 → accentMid → accent，越满越亮，天气页刻度条与详情页 CATCH INDEX
+  /// 共用同一档，两边才像同一套语言。
+  static const Color accentMid = Color(0xFF8FAF5A);
+
+  /// 与 [accent] 同值的别名，语义更直白的地方用它
+  static const Color lime = accent;
+  /// 白底上的黄绿文字（= accentDark），可读性优先的地方用它
+  static const Color limeInk = accentDark;
+
+  /// 水面蓝（地图水域图层、水位图）：设计稿里的数据蓝
+  static const Color water = Color(0xFF46A0FB);
+  /// 水蓝的深阶：浅底上的**水色文字/描边**（water 在白底只够做填充，
+  /// 直接当 11px 标签字读不清），地图里的水体名称、水域描边走这一档
+  static const Color waterDeep = Color(0xFF1E5FA8);
 
   // ───────────────────────── 语义 / 点缀色 ─────────────────────────
-  /// 星标 / 评分：暖金（唯一暖色，制造焦点）
-  static const Color star = Color(0xFFF2A93B);
-  static const Color starLight = Color(0xFFFCEFDB);
-  /// 暖金的文字版本：星标本身在白底上看不清（对比度只有 1.8:1），
-  /// 需要文字/图标落在浅底时用这一档深金。
-  static const Color starDark = Color(0xFFB26A00);
-  /// 危险 / 删除 / 红标
-  static const Color danger = Color(0xFFE5484D);
-  static const Color dangerDark = Color(0xFFB71C1C);
-  static const Color dangerLight = Color(0xFFFCE8E9);
-  /// 警示 / 橙标
+  /// 星标 / 评分 / 晴天：暖黄（设计稿里天气图标就是这一档暖黄）
+  static const Color star = Color(0xFFF5B942);
+  static const Color starLight = Color(0xFFFFF5DF);
+  /// 暖黄在白底上的文字版本（对比度够了才用）
+  static const Color starDark = Color(0xFF9A6B00);
+  /// 天气图标的冷蓝三档（设计稿取样：云是冷蓝白，不是灰、更不是灰绿）。
+  /// 浅云 / 多云 / 阴，只在 [Wmo.color] 里用，别拿去当 UI 强调色。
+  static const Color skyLight = Color(0xFFAFC3E2);
+  static const Color sky = Color(0xFF9BB4D6);
+  static const Color skyDeep = Color(0xFF7E9BC2);
+  /// 危险 / 删除 / 高温
+  static const Color danger = Color(0xFFF44336);
+  static const Color dangerDark = Color(0xFFC62828);
+  static const Color dangerLight = Color(0xFFFDECEA);
+  /// 警示 / 审核中 / 低温（降一档的橙）
   static const Color warning = Color(0xFFE8973A);
-  static const Color warningLight = Color(0xFFFBEEDD);
-  /// 紫（说说 / 技巧类）
-  static const Color violet = Color(0xFF7C6CD4);
-  static const Color violetLight = Color(0xFFEDEAFE);
-  /// 靛（渔具店）
-  static const Color indigo = Color(0xFF5A6BCF);
-  static const Color indigoLight = Color(0xFFE9ECF8);
-  /// 深橙（野钓点）
-  static const Color deepOrange = Color(0xFFF0763E);
-  static const Color deepOrangeLight = Color(0xFFFDEBE1);
+  static const Color warningLight = Color(0xFFFBF1E3);
+  /// 以下三档原为紫/靛/深橙的「分类装饰色」。
+  /// 设计稿只有黑、白、冷灰 + 一个荧光黄绿，所以这里全部退成冷灰阶，
+  /// 靠图标 + 文字区分，不再靠色相 —— 一屏四五个高饱和色是「不协调」的根源。
+  static const Color violet = Color(0xFF5B6472);
+  static const Color violetLight = Color(0xFFEFF2F7);
+  static const Color indigo = Color(0xFF5B6472);
+  static const Color indigoLight = Color(0xFFEFF2F7);
+  static const Color deepOrange = Color(0xFF5B6472);
+  static const Color deepOrangeLight = Color(0xFFEFF2F7);
 
   // ───────────────────────── 表面 / 文字 / 线条 ─────────────────────────
-  /// 页面背景（带极淡绿调的干净灰白）
-  static const Color background = Color(0xFFF4F7F5);
+  /// 页面背景：冷灰蓝（设计稿 #EDF1F6）
+  static const Color background = Color(0xFFEDF1F6);
   /// 卡片 / 浮层表面
   static const Color surface = Colors.white;
-  static const Color textPrimary = Color(0xFF16241E);
-  static const Color textSecondary = Color(0xFF5A6B62);
-  /// 第三级文字（城市·时间、计数、说明）：比 textSecondary 浅一档。
-  /// 原来卡片里散着 #9AA1A7 / #8A9099 两种偏蓝的灰，在白绿卡上显脏。
-  static const Color textTertiary = Color(0xFF8A9A91);
-  static const Color divider = Color(0xFFE9EEEA);
-  static const Color border = Color(0xFFE1E8E3);
+  static const Color textPrimary = Color(0xFF07080C);
+  static const Color textSecondary = Color(0xFF7D8694);
+  /// 第三级文字（城市·时间、计数、说明）
+  static const Color textTertiary = Color(0xFF8B94A3);
+  static const Color divider = Color(0xFFEBEFF5);
+  static const Color border = Color(0xFFE2E8F0);
+  /// 「今天」列的高亮底（天气页 7 天条、逐时表）：设计稿的淡蓝，
+  /// 比 primaryLight 多一点蓝，用来和"不是今天"的列区分开
+  static const Color todayTint = Color(0xFFE9F2FE);
 
   // ─────────────── 深色面板（沉浸页专用：天气 / 地图 / 池塘） ───────────────
   //
-  // 这几个页面用深底是对的（数据密、要看图、夜间也在用），但底必须是
-  // **深墨绿水面**，不能是深蓝夜空 —— 深蓝在这个 App 里读起来像另一个产品。
+  // 深底统一走**近黑**（不是深墨绿、也不是深蓝），与首页 Hero 同一档，
+  // 这样从首页进天气页不会像换了个 App。
   //
-  // 层级固定 6 档 + 1 个高亮，别在页面里再临时调：
+  // 层级固定 6 档 + 1 个高亮：
   //   inkBg(底) < inkSurfaceAlt(交替行) < inkSurface(卡面) < inkLine(分隔线)
   //   inkText(主文字) / inkMuted(次要文字) / inkHi(高亮)
-  static const Color inkBg = Color(0xFF0B1C16);
-  static const Color inkSurface = Color(0xFF12271F);
-  static const Color inkSurfaceAlt = Color(0xFF0F211A);
-  static const Color inkLine = Color(0xFF1F3A2E);
+  static const Color inkBg = Color(0xFF07080C);
+  static const Color inkSurface = Color(0xFF12151B);
+  static const Color inkSurfaceAlt = Color(0xFF0C0F14);
+  static const Color inkLine = Color(0xFF232A34);
   /// 表头 / 略微提起的一条带
-  static const Color inkHead = Color(0xFF164034);
-  static const Color inkText = Color(0xFFE6F0EA);
-  static const Color inkMuted = Color(0xFF8CA79A);
+  static const Color inkHead = Color(0xFF111620);
+  static const Color inkText = Color(0xFFF2F5F9);
+  static const Color inkMuted = Color(0xFF8B94A3);
 
-  /// 深底高亮：**湖绿的亮阶**。
-  ///
-  /// 别用荧光黄绿（#C8FF6A / #D8E86A）—— 那个色在深底上像电竞界面，
-  /// 而且会和暖金、危险红、水蓝抢注意力，一屏里出现四五个高饱和色，
-  /// 结果是谁都不突出。深底只留这一个高亮色，其余全部降成 inkMuted。
-  static const Color inkHi = Color(0xFF4FD8A4);
+  /// 深底高亮：荧光黄绿。全站唯一的高饱和色，深底上一律用它。
+  static const Color inkHi = accent;
 
   // ───────────────────────── 形状 / 间距 / 字阶 ─────────────────────────
-  static const double radiusLg = 18;
-  static const double radiusMd = 14;
-  static const double radiusSm = 10;
+  /// 设计稿的卡片圆角更大，24 是主档
+  static const double radiusLg = 24;
+  static const double radiusMd = 16;
+  static const double radiusSm = 12;
   static const double radiusPill = 999;
 
   static const double sp1 = 4;
@@ -105,91 +134,77 @@ class AppTheme {
   static const double fsDisplay = 22;
 
   // ───────────────────────── 渐变 ─────────────────────────
-  /// 顶部导航 / Hero 标题栏渐变（深→浅湖绿）
+  /// 顶部 Hero 渐变：近黑 → 略提亮的一档黑（保留极轻的层次，不用纯色块）
   static const Gradient headerGradient = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
-    colors: [primaryDark, primary],
+    colors: [Color(0xFF07080C), Color(0xFF161B22)],
   );
-  /// 品牌强调渐变（湖绿→水蓝）
+  /// 品牌块渐变（深黑 → 石墨灰），用于商城横幅等大色块
   static const Gradient brandGradient = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
-    colors: [primary, accent],
+    colors: [Color(0xFF07080C), Color(0xFF1D242E)],
   );
-  /// 水蓝渐变（链接 / 强调按钮）
+  /// 强调渐变（黄绿 → 略深），只用于深底上的填充色块
   static const Gradient accentGradient = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
-    colors: [accent, accentDark],
+    colors: [Color(0xFFC6FF3D), Color(0xFFA8E52B)],
   );
 
   /// 柔和阴影（取代硬 elevation，卡片/浮层通用）
+  /// 冷灰底上阴影要更淡，否则卡片边缘发脏
   static List<BoxShadow> get softShadow => const [
         BoxShadow(
-          color: Color(0x12000000),
-          blurRadius: 14,
-          offset: Offset(0, 5),
+          color: Color(0x0F0B1220),
+          blurRadius: 16,
+          offset: Offset(0, 6),
         ),
       ];
 
   /// 更轻的阴影（小浮层 / 横向卡片）
   static List<BoxShadow> get lightShadow => const [
         BoxShadow(
-          color: Color(0x0D000000),
-          blurRadius: 8,
+          color: Color(0x0A0B1220),
+          blurRadius: 10,
           offset: Offset(0, 3),
         ),
       ];
 
-  /// 中文优先字体回退栈（设备自带，无需打包字体资源）
-  static List<String> get cjkFallback => const [
-        'PingFang SC',
-        'Hiragino Sans GB',
-        'Microsoft YaHei',
-        'Noto Sans CJK SC',
-        'Noto Sans SC',
-      ];
+  /// ★★ 历史遗留坑（v2.1.36 已拆除）：曾经有过
+  /// `fontFamilyFallback: ['PingFang SC', 'Hiragino Sans GB',
+  /// 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC']`。
+  ///
+  /// 这里列的全是「某个平台才有」的字体名 —— `PingFang SC` / `Hiragino Sans GB`
+  /// 只有 iOS/macOS 有，`Microsoft YaHei` 只有 Windows 有，`Noto Sans SC`
+  /// 在多数 Android 上不是这个名字。一旦某个机型的系统字体被 ROM 换掉
+  /// （MIUI 的 MiSans、ColorOS 的 OPPO Sans、鸿蒙的 HarmonyOS Sans），
+  /// 这条链**整条解析失败**，Flutter 只能退到 last-resort 字体，
+  /// 结果就是全站中文和 emoji 都渲染成空心方块（豆腐块）。
+  ///
+  /// 正确做法是**什么都不指定**：Android 的 fontconfig 会给出
+  /// Roboto → Noto Sans CJK → Noto Color Emoji 的完整兜底，
+  /// iOS 会给 San Francisco → PingFang SC → Apple Color Emoji。
+  /// 官方默认链比手写列表覆盖得更全，手写只会把兜底切断。
+  /// 回归护栏见 `test/cjk_font_test.dart`。
 
   /// 类别语义色（与发布中心、信息流标签、钓点筛选统一）
+  /// 设计稿是单色系：除「二手交易」保留红（功能性警示）外，其余统一近黑。
   static Color categoryColor(String cat) {
     switch (cat) {
-      case 'ask':
-        return accent;
-      case 'say':
-        return violet;
       case 'sell':
         return danger;
-      case 'buy':
-        return warning;
-      case 'venue':
-        return primaryDark;
-      case 'shop':
-        return indigo;
-      case 'wild':
-        return deepOrange;
       default:
-        return primary;
+        return textPrimary;
     }
   }
 
   /// 类别浅色底（标签 / 图标容器底色）
   static Color categorySoft(String cat) {
     switch (cat) {
-      case 'ask':
-        return accentLight;
-      case 'say':
-        return violetLight;
       case 'sell':
         return dangerLight;
-      case 'buy':
-        return warningLight;
-      case 'venue':
-        return primaryLight;
-      case 'shop':
-        return indigoLight;
-      case 'wild':
-        return deepOrangeLight;
       default:
         return primaryLight;
     }
@@ -200,18 +215,21 @@ class AppTheme {
     brightness: Brightness.light,
     primaryColor: primary,
     scaffoldBackgroundColor: background,
-    fontFamilyFallback: cjkFallback,
+    // ★ 这里**故意不设** fontFamily / fontFamilyFallback —— 见上方
+    //   「历史遗留坑」的注释：手写中文回退栈会在部分 ROM 上整条解析
+    //   失败，全站中文和 emoji 变方块。交给平台的系统字体链，覆盖最全。
+    //   `test/cjk_font_test.dart` 钉住了这一点，防止以后有人再塞回来。
     colorScheme: const ColorScheme.light(
       primary: primary,
       onPrimary: Colors.white,
       primaryContainer: primaryLight,
       secondary: accent,
-      onSecondary: Colors.white,
+      onSecondary: textPrimary,
       secondaryContainer: accentLight,
       onSecondaryContainer: accentDark,
       surface: surface,
       onSurface: textPrimary,
-      outline: divider,
+      outline: border,
       error: danger,
     ),
     appBarTheme: AppBarTheme(
@@ -224,7 +242,10 @@ class AppTheme {
         fontWeight: FontWeight.w700,
         letterSpacing: 0.5,
       ),
-      iconTheme: const IconThemeData(color: Colors.white),
+      // 不再写死 iconTheme 的白色：写死之后，页面把 AppBar 换成浅底、
+      // 只设 foregroundColor 是**管不到图标的**，返回箭头/动作图标
+      // 会白字白底直接消失（天气页、通知设置页都踩过）。
+      // 留空则自动跟随 foregroundColor：深色顶栏仍是白色图标。
     ),
     cardTheme: CardTheme(
       color: surface,
@@ -261,7 +282,7 @@ class AppTheme {
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
-        foregroundColor: accent,
+        foregroundColor: accentDark,
         textStyle: const TextStyle(
           fontSize: fsCaption,
           fontWeight: FontWeight.w500,
@@ -289,9 +310,9 @@ class AppTheme {
     bottomNavigationBarTheme: const BottomNavigationBarThemeData(
       backgroundColor: surface,
       selectedItemColor: primary,
-      unselectedItemColor: Colors.grey,
+      unselectedItemColor: textTertiary,
       selectedLabelStyle:
-          TextStyle(fontSize: fsCaption, fontWeight: FontWeight.w600),
+          TextStyle(fontSize: fsCaption, fontWeight: FontWeight.w700),
       unselectedLabelStyle: TextStyle(fontSize: fsCaption),
       elevation: 8,
     ),
@@ -300,22 +321,22 @@ class AppTheme {
       thickness: 1,
       space: 1,
     ),
+    // 未选中：白底 + 灰字 + 细描边；选中：黑底 + 荧光黄绿字（设计稿的胶囊）
     chipTheme: ChipThemeData(
-      // 未选中：中性浅底 + 次要文字；选中：品牌浅绿 + 主色加粗 + 勾选
-      backgroundColor: const Color(0xFFF2F5F3),
-      selectedColor: primaryLight,
+      backgroundColor: surface,
+      selectedColor: primary,
       labelStyle: const TextStyle(color: textSecondary, fontSize: fsCaption),
       secondaryLabelStyle: const TextStyle(
-        color: primary,
+        color: accent,
         fontSize: fsCaption,
-        fontWeight: FontWeight.w600,
+        fontWeight: FontWeight.w700,
       ),
-      checkmarkColor: primary,
+      checkmarkColor: accent,
       side: const BorderSide(color: border),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(radiusSm),
+        borderRadius: BorderRadius.circular(radiusPill),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
     ),
   );
 }
