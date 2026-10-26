@@ -53,6 +53,9 @@ class MapLauncher {
 
     final targets = <_NavTarget>[];
 
+    // ★ 这里的颜色是**第三方 App 的品牌色**（高德蓝 / 微信绿 / 苹果蓝），
+    //   故意不进 AppTheme 色板：用户靠颜色认 App，统一成黑灰反而认不出。
+    //   `test/theme_palette_test.dart` 的白名单里已登记本文件。
     if (Platform.isAndroid) {
       targets.addAll([
         _NavTarget(
