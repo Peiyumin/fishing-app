@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../app_theme.dart';
+
 import '../models/fish.dart';
 import 'fish_photo.dart';
 
@@ -43,7 +45,7 @@ class FishDexCard extends StatelessWidget {
 
   static const Color _cardBg = Color(0xFF0D1A16);
   static const Color _cellBg = Color(0xFF16241F);
-  static const Color _lime = Color(0xFFC8FF6A);
+  static const Color _lime = AppTheme.inkHi; // 统一到湖绿亮阶，别用荧光黄绿
   static const Color _muted = Color(0xFF7C8C85);
 
   List<FishSpecies> get _all => [...guide.fresh, ...guide.salt];
@@ -219,7 +221,7 @@ class FishDexCard extends StatelessWidget {
                         minHeight: 4,
                         backgroundColor: const Color(0xFF22322B),
                         valueColor:
-                            const AlwaysStoppedAnimation(Color(0xFFC8FF6A)),
+                            const AlwaysStoppedAnimation(AppTheme.inkHi),
                       ),
                     ),
                   ],
@@ -328,7 +330,7 @@ class FishDexCard extends StatelessWidget {
         border: Border.all(
           color: f == null
               ? const Color(0xFF1B2A24)
-              : const Color(0xFFC8FF6A).withOpacity(0.30),
+              : AppTheme.inkHi.withOpacity(0.30),
         ),
       ),
       child: Column(
