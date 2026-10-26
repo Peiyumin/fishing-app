@@ -15,8 +15,8 @@ import 'user_avatar.dart';
 ///           · 右上 黑底胶囊 + 评论数
 ///           · 底部 渐变压暗：鱼种名（+N 种）/ 钓法·重量 / 右下「指数」亮绿胶囊
 ///   文字区  · 正文两行 → 城市 → 头像 / 昵称 / LV / 点赞
-/// 颜色**不照抄参考图的荧光黄绿**：整体走 App 现成的绿色系
-/// （指数胶囊用 `0xFFB6F09A` + 深绿字，选中态用近黑 `0xFF15181A`）。
+/// 颜色按设计稿：指数胶囊 = 荧光黄绿底 + 近黑字（一屏里唯一的彩色块）；
+/// 其余文字/角标全部走中性色，不参与抢注意力。
 class WaterfallPostCard extends StatelessWidget {
   final Post post;
   final VoidCallback onTap;
@@ -125,7 +125,7 @@ class WaterfallPostCard extends StatelessWidget {
                     style: const TextStyle(
                       fontSize: 12,
                       height: 1.32,
-                      color: Color(0xFF2B2F33),
+                      color: AppTheme.textPrimary,
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -175,7 +175,7 @@ class WaterfallPostCard extends StatelessWidget {
             style: const TextStyle(
                 fontSize: 10.5,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF4A5056)),
+                color: AppTheme.textSecondary),
           ),
         ),
         const SizedBox(width: 3),
@@ -183,7 +183,7 @@ class WaterfallPostCard extends StatelessWidget {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 3, vertical: .5),
           decoration: BoxDecoration(
-            color: const Color(0xFF15181A),
+            color: AppTheme.primary,
             borderRadius: BorderRadius.circular(3),
           ),
           child: Text(
@@ -219,7 +219,7 @@ class WaterfallPostCard extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0xFF23543F), Color(0xFF10251C)],
+                colors: [Color(0xFF1D242E), Color(0xFF07080C)],
               ),
             ),
             alignment: Alignment.center,
@@ -241,9 +241,10 @@ class WaterfallPostCard extends StatelessWidget {
           CachedNetworkImage(
             imageUrl: ApiConfig.mediaUrl(_cover) ?? '',
             fit: BoxFit.cover,
-            placeholder: (_, __) => Container(color: const Color(0xFFE7EBE9)),
+            placeholder: (_, __) =>
+                Container(color: AppTheme.primaryLight),
             errorWidget: (_, __, ___) =>
-                Container(color: const Color(0xFFE7EBE9)),
+                Container(color: AppTheme.primaryLight),
           ),
 
         // 底部渐变（压在鱼种名下面）
@@ -314,7 +315,7 @@ class WaterfallPostCard extends StatelessWidget {
                               style: const TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.w600,
-                                color: Color(0xFFCFD8D2),
+                                color: AppTheme.inkText,
                               ),
                             ),
                         ],
@@ -337,7 +338,7 @@ class WaterfallPostCard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.fromLTRB(6, 2, 7, 2),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFB6F09A),
+                      color: AppTheme.accent,
                       borderRadius: BorderRadius.circular(7),
                     ),
                     child: Row(
@@ -349,7 +350,7 @@ class WaterfallPostCard extends StatelessWidget {
                               fontSize: 8.5,
                               height: 1.2,
                               fontWeight: FontWeight.w700,
-                              color: Color(0xFF1E4A24)),
+                              color: AppTheme.primary),
                         ),
                         const SizedBox(width: 3),
                         Text(
@@ -358,7 +359,7 @@ class WaterfallPostCard extends StatelessWidget {
                               fontSize: 12,
                               height: 1.1,
                               fontWeight: FontWeight.w900,
-                              color: Color(0xFF14381A)),
+                              color: AppTheme.primary),
                         ),
                       ],
                     ),
@@ -371,7 +372,7 @@ class WaterfallPostCard extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color: Color(0xFFDDE4DF),
+                  color: AppTheme.inkText,
                   fontSize: 10.5,
                   height: 1.2,
                   fontWeight: FontWeight.w500,
