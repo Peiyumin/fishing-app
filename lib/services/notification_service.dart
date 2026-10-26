@@ -5,6 +5,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/message.dart';
+import '../utils/text_safe.dart';
 
 /// 通知偏好（本地持久化，默认全开）
 ///
@@ -252,7 +253,9 @@ class NotificationService {
         // 用自增序号做通知 id：保证每条都能弹出来（Android 会排队而不是覆盖）
         (++_seq) & 0x7fffffff,
         n.pushTitle,
-        body.length > 120 ? '${body.substring(0, 120)}…' : body,
+        // ★ 按字素簇截断：通知正文里常有 emoji，substring 会把代理对切成
+        //   半个，通知栏里显示成小方块。
+        clipGrapheme(body, 120),
         NotificationDetails(
           android: AndroidNotificationDetails(
             ch.id,
