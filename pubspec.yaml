@@ -1,7 +1,7 @@
 name: fishing_app
 description: 垂钓社区 App —— 钓鱼天气、钓点导航、渔获分享（Flutter 双端）
 publish_to: 'none'
-version: 2.1.35+45
+version: 2.1.36+46
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -43,6 +43,9 @@ dependencies:
   maplibre_gl: 0.22.0
   # 系统通知：私信 / 评论 / 点赞 / 官方公告到达时弹通知栏与横幅
   flutter_local_notifications: ^17.2.4
+  # 按「字素簇」截断文本：昵称/地址里有 emoji 时，substring 会切出半个
+  # 代理项，渲染成方块（lib/utils/text_safe.dart 依赖它）
+  characters: ^1.3.0
 
 dev_dependencies:
   flutter_test:
@@ -79,3 +82,5 @@ flutter:
     - assets/fish/
     # 池塘环境背景（斜俯视鸟瞰：池塘居中，四周树与小房子）
     - assets/pond/
+    # 启动页底图（1140×2050 设计稿，胶囊已擦除，由 Dart 端重绘动画进度）
+    - assets/startup/
