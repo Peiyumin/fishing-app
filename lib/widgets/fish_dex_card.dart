@@ -25,7 +25,7 @@ class FishDexCard extends StatelessWidget {
   /// 点卡片空白处：进图鉴详情
   final VoidCallback? onOpenDex;
 
-  /// 点「拍一条入缸」
+  /// 点「拍一条投入池塘」
   final VoidCallback? onSnap;
 
   /// 点「我的池塘」
@@ -266,8 +266,8 @@ class FishDexCard extends StatelessWidget {
                         Flexible(
                           child: Text(
                             unlocked.isEmpty
-                                ? '拍一条入缸 · 点亮第 1 种'
-                                : '拍一条入缸 · 点亮第 ${unlocked.length + 1} 种',
+                                ? '拍一条投入池塘 · 点亮第 1 种'
+                                : '拍一条投入池塘 · 点亮第 ${unlocked.length + 1} 种',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
