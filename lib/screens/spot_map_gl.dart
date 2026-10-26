@@ -25,6 +25,7 @@ import '../services/map_tile_source.dart';
 import '../services/api_config.dart';
 import '../services/geo_bounds.dart';
 import '../services/spot_service.dart';
+import '../services/tile_health.dart';
 import '../widgets/spot_pin.dart';
 import 'spot_detail_screen.dart';
 import 'spot_map_screen.dart' show SpotMapController, SpotMapScreen;
@@ -172,6 +173,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
 
   /// 原生内核起不来 → 自动降级 flutter_map
   bool _fallback = false;
+
+  /// 底图降级/异常提示（空串 = 不显示）
+  String _mapNote = '';
   Timer? _guard;
 
   @override
@@ -189,6 +193,8 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       setState(() {
         _stylePath = path;
         _cfgReady = true;
+        // 自检结论（首选底图在这条网络上不通时会给一句说明）
+        _mapNote = MapConfigService.healthNote;
       });
       // 原生层 8 秒还没 ready 就降级，绝不让用户对着白屏
       //
@@ -2269,6 +2275,46 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         child: IgnorePointer(child: _buildScaleBar()),
       ),
 
+      // 底图降级提示：首选那家在当前网络打不开时，别让用户以为「地图坏了」
+      if (_mapNote.isNotEmpty)
+        Positioned(
+          left: 12,
+          right: 12,
+          top: (widget.embedded
+                  ? 64.0
+                  : MediaQuery.of(context).padding.top + 96) -
+              4,
+          child: IgnorePointer(
+            ignoring: false,
+            child: GestureDetector(
+              onTap: () => setState(() => _mapNote = ''),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                decoration: BoxDecoration(
+                  color: const Color(0xE61B2C24),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.swap_horiz,
+                      size: 14, color: Colors.white70),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(_mapNote,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 10.5,
+                            height: 1.3,
+                            color: Colors.white)),
+                  ),
+                  const Icon(Icons.close, size: 13, color: Colors.white54),
+                ]),
+              ),
+            ),
+          ),
+        ),
+
       // 版权行（合规必须显示）
       Positioned(
         left: 10,
@@ -2387,6 +2433,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                   style: const TextStyle(
                       fontSize: 11, color: Color(0xFF8A9099))),
             ),
+            const SizedBox(height: 10),
+            // 底图线路自检：WiFi / 移动网络对比时，把逐家的结果直接摆出来
+            _NetCheckRow(current: _tile.shortName),
           ]),
         );
       }),
@@ -2406,6 +2455,119 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       value: value,
       activeColor: AppTheme.accent,
       onChanged: onChanged,
+    );
+  }
+}
+
+/// 底图线路自检行（图层面板底部）
+///
+/// 用户反馈「WiFi 下地图不加载、只看到高德底图」。这条自检把三家底图的
+/// **实测结果**（通了多久、失败原因）直接写在面板里 —— 换个网络再点一次，
+/// 就能当场看出是「星图在这条网被拦」还是「整条网都出不去」。
+class _NetCheckRow extends StatefulWidget {
+  final String current;
+  const _NetCheckRow({required this.current});
+
+  @override
+  State<_NetCheckRow> createState() => _NetCheckRowState();
+}
+
+class _NetCheckRowState extends State<_NetCheckRow> {
+  bool _busy = false;
+  List<TileHealthResult> _results = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    // 打开面板时先把上一次的结论亮出来，不想等就点「重新检测」
+    _results = MapConfigService.lastProbe;
+  }
+
+  Future<void> _run() async {
+    setState(() => _busy = true);
+    final r = await MapConfigService.runDiagnostics();
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _results = r;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F7F6),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.wifi_tethering, size: 15, color: Color(0xFF5A646B)),
+              const SizedBox(width: 5),
+              const Text('底图线路自检',
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+              const SizedBox(width: 6),
+              Text('当前：${widget.current}',
+                  style: const TextStyle(fontSize: 11, color: Color(0xFF8A9099))),
+              const Spacer(),
+              if (_busy)
+                const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 1.6))
+              else
+                TextButton(
+                  onPressed: _run,
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, 28),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  child: const Text('重新检测', style: TextStyle(fontSize: 12)),
+                ),
+            ],
+          ),
+          if (_results.isEmpty && !_busy)
+            const Padding(
+              padding: EdgeInsets.only(top: 2, left: 20),
+              child: Text('点「重新检测」测一下这台手机当前网络能不能拉到底图',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF8A9099))),
+            ),
+          for (final r in _results)
+            Padding(
+              padding: const EdgeInsets.only(top: 3, left: 20),
+              child: Row(
+                children: [
+                  Icon(r.ok ? Icons.check_circle : Icons.error_outline,
+                      size: 12,
+                      color: r.ok ? AppTheme.primary : AppTheme.danger),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      r.ok ? '${r.name} · ${r.ms} ms' : '${r.name} · ${r.detail}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: r.ok
+                              ? const Color(0xFF4A5056)
+                              : AppTheme.danger),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (_results.isNotEmpty && !_results.first.ok && _results.any((r) => r.ok))
+            const Padding(
+              padding: EdgeInsets.only(top: 5, left: 20),
+              child: Text('首选底图在这条网络上不通，已自动改用能通的那家（回退本页再进生效）',
+                  style: TextStyle(fontSize: 10.5, color: Color(0xFF8A9099))),
+            ),
+        ],
+      ),
     );
   }
 }
