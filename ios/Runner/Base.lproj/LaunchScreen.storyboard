@@ -19,9 +19,10 @@
                             <imageView opaque="NO" clipsSubviews="YES" multipleTouchEnabled="YES" contentMode="center" image="LaunchImage" translatesAutoresizingMaskIntoConstraints="NO" id="YRO-k0-Ey4">
                             </imageView>
                         </subviews>
-                        <!-- 品牌深湖绿 #0F7A53：原来是纯白，冷启动会先白屏一下
-                             再切到 Flutter 的绿色启动页，观感就是「白屏过会才正常」 -->
-                        <color key="backgroundColor" red="0.05882352941" green="0.47843137255" blue="0.32549019608" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                        <!-- 纯黑：和启动页底图（splash_brand.jpg）顶部的黑色一致，
+                             冷启动是「黑屏 → 底图从黑里浮现」，不会先白闪一下。
+                             原来是品牌绿 #0F7A53，换底图后绿色反而会闪一下。 -->
+                        <color key="backgroundColor" red="0" green="0" blue="0" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                         <constraints>
                             <constraint firstItem="YRO-k0-Ey4" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="1a2-6s-vTC"/>
                             <constraint firstItem="YRO-k0-Ey4" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="4X2-HB-R7a"/>
