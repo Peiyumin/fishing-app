@@ -201,15 +201,23 @@ class _AppRefreshState extends State<AppRefresh>
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        // 下拉手势仍交给 RefreshIndicator，但它的转圈图标**不显示**：
-        // 用户要求「把原来的加载图标删掉」，视觉反馈只留上面那条居中提示。
-        // color/backgroundColor 给透明即可，动画逻辑照常（松手触发 onRefresh）。
+        // 下拉手势仍交给 RefreshIndicator（物理回弹、松手触发都靠它），
+        // 但它的**指示器整块挪到视口外**，用户看不到任何东西：
+        //
+        // ★ 之前只把 color / backgroundColor 设成透明，圆环确实没了，
+        //   可 RefreshProgressIndicator 内部那个带 elevation 的 Material 圆盘
+        //   阴影还在 —— 就是用户截图里那个灰扑扑的虚边圆圈。
+        //   RefreshIndicator 没有 elevation 参数，Flutter 3.24 也还没有
+        //   `RefreshIndicator.noSpinner`（3.27 才加），所以直接把指示器推出屏幕：
+        //   edgeOffset 只用于 `top:` / `bottom:` 定位（不动手势与 onRefresh），
+        //   Stack 默认硬裁剪，推出去 2000px 就彻底不可见了。
         RefreshIndicator(
           onRefresh: _run,
           color: Colors.transparent,
           backgroundColor: Colors.transparent,
+          strokeWidth: 0,
           displacement: widget.displacement ?? 40,
-          edgeOffset: widget.edgeOffset ?? 0,
+          edgeOffset: (widget.edgeOffset ?? 0) - 2000,
           child: widget.child,
         ),
         Positioned(
