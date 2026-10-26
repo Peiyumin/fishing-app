@@ -141,6 +141,9 @@ class _PondScreenState extends State<PondScreen>
   ui.Image? _bg;
   final Map<String, ui.Image> _images = {};
 
+  /// 每种鱼的背部主色（俯视上色用），和 _images 同 key
+  final Map<String, Color> _bodyColors = {};
+
   List<PondFish> _placed = const [];
   List<FishSpecies> _all = const [];
   bool _loading = true;
@@ -195,10 +198,21 @@ class _PondScreenState extends State<PondScreen>
 
   /// 开始 pop 时立刻冻结画面
   ///
-  /// 转场那 300ms 里，池塘的动画帧和滑走动画在同一帧预算里，冻住最贵的
-  /// 那一半，滑走就顺了。回到本页（forward / completed）再解冻。
+  /// 转场那 300ms 里，池塘的动画帧和滑走动画抢同一份帧预算，冻住最贵的
+  /// 那一半，滑走就顺了。回到本页（松手取消 / forward）再解冻。
+  ///
+  /// ★ 判据只能用 `value`，不能用 `status`：
+  ///   iOS 侧滑返回时，转场控制器的 value 是被 `dragUpdate` **直接赋值**的，
+  ///   而 `AnimationController.value` 的 setter 在 value 落在中间时把 status
+  ///   置成 `forward`（不是 `reverse`）。之前按 `status == reverse` 判断，
+  ///   「手指还在拖」的那一整段永远不会冻结 —— 用户说的「往右滑会卡一下、
+  ///   不够流畅」就是这个：等松手后才冻，可那时最费帧的一段已经过去了。
+  ///   完整显示时 value 恒为 1.0，一旦被拖走就 < 1，这个判据没有歧义。
   void _onRouteAnim() {
-    _frozen = _routeAnim?.status == AnimationStatus.reverse;
+    final a = _routeAnim;
+    if (a == null) return;
+    final leaving = a.value < .999;
+    if (leaving != _frozen) _frozen = leaving;
   }
 
   @override
@@ -251,12 +265,19 @@ class _PondScreenState extends State<PondScreen>
         .toList();
     if (need.isEmpty) return;
     final loaded = <String, ui.Image>{};
+    final colors = <String, Color>{};
     for (final p in need) {
       final img = await _loadImage(p);
-      if (img != null) loaded[p] = img;
+      if (img == null) continue;
+      loaded[p] = img;
+      // 背部主色只在这里采一次：俯视画鱼要用它上色，运行时读像素太贵
+      colors[p] = await PondPainter.sampleBodyColor(img);
     }
     if (!mounted || loaded.isEmpty) return;
-    setState(() => _images.addAll(loaded));
+    setState(() {
+      _images.addAll(loaded);
+      _bodyColors.addAll(colors);
+    });
   }
 
   /// 投放 / 收回
@@ -409,7 +430,11 @@ class _PondScreenState extends State<PondScreen>
         onScaleEnd: _onScaleEnd,
         onDoubleTapDown: (d) => _tapPos = d.localPosition,
         onDoubleTap: _onDoubleTap,
-        child: Stack(
+        // ★ 整页一个图层：侧滑返回时 Flutter 只需把这一层平移出去，
+        //   不用每帧重放顶栏 / 底部面板 / 渐变 / 圆角那一堆绘制指令。
+        //   （画布自己还有一层 RepaintBoundary，冻结后内容不变 → 直接复用位图）
+        child: RepaintBoundary(
+          child: Stack(
           fit: StackFit.expand,
           children: [
             // 池塘画面
@@ -424,6 +449,7 @@ class _PondScreenState extends State<PondScreen>
                   painter: PondPainter(
                     bg: _bg!,
                     images: _images,
+                    bodyColors: _bodyColors,
                     fish: _placed,
                     clock: _clock,
                     view: _view,
@@ -569,6 +595,7 @@ class _PondScreenState extends State<PondScreen>
           ),
         ],
       ),
+        ),
       ),
       // 横屏时提示转手机（池塘是竖构图，横过来会裁掉两岸）
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
@@ -828,6 +855,10 @@ class PondPaintCache {
 class PondPainter extends CustomPainter {
   final ui.Image bg;
   final Map<String, ui.Image> images;
+
+  /// 每种鱼的「背部主色」：加载鱼图时从素材上采一次，之后一直复用。
+  /// key 是鱼图资源路径（和 [images] 同一套 key）。
+  final Map<String, Color> bodyColors;
   final List<PondFish> fish;
   final ValueListenable<double> clock;
   final ValueListenable<PondView> view;
@@ -836,12 +867,50 @@ class PondPainter extends CustomPainter {
   PondPainter({
     required this.bg,
     required this.images,
+    this.bodyColors = const {},
     required this.fish,
     required this.clock,
     required this.view,
     required this.cache,
     required Listenable repaint,
   }) : super(repaint: repaint);
+
+  /// 采不到颜色时的兜底（灰绿，接近鲫鱼背色，不会突兀）
+  static const Color fallbackBody = Color(0xFF7C8F7E);
+
+  /// 从鱼图里采「背部主色」
+  ///
+  /// 俯视画鱼不能贴侧视纹理（沿 y 是「背深腹白」、沿 x 是头尾渐变 + 鳞片，
+  /// 拉到俯视轮廓上就成了一条玉米棒）。改成「素材背部的平均色 + 渐变」，
+  /// 颜色依旧来自素材本身 —— 鲫鱼灰绿、鲤鱼金黄、草鱼青灰，和图鉴一致。
+  ///
+  /// 采样区取 x .30~.72 / y .18~.42：对侧面朝右的鱼，那一块一定是鱼背。
+  /// 抠图后的透明像素（alpha < 180）跳过，否则会被背景拉白。
+  static Future<Color> sampleBodyColor(ui.Image img) async {
+    try {
+      final data = await img.toByteData(format: ui.ImageByteFormat.rawRgba);
+      if (data == null) return fallbackBody;
+      final w = img.width, h = img.height;
+      final y0 = (h * .18).round(), y1 = (h * .42).round();
+      final x0 = (w * .30).round(), x1 = (w * .72).round();
+      var r = 0, g = 0, b = 0, n = 0;
+      for (var y = y0; y < y1; y++) {
+        for (var x = x0; x < x1; x++) {
+          final i = (y * w + x) * 4;
+          if (data.getUint8(i + 3) < 180) continue;
+          r += data.getUint8(i);
+          g += data.getUint8(i + 1);
+          b += data.getUint8(i + 2);
+          n++;
+        }
+      }
+      if (n < 20) return fallbackBody;
+      return Color.fromARGB(255, (r / n).round(), (g / n).round(),
+          (b / n).round());
+    } catch (_) {
+      return fallbackBody;
+    }
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -932,10 +1001,11 @@ class PondPainter extends CustomPainter {
 
   void _paintFish(Canvas canvas, List<_Swimmer> list) {
     for (final s in list) {
-      final img = images[
-          FishAssets.pathOrFallback(s.fish.name, waterType: s.fish.water)];
+      final path =
+          FishAssets.pathOrFallback(s.fish.name, waterType: s.fish.water);
+      final img = images[path];
       if (img == null) continue;
-      s.paint(canvas, img, cache);
+      s.paint(canvas, img, cache, bodyColors[path] ?? PondPainter.fallbackBody);
     }
   }
 
@@ -1160,8 +1230,10 @@ class _Swimmer {
       ),
       heading: heading,
       facing: math.cos(heading) >= 0 ? 1 : -1,
-      // 朝镜头 / 背镜头时，投影上身体会变短 —— 转身因此是连续缩短再展开
-      foreshorten: .55 + .45 * math.cos(heading).abs(),
+      // ★ 俯视视角下鱼朝任何方向都是完整长度（没有透视缩短）。
+      //   只留极轻微的收放，作为「游得更深一点」的暗示 —— 之前 .55 是给
+      //   侧视准备的，放到俯视里会让鱼在转身时忽长忽短，很假。
+      foreshorten: .90 + .10 * math.cos(heading).abs(),
       bodyLen: bodyLen,
       swimPhase: t * 2 * math.pi * hz + seed,
       bob: t * .62 + seed * .8,
@@ -1184,108 +1256,261 @@ class _Swimmer {
     return local / dur;
   }
 
-  void paint(Canvas canvas, ui.Image img, PondPaintCache cache) {
-    final h = bodyLen * img.height / img.width; // 身体厚度（垂直于身体方向）
-
+  void paint(Canvas canvas, ui.Image img, PondPaintCache cache, Color body) {
     // 投在水底的影子：用「单位圆径向渐变」代替 MaskFilter.blur。
-    // 效果几乎一样，但 blur 每条鱼都要开一个 layer 做高斯模糊 —— 24 条鱼
-    // 就是 24 次离屏模糊，滑走时特别贵。
+    // blur 每条鱼都要开一个 layer 做高斯模糊，24 条就是 24 次离屏模糊。
+    // 俯视时影子基本就在鱼正下方，只比鱼身略大一圈的软椭圆。
     canvas.save();
-    canvas.translate(center.dx, center.dy + h * .40);
+    canvas.translate(center.dx, center.dy);
     canvas.rotate(heading);
-    canvas.scale(bodyLen * .52, h * .58);
+    canvas.scale(bodyLen * .56, bodyLen * .30);
     canvas.drawCircle(Offset.zero, 1, cache.shadow!);
     canvas.restore();
 
-    final tint = Paint()
-      ..filterQuality = FilterQuality.medium
-      // 越深的鱼越被水「吃掉」一点：远的看着更淡、更融进水里。
-      // 上限别太高 —— 0.30 那档远处的鱼几乎看不见，池子看起来是空的
-      ..colorFilter = ColorFilter.mode(
-        const Color(0xFF0B4A3A)
-            .withOpacity((.15 - depth * .10).clamp(0.0, 1.0)),
-        BlendMode.srcATop,
-      );
-
     canvas.save();
     canvas.translate(center.dx, center.dy);
-    // 朝向 = 游动方向；朝左时整体镜像（素材本身朝右）
+    // 朝向 = 游动方向；朝左时整体镜像
     canvas.rotate(facing > 0 ? heading : heading + math.pi);
     canvas.scale(facing * foreshorten, 1);
+    // 水下轻微起伏（只留体长的 0.4%，再大就成了「船在浪里颠」）
+    canvas.translate(0, math.sin(bob) * bodyLen * .004);
 
-    // 巡游时身体只有极轻微的上浮/下沉 —— 这一层只留 3% 体厚，
-    // 再大就会变成「一条船在浪里上下颠」，是很强的假信号
-    canvas.translate(0, math.sin(bob) * h * .03);
-
-    if (bodyLen >= 42) {
-      _paintBentBody(canvas, img, h, tint, cache);
-    } else {
-      // 远处的小鱼看不出波动，整张画更省
-      canvas.drawImageRect(
-        img,
-        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
-        Rect.fromCenter(center: Offset.zero, width: bodyLen, height: h),
-        tint,
-      );
-    }
+    _paintTopView(canvas, body);
     canvas.restore();
   }
 
-  /// 弯着画一条鱼：14 列 × 2 行的三角网格，纹理是原图
+  /// 俯视（从池子上方往下看）画一条鱼 —— **只露出水里的鱼背**
   ///
-  /// 为什么不用「切 N 段 drawImageRect 拼」：相邻段位移不同 → 接缝处出现
-  /// 可见错位（第一版实测鱼身上有一条直线断带）。网格顶点是相邻三角形
-  /// **共享**的，插值由 GPU 做，接缝天然连续。
+  /// 为什么不贴素材：图鉴那 46 张鱼图是鱼的正侧面（能看到眼睛、胸鳍、
+  /// 侧线），而池塘是航拍俯视的实景照片。把侧影摊在池面上，看起来就是
+  /// 「一条翻着肚子的鱼躺在水面」—— 用户说的「躺着游」正是这个。
   ///
-  /// 振幅沿体轴递增：`env = 0.016 + 0.086 * q^1.55`（q=0 是头、q=1 是尾），
-  /// 尾端约 10% 体长、头部 1.6% —— 真实鱼的比例大约是 6~8 倍差。
-  void _paintBentBody(
-      Canvas canvas, ui.Image img, double h, Paint tint, PondPaintCache cache) {
-    const cols = 14;
-    final bigL = bodyLen;
-    final dy = List<double>.filled(cols + 1, 0);
+  /// 也不能把侧视纹理拉到俯视轮廓上：素材沿 y 是「背深腹白」、沿 x 是
+  /// 头尾渐变 + 鳞片，拉过去会变成一条「玉米棒」。所以：
+  ///  1. **轮廓** 程序化纺锤形（俯视看鱼就是中间宽、两头尖），沿体轴行波
+  ///  2. **颜色** 用加载时采到的「背部主色」（见 [PondPainter.sampleBodyColor]），
+  ///     再叠横向受光渐变 —— 中脊离水面最近所以最亮，两侧渐暗
+  ///  3. **水下感** 边缘羽化 + 水色压暗 + 越深越淡
+  void _paintTopView(Canvas canvas, Color body) {
+    final l = bodyLen;
+    // 俯视半宽：鲤鱼体宽约体长 0.26~0.28（边缘羽化会吃掉一点，先放大补偿）
+    final halfW = l * .155;
+    const cols = 18;
+
+    // ── 中心线：行波从头部传向尾部（和真鱼一样）+ 俯视宽度轮廓
+    final px = List<double>.filled(cols + 1, 0);
+    final py = List<double>.filled(cols + 1, 0);
+    final pw = List<double>.filled(cols + 1, 0);
     for (var i = 0; i <= cols; i++) {
-      // 纹理左边是鱼尾、右边是鱼头（素材本身就是鱼头朝右）
-      final q = 1 - i / cols;
-      final env = .016 + .086 * math.pow(q, 1.55);
-      // 相位沿体轴延迟 0.95 个波长：波从头部传向尾部，身体才是 S 形
+      final u = i / cols; // 0 = 尾柄，1 = 吻端
+      final q = 1 - u; // 0 = 头，1 = 尾
+      px[i] = -l / 2 + l * u;
+      // 摆幅沿体轴递增：头部几乎不动（1%），尾部最大（9%）
+      final env = .010 + .080 * math.pow(q, 1.75);
+      // 相位沿体轴延迟 0.95 个波长 → 身体弯成 S，波一路传向尾巴
       final ph = swimPhase - q * 2 * math.pi * .95;
-      dy[i] = bigL * env * thrust * math.sin(ph);
+      py[i] = l * env * thrust * math.sin(ph);
+      pw[i] = halfW * _topWidth(u);
     }
-    final w = img.width.toDouble();
-    final ih = img.height.toDouble();
+
+    // ── 尾鳍先画，压在身体下面
+    _paintTailFin(canvas, px[0], py[0], l, body);
+
+    // ── 鱼身：18 列 × 4 段三角网格（顶点共享 → 弯曲不出接缝）
+    //
+    // 横向 t 取 -1.2..1.2：超过 1 的那一小条 alpha 归零，形成「水下的柔边」。
+    // 硬轮廓在实景照片上特别假 —— 水下看鱼背本来就没有清晰边。
+    const rows = 4;
+    const tMax = 1.2;
     final pos = <Offset>[];
-    final texOff = <Offset>[];
+    final colors = <Color>[];
     for (var i = 0; i < cols; i++) {
-      final x0 = -bigL / 2 + bigL * i / cols;
-      final x1 = -bigL / 2 + bigL * (i + 1) / cols;
-      final tx0 = w * i / cols;
-      final tx1 = w * (i + 1) / cols;
-      final a = Offset(x0, -h / 2 + dy[i]);
-      final b = Offset(x1, -h / 2 + dy[i + 1]);
-      final c = Offset(x1, h / 2 + dy[i + 1]);
-      final d = Offset(x0, h / 2 + dy[i]);
-      final ta = Offset(tx0, 0);
-      final tb = Offset(tx1, 0);
-      final tc = Offset(tx1, ih);
-      final td = Offset(tx0, ih);
-      // 两个三角形：a-b-c、a-c-d
-      pos.addAll([a, b, c]);
-      texOff.addAll([ta, tb, tc]);
-      pos.addAll([a, c, d]);
-      texOff.addAll([ta, tc, td]);
+      final u0 = i / cols, u1 = (i + 1) / cols;
+      for (var j = 0; j < rows; j++) {
+        final t0 = -tMax + 2 * tMax * j / rows;
+        final t1 = -tMax + 2 * tMax * (j + 1) / rows;
+        final a = Offset(px[i], py[i] + pw[i] * t0);
+        final b = Offset(px[i + 1], py[i + 1] + pw[i + 1] * t0);
+        final c = Offset(px[i + 1], py[i + 1] + pw[i + 1] * t1);
+        final d = Offset(px[i], py[i] + pw[i] * t1);
+        pos.addAll([a, b, c, a, c, d]);
+        final ca = _bodyShade(body, t0, u0, depth);
+        final cb = _bodyShade(body, t0, u1, depth);
+        final cc = _bodyShade(body, t1, u1, depth);
+        final cd = _bodyShade(body, t1, u0, depth);
+        colors.addAll([ca, cb, cc, ca, cc, cd]);
+      }
     }
-    tint.shader = cache.texOf(img);
     canvas.drawVertices(
-      ui.Vertices(
-        ui.VertexMode.triangles,
-        pos,
-        textureCoordinates: texOff,
-      ),
+      ui.Vertices(ui.VertexMode.triangles, pos, colors: colors),
       BlendMode.srcOver,
-      tint,
+      Paint(),
     );
-    tint.shader = null; // 这个 Paint 是复用的，用完把 shader 摘掉
+
+    // ── 背鳍：俯视看是竖着的，只露一小条窄带（贴着中脊后半段）
+    _paintDorsalFin(canvas, px, py, pw, cols, l, body);
+
+    // ── 胸鳍 + 眼睛（放大后才看得见，但正是这两笔让它「像鱼」）
+    if (l >= 34) _paintFinsAndEyes(canvas, px, py, pw, cols, l, body);
+  }
+
+  /// 俯视轮廓宽度：u = 0 尾柄、1 吻端
+  ///
+  /// 尾柄 0.13 → 鳃盖后最宽 1.0（u=.55）→ 吻端 0.26。
+  /// 两段连续曲线，没有折角 —— 折角在俯视下特别显眼（像纸片剪出来的）。
+  static double _topWidth(double u) {
+    if (u <= .55) {
+      return .13 + .87 * math.pow(math.sin(u / .55 * math.pi / 2), .85);
+    }
+    final k = (u - .55) / .45;
+    final s = k * k * (3 - 2 * k); // smoothstep
+    final base = 1.0 - .66 * s;
+    if (u > .93) {
+      // 吻端圆角：网格最后一列如果直接停在固定宽度上，鱼头会被切成
+      // 一条平边（放大看就是「被削了一刀」）。这里最后 7% 快速收口。
+      final r = (u - .93) / .07;
+      return base * (1 - r * r * .78);
+    }
+    return base;
+  }
+
+  /// 顶点色：中脊最亮（离水面最近）→ 两侧渐暗（被水吸收），边缘 alpha 归零
+  ///
+  /// 另外沿体轴叠 ±4.5% 的明暗起伏，冒充鳞列/肌肉节 —— 比整片死板的纯色
+  /// 立体得多，而且几乎没有成本（只是顶点色里多算一个 sin）。
+  static Color _bodyShade(Color base, double t, double u, double depth) {
+    final at = t.abs();
+    // 横向受光：中脊最亮（离水面最近）→ 体侧明显变暗（被水吸收）
+    // 差 32% 才看得出「背是圆的」；只用 16% 时整条鱼是块平板。
+    final side = 1.0 - .32 * math.pow((at / 1.2).clamp(0.0, 1.0), .8);
+    // 纵向：吻端和尾柄都稍暗，中段最亮
+    final endFade = .82 + .18 * math.pow(math.sin(math.pi * u.clamp(.03, .97)), .30);
+    // 鳞列起伏
+    final scale = 1 + .045 * math.sin(u * math.pi * 7.5);
+    // 水色压暗：素材是白底摄影棚光，直接用会像「浮在水面上的一张亮纸」。
+    // 整体压到 0.74，越深越暗 —— 这样才像隔着一层水看鱼背。
+    final water = .84 - depth * .14;
+    var f = side * endFade * scale * water;
+
+    // 往池水色偏一点：水会吸收红光，水下本来就不该是暖色调
+    final tinted = Color.lerp(base, const Color(0xFF33584B), .20)!;
+
+    // 边缘羽化：|t| 超过 1.0 后在 0.10 的距离内 alpha 降到 0
+    final edge = at <= 1.0 ? 1.0 : (1 - (at - 1.0) / .10).clamp(0.0, 1.0);
+    final a = (255 * edge).round();
+    return Color.fromARGB(
+      a,
+      (tinted.red * f).round().clamp(0, 255),
+      (tinted.green * f).round().clamp(0, 255),
+      (tinted.blue * f).round().clamp(0, 255),
+    );
+  }
+
+  /// 尾鳍：俯视看是两片半透明扇形，绕尾柄摆（不是平移）
+  void _paintTailFin(Canvas canvas, double x0, double y0, double l, Color body) {
+    final finLen = l * .16;
+    // 绕尾柄摆 ±0.55 弧度（±31°）—— 俯视看鱼尾就是这么甩的
+    final swing = math.sin(swimPhase - 2 * math.pi * 1.05) * .55;
+
+    Offset tip(double a, double len) =>
+        Offset(x0 - math.cos(a) * len, y0 + math.sin(a) * len);
+
+    final upper = tip(swing - .42, finLen);
+    final lower = tip(swing + .42, finLen);
+    final notch = tip(swing, finLen * .58); // 燕尾的凹口
+
+    final path = Path()
+      ..moveTo(x0 + l * .012, y0 - l * .024)
+      ..quadraticBezierTo(
+          (x0 + upper.dx) / 2 - l * .030,
+          (y0 + upper.dy) / 2 - l * .050,
+          upper.dx,
+          upper.dy)
+      ..quadraticBezierTo(notch.dx, notch.dy, lower.dx, lower.dy)
+      ..quadraticBezierTo(
+          (x0 + lower.dx) / 2 - l * .030,
+          (y0 + lower.dy) / 2 + l * .050,
+          x0 + l * .012,
+          y0 + l * .024)
+      ..close();
+
+    // 尾鳍是半透明的薄膜：颜色只比体色亮一点点，别调白 ——
+    // 调白 + 不透明就会变成「鱼身后拖着一片叶子」。
+    final finColor = Color.lerp(body, const Color(0xFFD6E2DC), .10)!;
+    canvas.drawPath(
+      path,
+      Paint()..color = finColor.withOpacity((.36 - depth * .10).clamp(.0, 1.0)),
+    );
+
+    // 鳍条：几道很淡的放射线，成本几近于零，但「薄膜」的感觉全靠它
+    if (l >= 46) {
+      final rp = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = l * .005
+        ..color = Colors.black.withOpacity(.12);
+      for (final a in [swing - .40, swing - .20, swing, swing + .20, swing + .40]) {
+        final e = tip(a, finLen * .88);
+        canvas.drawLine(Offset(x0, y0), e, rp);
+      }
+    }
+  }
+
+  /// 背鳍：竖在背上的薄片，俯视只看到贴着中脊的一条窄带
+  void _paintDorsalFin(Canvas canvas, List<double> px, List<double> py,
+      List<double> pw, int cols, double l, Color body) {
+    final i0 = (cols * .40).round();
+    final i1 = (cols * .74).round();
+    final path = Path();
+    final w = l * .020; // 俯视下背鳍的可见宽度（很窄）
+    path.moveTo(px[i0], py[i0] - w);
+    for (var i = i0; i <= i1; i++) {
+      path.lineTo(px[i], py[i] - w);
+    }
+    for (var i = i1; i >= i0; i--) {
+      path.lineTo(px[i], py[i] + w);
+    }
+    path.close();
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = Color.lerp(body, Colors.black, .55)!
+            .withOpacity(.40 - depth * .10),
+    );
+  }
+
+  /// 胸鳍一对 + 两颗眼
+  void _paintFinsAndEyes(Canvas canvas, List<double> px, List<double> py,
+      List<double> pw, int cols, double l, Color body) {
+    // 胸鳍：贴体侧的两片细长小鳍（俯视下几乎透明）。
+    // ★ 倾斜角只能很小：之前用 ±0.70 弧度，两片椭圆在鱼身上交叉，
+    //   放大后就是一个明晃晃的白色「X」。
+    final fi = (cols * .70).round();
+    final flap = math.sin(swimPhase + .9) * .16;
+    final finPaint = Paint()
+      ..color = Color.lerp(body, const Color(0xFFD8E4DE), .20)!
+          .withOpacity((.22 - depth * .07).clamp(.0, 1.0));
+    for (final sgn in const [-1.0, 1.0]) {
+      canvas.save();
+      canvas.translate(px[fi], py[fi] + pw[fi] * .60 * sgn);
+      canvas.rotate(sgn * (.26 + flap));
+      canvas.scale(l * .042, l * .013);
+      canvas.drawOval(
+          Rect.fromCenter(center: Offset.zero, width: 2, height: 1), finPaint);
+      canvas.restore();
+    }
+
+    // 眼睛：俯视落在头两侧靠前，很小的一对黑点。别画大 —— 大了就成了
+    // 「鱼头上糊了一团黑」，上一版就是。
+    final ei = (cols * .88).round();
+    final eyeR = (l * .0100).clamp(0.9, 2.3);
+    for (final sgn in const [-1.0, 1.0]) {
+      final ex = px[ei];
+      final ey = py[ei] + pw[ei] * .42 * sgn;
+      canvas.drawCircle(Offset(ex, ey), eyeR,
+          Paint()..color = const Color(0xFF0E1F18).withOpacity(.88));
+      canvas.drawCircle(Offset(ex - eyeR * .30, ey - eyeR * .30), eyeR * .32,
+          Paint()..color = Colors.white.withOpacity(.50));
+    }
   }
 }
 
