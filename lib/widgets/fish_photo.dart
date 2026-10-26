@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../app_theme.dart';
 import '../data/fish_assets.dart';
 
 /// App 内置真实鱼图（透明 PNG）的展示组件
@@ -49,7 +50,7 @@ class FishPhoto extends StatelessWidget {
         filterQuality: FilterQuality.medium,
         gaplessPlayback: true,
         errorBuilder: (_, __, ___) => const Center(
-          child: Icon(Icons.set_meal, color: Color(0xFFB9C4BF)),
+          child: Icon(Icons.set_meal, color: AppTheme.textTertiary),
         ),
       ),
     );
@@ -78,7 +79,7 @@ class FishPhoto extends StatelessWidget {
             imageFilter: ui.ImageFilter.blur(sigmaX: 3, sigmaY: 3),
             child: ColorFiltered(
               colorFilter: const ColorFilter.mode(
-                  Color(0xFF14332A), BlendMode.srcIn),
+                  AppTheme.primary, BlendMode.srcIn),
               child: Image.asset(
                 FishAssets.pathOrFallback(name, waterType: waterType),
                 width: width,
