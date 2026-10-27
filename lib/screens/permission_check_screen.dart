@@ -50,7 +50,8 @@ class _PermissionCheckScreenState extends State<PermissionCheckScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    // 已查过状态时刷新/重查不清空列表，避免整块消失闪白
+    setState(() => _loading = _status.isEmpty);
     final map = <Permission, PermissionStatus>{};
     for (final it in _items) {
       try {
@@ -179,7 +180,7 @@ class _PermissionCheckScreenState extends State<PermissionCheckScreen> {
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 4),
                   child: Text(
-                    '若某项显示「已拒绝」，点「去设置」后在本机系统设置里找到「垂钓圈」并手动开启；改完返回 App 点右上角刷新即可。',
+                    '若某项显示「已拒绝」，点「去设置」后在本机系统设置里找到「渔报」并手动开启；改完返回 App 点右上角刷新即可。',
                     style: TextStyle(
                         fontSize: 11.5,
                         height: 1.6,
