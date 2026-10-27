@@ -45,7 +45,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    // 已有资料/动态时刷新不清空，避免整块消失闪白
+    setState(() => _loading = _profile == null && _posts.isEmpty);
     UserProfile? profile;
     var unavailable = false;
     try {
