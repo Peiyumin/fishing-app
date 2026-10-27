@@ -248,6 +248,8 @@ class PostService {
     List<Map<String, dynamic>> fish = const [],
     bool locPublic = true,
     bool markWatermark = false,
+    double? lengthCm, // 渔获体长(cm)：AI 估算或用户手填
+    double? weightG, // 渔获重量(g)
   }) async {
     if (_demo) {
       _demoPosts.insert(
@@ -267,6 +269,8 @@ class PostService {
           lng: lng,
           fish: fish,
           locPublic: locPublic,
+          lengthCm: lengthCm,
+          weightG: weightG,
           createdAt: DateTime.now(),
         ),
       );
@@ -302,7 +306,26 @@ class PostService {
       'lng': lng,
       'fish': fish,
       'locPublic': locPublic,
+      if (lengthCm != null) 'lengthCm': lengthCm,
+      if (weightG != null) 'weightG': weightG,
     });
+  }
+
+  /// 我的渔获记录（池塘「按渔获投放」数据源）。
+  /// 返回 [{id, fish, lengthCm, weightG, location, lat, lng, createdAt, image}]
+  static Future<List<Map<String, dynamic>>> fetchMyCatches() async {
+    if (_demo) return [];
+    if (ApiClient.token == null) return [];
+    try {
+      final data = await ApiClient.get('/catch/mine');
+      if (data is List) {
+        return data
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+    } catch (_) {}
+    return [];
   }
 
   /// 浏览量 +1：进入动态详情时调用（失败静默，不影响浏览）
@@ -366,6 +389,8 @@ class PostService {
     required List<String> images,
     bool locPublic = true,
     List<Map<String, dynamic>> fish = const [],
+    double? lengthCm,
+    double? weightG,
   }) async {
     if (_demo) return;
     if (ApiClient.token == null) throw Exception('请先登录');
@@ -374,6 +399,8 @@ class PostService {
       'images': images,
       'locPublic': locPublic,
       'fish': fish,
+      if (lengthCm != null) 'lengthCm': lengthCm,
+      if (weightG != null) 'weightG': weightG,
     });
   }
 }
