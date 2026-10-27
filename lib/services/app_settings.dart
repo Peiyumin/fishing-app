@@ -63,13 +63,18 @@ class AppSettings extends ChangeNotifier {
     }
   }
 
-  /// 启动时读本地（在 runApp 前调用，避免首帧字号跳变）
+  /// 启动时读本地
+  ///
+  /// v2.1.44 起这一步在 runApp **之后**（启动页背后）才跑，所以读完必须
+  /// notifyListeners：MyApp 用 AnimatedBuilder 监听本对象，收到通知重建一次，
+  /// 用户设过的字号档位照样立即生效，只是不再拖慢首帧。
   Future<void> load() async {
     final p = await SharedPreferences.getInstance();
     _fontLevel = p.getString(_kFont) ?? fontStandard;
     _personalized = p.getBool(_kPersonalized) ?? true;
     _catchPrivacy = p.getBool(_kCatchPrivacy) ?? true;
     _consentAt = p.getString(_kConsent) ?? '';
+    notifyListeners();
   }
 
   Future<void> setFontLevel(String level) async {
