@@ -27,6 +27,7 @@ import 'spots_screen.dart';
 import 'wallet_screen.dart';
 import 'weather_screen.dart';
 import 'my_posts_screen.dart';
+import 'settings_screen.dart';
 import '../widgets/app_refresh.dart';
 
 /// 我的页
@@ -260,8 +261,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _loadMyPosts();
   }
 
-  void _openMyPosts() {
-    final sp = Provider.of<SessionProvider>(context, listen: false);
+  /// 打开设置页（退出登录在设置页底部）
+  void _openSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+    );
+  }
+
+  void _openMyPosts() {    final sp = Provider.of<SessionProvider>(context, listen: false);
     if (!sp.isLoggedIn) {
       _goLogin();
       return;
@@ -1029,24 +1036,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
           decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
         ),
         actions: [
+          // 顶部只留一个「设置」入口：编辑资料已经挪进「点头像/资料卡」和设置页，
+          // 退出登录也挪进设置页底部（原来两个图标挤在一起容易误点）
           if (sp.isLoggedIn)
             IconButton(
-              icon: const Icon(Icons.edit_outlined),
-              tooltip: '编辑资料',
-              onPressed: _openEdit,
-            ),
-          if (sp.isLoggedIn)
-            IconButton(
-              icon: const Icon(Icons.logout),
-              tooltip: '退出登录',
-              onPressed: () async {
-                await sp.signOut();
-                setState(() {
-                  _myPosts = [];
-                  _myBadges = [];
-                  _me = null;
-                });
-              },
+              icon: const Icon(Icons.settings_outlined),
+              tooltip: '设置',
+              onPressed: _openSettings,
             ),
         ],
       ),
