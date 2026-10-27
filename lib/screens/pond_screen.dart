@@ -217,28 +217,33 @@ class _PondScreenState extends State<PondScreen>
   void initState() {
     super.initState();
     _repaint = Listenable.merge([_clock, _view]);
-    // ★ 时钟：`_base + raw`，冻结时把 `_base` 反向补偿掉已经流走的时间。
-    //   为什么不 `_ticker.stop()/_ticker.start()`：Ticker.start() 会把
-    //   elapsed 从 0 重新计，等于把时间倒回 0 —— 所有鱼的位置、摆尾相位
-    //   一起重置，回到页面那一帧会看到鱼「瞬移」。
+    // 时钟一直走，**转场期间也不停**
+    //
+    // ★ 上一版在转场时把时钟冻死（靠 `_base` 反向补偿），本意是省帧，结果是：
+    //   侧滑退出那 300ms 里整张池塘变成「一张不动的死照片」，鱼不摆尾、水不动、
+    //   光斑不漂 —— 用户的原话就是「卡顿停留」。省下的帧没换来丝滑，反而把
+    //   「在动」这个最直观的流畅信号拿掉了。
+    //
+    // ★ 转场期间隔帧画（30fps）：池塘一帧的填充量本来就大（全屏背景 + 水面
+    //   + 24 条鱼 + 暗角，实测 1x 分辨率光栅化 15ms），而转场还要叠加整页
+    //   滑动和 iOS 那条全屏模糊阴影。隔帧之后绘制开销减半，页面按 60fps 滑，
+    //   鱼按 30fps 游 —— 肉眼分不出 30 还是 60，但滑动明显更跟手。
+    //   跳过的帧**只是不写 `_clock`**，下次写的是真实时间，所以鱼不会变慢，
+    //   回到页面也不会瞬移（这也是不能 `_ticker.stop()` 的原因）。
     _ticker = createTicker((elapsed) {
-      final raw = elapsed.inMicroseconds / 1000000.0;
-      if (_frozen) {
-        _base -= raw - _lastRaw;
-        _lastRaw = raw;
-        return; // 不回写 → 不重绘：转场那几帧一次 paint 都不做
-      }
-      _lastRaw = raw;
-      _clock.value = _base + raw;
+      if (_transitioning && (++_frame).isOdd) return;
+      _clock.value = elapsed.inMicroseconds / 1000000.0;
     })..start();
     _boot();
   }
 
-  bool _frozen = false;
-  double _base = 0;
-  double _lastRaw = 0;
+  /// 是否正处于页面转场（滑入 / 侧滑退出）—— 只影响绘制频率，不影响动画
+  bool _transitioning = false;
 
-  /// 本页路由的转场动画（pop 时用它判断「该冻结画面了」）
+  /// 帧计数，转场时隔帧绘制用
+  int _frame = 0;
+
+  /// 本页路由的转场动画（用它判断「现在是不是在滑动中」）
   ///
   /// 必须在 didChangeDependencies 里取一次存下来：dispose() 阶段再去
   /// `ModalRoute.of(context)` 会抛「Looking up a deactivated widget's
@@ -257,23 +262,22 @@ class _PondScreenState extends State<PondScreen>
     }
   }
 
-  /// 开始 pop 时立刻冻结画面
-  ///
-  /// 转场那 300ms 里，池塘的动画帧和滑走动画抢同一份帧预算，冻住最贵的
-  /// 那一半，滑走就顺了。回到本页（松手取消 / forward）再解冻。
+  /// 转场开始 / 结束：只切绘制频率（60fps ↔ 30fps），**不冻结画面**
   ///
   /// ★ 判据只能用 `value`，不能用 `status`：
   ///   iOS 侧滑返回时，转场控制器的 value 是被 `dragUpdate` **直接赋值**的，
   ///   而 `AnimationController.value` 的 setter 在 value 落在中间时把 status
-  ///   置成 `forward`（不是 `reverse`）。之前按 `status == reverse` 判断，
-  ///   「手指还在拖」的那一整段永远不会冻结 —— 用户说的「往右滑会卡一下、
-  ///   不够流畅」就是这个：等松手后才冻，可那时最费帧的一段已经过去了。
+  ///   置成 `forward`（不是 `reverse`）。按 `status == reverse` 判断会让
+  ///   「手指还在拖」的整段漏判。
   ///   完整显示时 value 恒为 1.0，一旦被拖走就 < 1，这个判据没有歧义。
   void _onRouteAnim() {
     final a = _routeAnim;
     if (a == null) return;
     final leaving = a.value < .999;
-    if (leaving != _frozen) _frozen = leaving;
+    if (leaving == _transitioning) return;
+    // 只在这一刻改一次标志，不是每帧重建
+    _transitioning = leaving;
+    setState(() {});
   }
 
   @override
@@ -982,6 +986,16 @@ class PondPaintCache {
   Size? size;
   Rect? waterRect;
 
+  /// 背景照片的画笔
+  ///
+  /// ★ 采样质量必须是 `low`（双线性），**不能用 medium**：
+  ///   背景图 1024x1502 铺到 390x844 全屏，medium 会走 mipmap 三线性，实测
+  ///   光栅化这一张就要 **10.33ms**（low 只要 4.43ms，none 2.14ms）——
+  ///   一帧总共才 16.7ms 的预算，一张背景图吃掉一半，转场必然掉帧。
+  ///   背景是自然照片，双线性和三线性肉眼分辨不出来（放大 4 倍对比过）。
+  ///   另外别在 paint 里 `Paint()..filterQuality` 每帧 new，缓存住。
+  Paint? bgPaint;
+
   Paint? waterTint; // 水面青绿
   Paint? vignette; // 暗角
   Paint? glow; // 柔光斑（单位圆，白色径向）
@@ -1010,6 +1024,8 @@ class PondPaintCache {
         colors: [Colors.transparent, Colors.black.withOpacity(.42)],
         stops: const [.62, 1.0],
       ).createShader(Offset.zero & s);
+
+    bgPaint = Paint()..filterQuality = FilterQuality.low;
 
     waterTint = Paint()
       ..shader = RadialGradient(
@@ -1054,6 +1070,7 @@ class PondPainter extends CustomPainter {
   final ValueListenable<double> clock;
   final ValueListenable<PondView> view;
   final PondPaintCache cache;
+
 
   PondPainter({
     required this.bg,
@@ -1123,7 +1140,9 @@ class PondPainter extends CustomPainter {
       bg,
       Rect.fromLTWH(0, 0, bg.width.toDouble(), bg.height.toDouble()),
       Rect.fromLTWH(dx, dy, dw, dh),
-      Paint()..filterQuality = FilterQuality.medium,
+      // 兜底 `??=`：ensure() 在画完背景之后才跑（它要用水面矩形），
+      // 第一帧走到这里时 bgPaint 还是 null
+      cache.bgPaint ??= (Paint()..filterQuality = FilterQuality.low),
     );
 
     // 水面椭圆（场景坐标）
@@ -1157,6 +1176,9 @@ class PondPainter extends CustomPainter {
     canvas.restore();
 
     // 暗角不跟着缩放，永远贴在屏幕上
+    //
+    // ★ 转场时**也要画**：它是整张画面的氛围底，一去掉四周立刻变亮，
+    //   转场第一帧就像闪了一下（渲染对比过，差异比省下来的 1ms 大得多）。
     canvas.drawRect(
       Rect.fromLTWH(0, 0, size.width, size.height),
       cache.vignette!,
