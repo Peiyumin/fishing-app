@@ -21,7 +21,7 @@ import 'package:fishing_app/services/weather_service.dart';
 ///   ② **半新半旧**：时间标签用 `h.hhmm`（现在），温度/天气/风/气压却用
 ///      `bundle.curTemp` 等（拉包时）。→ 断言温度取的是现在这小时的值。
 ///   ③ **字段缺**：当前卡没有湿度，风也只写"几级"没有具体风速。
-///      → 断言「湿度 (%)」和「xxkm/h」都在。
+///      → 断言「湿度 (%)」和「东风 3级」都在（v2.1.36 起风只报级+风向）。
 ///
 /// 为了能分辨"取的是哪一小时"，这里把两个小时的数据做成**完全不同的量级**：
 /// 现在这小时 31.7℃ / 湿度42 / 晴 / 18km/h，2 小时前 10.1℃ / 湿度88 / 小雨 / 3km/h。
@@ -143,10 +143,12 @@ void main() {
     expect(find.text(_nowTemp.toStringAsFixed(1)), findsWidgets,
         reason: '当前卡温度应取"现在这小时"，而不是拉包时刻的 $_staleTemp℃');
 
-    // ③ 风力 + 湿度两个字段必须在
+    // ③ 风（只说「几级 + 什么风」）+ 湿度两个字段必须在
     expect(find.text('湿度 (%)'), findsOneWidget, reason: '当前卡要显示湿度');
-    expect(find.text('${_nowWind.toStringAsFixed(0)}km/h'), findsWidgets,
-        reason: '风力要显示具体风速（km/h），不能只写"几级"');
+    expect(find.text('东风 3级'), findsWidgets,
+        reason: '风只说「几级 + 什么风」：18km/h = 3 级、90° = 东风');
+    expect(find.textContaining('km/h'), findsNothing,
+        reason: '全站不再显示 km/h 风速（v2.1.36 统一为蒲福风级）');
 
     // ④ 指数口径标出来（与首页默认的鲫鱼·台钓对齐，换鱼种也能看出为什么变）
     expect(find.text('鲫鱼 · 台钓'), findsOneWidget,
