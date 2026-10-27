@@ -1,7 +1,7 @@
 name: fishing_app
 description: 垂钓社区 App —— 钓鱼天气、钓点导航、渔获分享（Flutter 双端）
 publish_to: 'none'
-version: 2.1.39+49
+version: 2.1.40+50
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -84,3 +84,5 @@ flutter:
     - assets/pond/
     # 启动页底图（1140×2050 设计稿，胶囊已擦除，由 Dart 端重绘动画进度）
     - assets/startup/
+    # 渔报表情（快捷回复栏 + 评论内展示；透明 PNG 256×256，已去底/去水印）
+    - assets/stickers/
