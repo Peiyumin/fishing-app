@@ -9,7 +9,7 @@ import '../app_theme.dart';
 /// 灰色提示条——左边小转圈，右边两行字：
 ///
 /// ```
-/// ⟳  垂钓圈 为您玩命加载…
+/// ⟳  渔报 为您玩命加载…
 ///    最后更新：今天 20:49
 /// ```
 ///
@@ -161,7 +161,10 @@ class _AppRefreshState extends State<AppRefresh>
   Widget _hintBar() {
     return Container(
       decoration: const BoxDecoration(
-        color: AppTheme.primarySoft,
+        // ★ 用页面底色（#EDF1F6）而不是近白的 primarySoft（#F7F9FC）：
+        //   下拉时提示条和背景同色，只浮出两行字 + 一条细分隔线，
+        //   不会再在顶部划出一道「发白光带」。
+        color: AppTheme.background,
         border: Border(
           bottom: BorderSide(color: AppTheme.divider),
         ),
@@ -173,7 +176,7 @@ class _AppRefreshState extends State<AppRefresh>
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           const Text(
-            '垂钓圈 为您玩命加载…',
+            '渔报 为您玩命加载…',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 12.5,
