@@ -35,7 +35,8 @@ class _MemberCenterScreenState extends State<MemberCenterScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    // 已加载过会员中心时刷新不清空，避免整块消失闪白
+    setState(() => _loading = _center == null);
     try {
       final r = await MemberService.plans();
       final info = await MemberService.info();
@@ -695,7 +696,8 @@ class _MemberOrdersScreenState extends State<MemberOrdersScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    // 已有订单时刷新不清空列表，避免整块消失闪白
+    setState(() => _loading = _orders.isEmpty);
     try {
       final list = await MemberService.orders();
       if (!mounted) return;
