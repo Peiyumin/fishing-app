@@ -73,5 +73,36 @@
 	<false/>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<!-- 长按 App 图标的快捷入口（v2.1.44）
+	     顺序即显示顺序：我的图鉴 / 赛博鱼缸 / 记渔获。
+	     图标只能用系统自带的 ShortcutIconType（iOS 不允许自定义图片），
+	     点击后由 AppDelegate 写入 pending_shortcut，Dart 侧 consume 后跳转。 -->
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>fish_guide</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>我的图鉴</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeBookmark</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>fish_tank</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>赛博鱼缸</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypePlay</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>catch</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>记渔获</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeCapturePhoto</string>
+		</dict>
+	</array>
 </dict>
 </plist>
