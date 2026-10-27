@@ -148,7 +148,7 @@ class _StartupAdScreenState extends State<StartupAdScreen> {
             right: 0,
             child: const Column(
               children: [
-                Text('垂钓圈',
+                Text('渔报',
                     style: TextStyle(
                         color: Colors.white,
                         fontSize: 16,
