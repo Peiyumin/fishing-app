@@ -1,7 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../app_theme.dart';
 import '../widgets/emoji_panel.dart';
 import 'package:provider/provider.dart';
@@ -12,6 +11,7 @@ import '../models/post.dart';
 import '../models/weather_forecast.dart';
 import '../services/api_config.dart';
 import '../services/badge_hub.dart';
+import '../services/map_launcher.dart';
 import '../services/post_service.dart';
 import '../services/session_provider.dart';
 import '../services/weather_service.dart';
@@ -103,6 +103,20 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   /// 帖子里有经纬度就按钓点拉；没有就用当前定位的缓存包（首页已经拉过）。
   /// 全程静默：拿不到就整块显示「—」，绝不编数字。
   Future<void> _loadWeather() async {
+    // ★ 先用「渔获时天气快照」：这条渔获发布的那一刻、按钓点坐标抓的那一组数，
+    //   存在帖子里，之后永远不变 —— 用户要求「以发布渔获的定位天气为准，定死」。
+    //   只有老帖子（升级前发的，没有快照）才回退到实时拉取。
+    final snap = _post.weather;
+    if (snap != null) {
+      if (!mounted) return;
+      setState(() {
+        _hour = snap.toHourPoint();
+        _wm = snap.toWaterMetrics();
+        _fw = snap.toFishingWeather();
+        _wxDone = true;
+      });
+      return;
+    }
     try {
       WeatherBundle? b;
       final lat = _post.lat, lng = _post.lng;
@@ -1118,18 +1132,22 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     );
   }
 
-  /// 打开系统/高德地图看钓点（有经纬度才可用）
+  /// 打开本机已安装的导航 App，选中后直接进导航（不再跳网页版）
   Future<void> _openMap() async {
     final lat = _post.lat, lng = _post.lng;
     if (lat == null || lng == null) {
       CenterToast.show(context, '这条渔获没有留下坐标');
       return;
     }
-    final name = Uri.encodeComponent((_post.locationName ?? '钓点').trim());
-    final uri = Uri.parse(
-        'https://uri.amap.com/marker?position=$lng,$lat&name=$name&src=app&coordinate=gaode&callnative=1');
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok && mounted) CenterToast.show(context, '没有找到可用的地图 App');
+    // 统一走 MapLauncher：先 canLaunchUrl 探测装了哪些地图，只列已安装的，
+    // 点哪个就用原生 scheme 唤起并直接开始导航（终点填中文地名）。
+    await MapLauncher.navigate(
+      context,
+      lat: lat,
+      lng: lng,
+      name: (_post.locationName ?? '钓点').trim(),
+      address: (_post.locationName ?? '').trim(),
+    );
   }
 
   // ══════════════════════ CATCH INDEX ══════════════════════
@@ -1405,9 +1423,10 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     return ValueListenableBuilder<int>(
       valueListenable: BadgeHub.revision,
       builder: (_, __, ___) {
+        // 昵称后面最多显示 4 枚徽章（用户要求），再多就换行/挤掉昵称了
         final badges = _post.badges.isNotEmpty
-            ? _post.badges.take(3).toList()
-            : BadgeHub.of(_post.userId).take(3).toList();
+            ? _post.badges.take(4).toList()
+            : BadgeHub.of(_post.userId).take(4).toList();
         if (badges.isEmpty) return const SizedBox.shrink();
         return Padding(
           padding: const EdgeInsets.only(left: 5),
