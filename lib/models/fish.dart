@@ -127,29 +127,44 @@ class FishMatch {
 class FishRecognize {
   final bool ok;
   final bool needManual;
+  /// 照片里是否有鱼：true=有鱼 / false=无鱼(应拒绝发布) / null=AI 未配置(走人工确认)
+  final bool? hasFish;
   final List<String> names;
   final List<FishMatch> matched;
   final String msg;
+  /// AI 估算的体长(cm) / 重量(g)，null=未返回
+  final double? lengthCm;
+  final double? weightG;
+  final double? confidence;
 
   const FishRecognize({
     this.ok = false,
     this.needManual = true,
+    this.hasFish,
     this.names = const [],
     this.matched = const [],
     this.msg = '',
+    this.lengthCm,
+    this.weightG,
+    this.confidence,
   });
 
   factory FishRecognize.fromJson(Map<String, dynamic> j) {
     final names = (j['names'] as List?) ?? const [];
     final matched = (j['matched'] as List?) ?? const [];
+    final hf = j['hasFish'];
     return FishRecognize(
       ok: (j['ok'] as bool?) ?? false,
       needManual: (j['needManual'] as bool?) ?? true,
+      hasFish: hf is bool ? hf : null,
       names: names.map((e) => e.toString()).toList(),
       matched: matched
           .map((e) => FishMatch.fromJson((e as Map).cast<String, dynamic>()))
           .toList(),
       msg: (j['msg'] ?? '').toString(),
+      lengthCm: (j['lengthCm'] as num?)?.toDouble(),
+      weightG: (j['weightG'] as num?)?.toDouble(),
+      confidence: (j['confidence'] as num?)?.toDouble(),
     );
   }
 }
