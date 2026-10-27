@@ -358,7 +358,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: navigatorKey,
-      title: '垂钓圈',
+      title: '渔报',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       // 首帧还没画出来时，系统窗口底色用品牌绿，避免冷启动闪一下白屏
