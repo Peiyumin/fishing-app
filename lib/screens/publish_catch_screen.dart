@@ -15,6 +15,7 @@ import '../models/post.dart';
 import '../models/weather_forecast.dart';
 import '../services/api_client.dart';
 import '../services/api_config.dart';
+import '../services/app_settings.dart';
 import '../services/fish_service.dart';
 import '../services/location_service.dart';
 import '../services/post_service.dart';
@@ -57,7 +58,8 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
   double? _lat;
   double? _lng;
   bool _locating = true;
-  bool _locPublic = true; // 钓点位置是否公开
+  // 钓点位置是否公开：默认值取自「设置 - 鱼获隐私」（用户可在这里单条改）
+  bool _locPublic = AppSettings.instance.catchPrivacy;
 
   final List<_CatchItem> _catches = [];
   bool _submitting = false;
