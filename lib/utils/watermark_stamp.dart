@@ -55,15 +55,15 @@ Future<Uint8List> stampWatermarkPng(
       Paint()..filterQuality = FilterQuality.high,
     );
 
-    // 底部渐隐，压住白字
-    final double gTop = h * 0.58;
+    // 顶部渐隐，压住左上角的白字（水印已移到左上角）
+    final double gTop = h * 0.42;
     canvas.drawRect(
-      Rect.fromLTWH(0, gTop, w.toDouble(), h - gTop),
+      Rect.fromLTWH(0, 0, w.toDouble(), gTop),
       Paint()
         ..shader = ui.Gradient.linear(
+          const Offset(0, 0),
           Offset(0, gTop),
-          Offset(0, h.toDouble()),
-          [const Color(0x00000000), const Color(0xD9000000)],
+          [const Color(0xD9000000), const Color(0x00000000)],
           [0.0, 1.0],
         ),
     );
@@ -73,7 +73,6 @@ Future<Uint8List> stampWatermarkPng(
     final double padding = w * 0.055;
 
     final painters = <TextPainter>[];
-    double blockH = 0;
     for (var i = 0; i < lines.length; i++) {
       final l = lines[i];
       final tp = TextPainter(
@@ -95,11 +94,10 @@ Future<Uint8List> stampWatermarkPng(
         ellipsis: '…',
       )..layout(maxWidth: w - padding * 2);
       painters.add(tp);
-      blockH += tp.height;
-      if (i < lines.length - 1) blockH += l.gap * base;
     }
 
-    double y = h - h * 0.052 - blockH;
+    // 左上角：左对齐（padding）从上往下排，顶部留 5.2% 边距
+    double y = h * 0.052;
     for (var i = 0; i < painters.length; i++) {
       painters[i].paint(canvas, Offset(padding, y));
       y += painters[i].height + lines[i].gap * base;
