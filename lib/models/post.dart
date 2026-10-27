@@ -46,6 +46,11 @@ class Post {
   /// 钓点位置是否公开（false 时其他人看不到具体钓点）
   final bool locPublic;
 
+  /// 渔获尺寸：体长（厘米）/ 重量（克）。AI 视觉估算或用户手填，null=未记录。
+  /// 驱动「池塘按真实尺寸 ×10 缩放」与「点击鱼显示尺寸/时间/钓点」。
+  final double? lengthCm;
+  final double? weightG;
+
   static const Map<String, String> categoryLabels = {
     'post': '渔获',
     'ask': '问答',
@@ -80,6 +85,8 @@ class Post {
     this.authorVip = 0,
     this.fish = const [],
     this.locPublic = true,
+    this.lengthCm,
+    this.weightG,
     this.badges = const [],
   });
 
@@ -122,6 +129,8 @@ class Post {
           : (json['loc_public'] is bool
               ? json['loc_public'] as bool
               : (json['loc_public'] as num?)?.toInt() != 0),
+      lengthCm: (json['length_cm'] as num?)?.toDouble(),
+      weightG: (json['weight_g'] as num?)?.toDouble(),
       badges: parseBadges(json['badges']),
     );
   }
@@ -246,6 +255,8 @@ class Post {
     int? authorVip,
     List<Map<String, dynamic>>? fish,
     bool? locPublic,
+    double? lengthCm,
+    double? weightG,
     List<BadgeItem>? badges,
   }) {
     return Post(
@@ -274,6 +285,8 @@ class Post {
       authorVip: authorVip ?? this.authorVip,
       fish: fish ?? this.fish,
       locPublic: locPublic ?? this.locPublic,
+      lengthCm: lengthCm ?? this.lengthCm,
+      weightG: weightG ?? this.weightG,
       badges: badges ?? this.badges,
     );
   }
