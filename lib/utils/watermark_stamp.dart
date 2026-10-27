@@ -55,19 +55,6 @@ Future<Uint8List> stampWatermarkPng(
       Paint()..filterQuality = FilterQuality.high,
     );
 
-    // 顶部渐隐，压住左上角的白字（水印已移到左上角）
-    final double gTop = h * 0.42;
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, w.toDouble(), gTop),
-      Paint()
-        ..shader = ui.Gradient.linear(
-          const Offset(0, 0),
-          Offset(0, gTop),
-          [const Color(0xD9000000), const Color(0x00000000)],
-          [0.0, 1.0],
-        ),
-    );
-
     // 以 375 逻辑宽为基准缩放字号
     final double base = w / 375.0;
     final double padding = w * 0.055;
@@ -96,8 +83,29 @@ Future<Uint8List> stampWatermarkPng(
       painters.add(tp);
     }
 
-    // 左上角：左对齐（padding）从上往下排，顶部留 5.2% 边距
-    double y = h * 0.052;
+    // 左上角：左对齐（padding）从上往下排，顶部留 4.6% 边距
+    // （原来 5.2% 在 9:16 竖图上贴得太靠上，容易顶到刘海/被裁）
+    final double y0 = h * 0.046;
+    double y = y0;
+
+    // 先量出这一摞字总共多高，渐变只压这么高 —— 以前固定压 42% 画面，
+    // 整张照片上半截都发灰；现在只盖住文字再多 6% 余量。
+    double textH = 0;
+    for (var i = 0; i < painters.length; i++) {
+      textH += painters[i].height + (i == 0 ? 0 : lines[i].gap * base);
+    }
+    final double gTop = (y0 + textH + h * 0.06).clamp(h * 0.12, h * 0.46);
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w.toDouble(), gTop),
+      Paint()
+        ..shader = ui.Gradient.linear(
+          const Offset(0, 0),
+          Offset(0, gTop),
+          [const Color(0xC0000000), const Color(0x00000000)],
+          [0.0, 1.0],
+        ),
+    );
+
     for (var i = 0; i < painters.length; i++) {
       painters[i].paint(canvas, Offset(padding, y));
       y += painters[i].height + lines[i].gap * base;
