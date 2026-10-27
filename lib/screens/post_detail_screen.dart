@@ -1,12 +1,14 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import '../app_theme.dart';
 import '../widgets/catch_sticker.dart';
 import '../widgets/emoji_panel.dart';
 import 'package:provider/provider.dart';
 
 import '../models/badge.dart';
+import '../models/catch_weather.dart';
 import '../models/fishing_species.dart';
 import '../models/post.dart';
 import '../models/weather_forecast.dart';
@@ -73,6 +75,10 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   FishingWeather? _fw;
   bool _wxDone = false;
 
+  /// 这条渔获**发布那一刻**存下的天气快照（后端 `posts.weather_json`）
+  /// 非空 = 界面上的气温/气压/风/水温/水氧/指数全部来自它，恒定不变
+  CatchWeather? _snap;
+
   /// 滚动位置：滚过封面后顶部要浮出「作者条」（参考稿就是这个交互）
   final _scroll = ScrollController();
   final _offVN = ValueNotifier<double>(0);
@@ -99,47 +105,116 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     super.dispose();
   }
 
-  /// 拉「这个钓点」的天气包 → 水温/水氧/指数据此推导
+  /// 把一份天气包折算成界面要的三个对象
   ///
-  /// 帖子里有经纬度就按钓点拉；没有就用当前定位的缓存包（首页已经拉过）。
-  /// 全程静默：拿不到就整块显示「—」，绝不编数字。
+  /// ★ 这是**兜底**路径（老数据既没快照又拉不到历史时才用），取的是
+  ///   「当前小时」，所以界面上会标「实时」，不会冒充捕获时。
+  bool _applyBundle(WeatherBundle b) {
+    if (b.hours.isEmpty) return false;
+    final i = b.indexOfCurrentHour(DateTime.now());
+    final metrics = WaterMetrics.derive(b.hours);
+    _hour = (i >= 0 && i < b.hours.length) ? b.hours[i] : null;
+    _wm = (i >= 0 && i < metrics.length) ? metrics[i] : null;
+    _fw = FishingWeather.fromBundle(b);
+    _wxDone = true;
+    return _hour != null;
+  }
+
+  /// 应用「发布时快照」：三个对象全部从快照还原，不再参与任何实时计算
+  void _applySnapshot(CatchWeather s) {
+    _snap = s;
+    _hour = s.toHourPoint();
+    final wt = s.waterTemp, ox = s.oxygen;
+    // 极老的快照可能没存水温/水氧（都是 0）：宁可显示「—」，别显示 0.0℃
+    _wm = (wt > 0 || ox > 0) ? s.toWaterMetrics() : null;
+    _fw = s.toFishingWeather();
+    _wxDone = true;
+  }
+
+  /// 时间标签：同一天只给时分，跨天带上月日
+  /// （几天前的渔获若只写「14:37」，会被误读成今天下午）
+  String _clockLabel(DateTime t) {
+    final n = DateTime.now();
+    final same = t.year == n.year && t.month == n.month && t.day == n.day;
+    return DateFormat(same ? 'HH:mm' : 'MM-dd HH:mm').format(t);
+  }
+
+  /// 拉天气 —— **口径：发这条渔获的那一刻**，不是打开页面这一刻
+  ///
+  /// 用户为这事提过两次：详情页的天气、指数、时间都必须是「发布时」的那一份。
+  /// 早期版本做成"当前天气"，于是同一条渔获早上看 17℃、中午看 19℃，指数跟着
+  /// 跳，和当时拍的照片完全不是一回事。现在：
+  ///
+  ///   ① **有快照**（发布时随帖存进 `posts.weather_json`）→ 同步上屏。
+  ///      第一帧就有数，不用等网络，也永远是发布那一刻的数字；
+  ///   ② **老数据没快照** → 按发布时间回拉历史逐时（`past_days`），
+  ///      定位到发布那一小时再算分，显示的仍是发布时；
+  ///   ③ 作者隐藏了钓点（没有坐标）→ 只能退回「现在」的天气，
+  ///      此时标题会写「实时」，绝不冒充「捕获时」。
   Future<void> _loadWeather() async {
-    // ★ 先用「渔获时天气快照」：这条渔获发布的那一刻、按钓点坐标抓的那一组数，
-    //   存在帖子里，之后永远不变 —— 用户要求「以发布渔获的定位天气为准，定死」。
-    //   只有老帖子（升级前发的，没有快照）才回退到实时拉取。
+    // ① 快照：initState 调用栈里直接赋值，第一次 build 就读到
     final snap = _post.weather;
     if (snap != null) {
-      if (!mounted) return;
-      setState(() {
-        _hour = snap.toHourPoint();
-        _wm = snap.toWaterMetrics();
-        _fw = snap.toFishingWeather();
-        _wxDone = true;
-      });
+      _applySnapshot(snap);
+      return; // 快照就是权威，不再发任何网络请求
+    }
+
+    final lat = _post.lat, lng = _post.lng;
+
+    // ② 老数据：按发布时刻回放历史
+    if (lat != null && lng != null) {
+      final at = _post.postedAt;
+      final agoDays = DateTime.now().difference(at).inDays;
+      // Open-Meteo 的 past_days 上限 92 天；更老的帖子已经没有历史可用
+      if (agoDays <= 92) {
+        final hist = await WeatherService.fetchForecastAround(
+          lat,
+          lng,
+          // +1 是为了把「发布时间所在的那一天」完整包进来
+          // （只给 5 天时，6 天前发的帖子那一小时会漏在窗口外）
+          pastDays: (agoDays + 1).clamp(1, 92),
+        );
+        if (!mounted) return;
+        if (hist != null) {
+          final i = hist.indexOfCurrentHour(at);
+          // indexOfCurrentHour 找不到会退回「最近的一小时」，那可能就是现在 ——
+          // 必须核对差距，否则等于又拿当前天气冒充发布时天气。
+          final hit = i >= 0 &&
+              hist.hours[i].time.difference(at).inHours.abs() <= 1;
+          if (hit) {
+            final metrics = WaterMetrics.derive(hist.hours);
+            setState(() {
+              _hour = hist.hours[i];
+              _wm = i < metrics.length ? metrics[i] : null;
+              _fw = FishingWeather.fromIndex(hist, i);
+              _wxDone = true;
+            });
+            return;
+          }
+        }
+      }
+    }
+
+    // ③ 兜底：内存 → 文件缓存 → 实时
+    final mem = WeatherService.memoryBundle;
+    if (mem != null) _applyBundle(mem);
+    if (_hour == null) {
+      try {
+        final cached = await WeatherService.readCachedForecast(allowStale: true);
+        if (cached != null && _applyBundle(cached) && mounted) setState(() {});
+      } catch (_) {
+        // 读缓存失败不算错误，继续走网络
+      }
+    }
+    if (lat == null || lng == null) {
+      if (!_wxDone && mounted) setState(() => _wxDone = true);
       return;
     }
     try {
-      WeatherBundle? b;
-      final lat = _post.lat, lng = _post.lng;
-      if (lat != null && lng != null) {
-        b = await WeatherService.fetchForecast(lat, lng);
-      } else {
-        b = await WeatherService.readCachedForecast();
-      }
-      final bundle = b;
-      if (bundle == null || bundle.hours.isEmpty) {
-        if (mounted) setState(() => _wxDone = true);
-        return;
-      }
-      final i = bundle.indexOfCurrentHour(DateTime.now());
-      final metrics = WaterMetrics.derive(bundle.hours);
-      final fw = FishingWeather.fromBundle(bundle);
+      final fresh = await WeatherService.fetchForecast(lat, lng);
       if (!mounted) return;
       setState(() {
-        _hour = (i >= 0 && i < bundle.hours.length) ? bundle.hours[i] : null;
-        _wm = (i >= 0 && i < metrics.length) ? metrics[i] : null;
-        _fw = fw;
-        _wxDone = true;
+        if (!_applyBundle(fresh)) _wxDone = true;
       });
     } catch (_) {
       if (mounted) setState(() => _wxDone = true);
@@ -780,7 +855,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             title: '水温',
             value: wt == null ? '—' : wt.toStringAsFixed(1),
             unit: wt == null ? '' : '℃',
-            note: wt == null ? '待联网' : _tempMood(wt),
+            note: wt == null ? '读取中' : _tempMood(wt),
             noteColor: _hi,
           ),
           _waterCell(
@@ -789,7 +864,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             value: ox == null ? '—' : ox.toStringAsFixed(1),
             unit: ox == null ? '' : 'mg/L',
             note: ox == null
-                ? '待联网'
+                ? '读取中'
                 : (ox >= 6
                     ? '溶氧充足'
                     : ox >= 4
@@ -1203,9 +1278,15 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                             color: Colors.white)),
                     const SizedBox(height: 5),
                     Text(
-                      _hour == null
-                          ? '捕获时指数'
-                          : '捕获时指数 · ${_hour!.hhmm} 前后',
+                      // ★ 标题里的时间 = **这条渔获的发布时间**（用户明确要求，
+                      //   不是打开页面这一刻）。有快照时上面的数字也来自那一刻，
+                      //   标题和数字口径一致；没有快照只能给现在的天气，就老实
+                      //   写「实时」，绝不挂着「捕获时」的牌子。
+                      _snap != null
+                          ? '捕获时指数 · ${_clockLabel(_post.postedAt)}'
+                          : (_hour == null
+                              ? '实时指数'
+                              : '实时 · ${_hour!.hhmm} 前后'),
                       style: TextStyle(
                           fontSize: 10.5,
                           color: Colors.white.withOpacity(.55)),
