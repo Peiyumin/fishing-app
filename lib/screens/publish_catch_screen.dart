@@ -475,7 +475,13 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
     final weightG = double.tryParse(_weightCtrl.text.trim());
 
     // 天气快照 + 图片水印都用「发布这一刻」的这一份，保证成片、详情页、池塘三处口径一致
-    final wx = await _catchWeatherSnapshot();
+    //
+    // ★ 编辑模式例外（v2.1.43）：必须沿用**原来那份**快照，不许重算。
+    //   重算等于把「发布时天气」换成「编辑时天气」，可详情页标题写的还是发布时间，
+    //   数字和时间就对不上 —— 比没有快照更糟（没有时客户端会按发布时间回拉历史）。
+    final wx = _editMode
+        ? widget.existing?.weather
+        : await _catchWeatherSnapshot();
 
     setState(() => _submitting = true);
     try {
