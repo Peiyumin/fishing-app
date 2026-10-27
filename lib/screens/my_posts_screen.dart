@@ -28,7 +28,8 @@ class _MyPostsScreenState extends State<MyPostsScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    // 已有作品时刷新不清空列表，避免整块消失闪白
+    setState(() => _loading = _posts.isEmpty);
     try {
       final posts = await PostService.fetchMyPosts();
       if (mounted) setState(() => _posts = posts);
@@ -87,31 +88,38 @@ class _MyPostsScreenState extends State<MyPostsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('我的作品')),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : AppRefresh(
-              onRefresh: _load,
-              child: _posts.isEmpty
-                  ? ListView(
-                      children: const [
-                        SizedBox(height: 120),
-                        Center(
-                          child: Text('还没有发布，去首页点「+」发布吧',
-                              style: TextStyle(fontSize: 13, color: Colors.grey)),
-                        ),
-                      ],
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.only(bottom: 24, top: 8),
-                      itemCount: _posts.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 10),
-                      itemBuilder: (_, i) => PostCard(
-                        post: _posts[i],
-                        onEdit: _editPost,
-                        onDelete: _deletePost,
+      body: AppRefresh(
+        onRefresh: _load,
+        child: _loading
+            ? ListView(
+                children: [
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.55,
+                    child: const Center(child: CircularProgressIndicator()),
+                  ),
+                ],
+              )
+            : _posts.isEmpty
+                ? ListView(
+                    children: const [
+                      SizedBox(height: 120),
+                      Center(
+                        child: Text('还没有发布，去首页点「+」发布吧',
+                            style: TextStyle(fontSize: 13, color: Colors.grey)),
                       ),
+                    ],
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.only(bottom: 24, top: 8),
+                    itemCount: _posts.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (_, i) => PostCard(
+                      post: _posts[i],
+                      onEdit: _editPost,
+                      onDelete: _deletePost,
                     ),
-            ),
+                  ),
+      ),
     );
   }
 }
