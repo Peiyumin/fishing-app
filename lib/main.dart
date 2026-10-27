@@ -23,6 +23,7 @@ import 'screens/startup/splash_screen.dart';
 import 'screens/startup/startup_ad_screen.dart';
 import 'screens/wallet_screen.dart';
 import 'services/app_service.dart';
+import 'services/app_settings.dart';
 import 'services/message_poller.dart';
 import 'services/notification_service.dart';
 import 'services/post_service.dart';
@@ -32,6 +33,7 @@ import 'screens/discover_screen.dart';
 import 'screens/spots_screen.dart';
 import 'screens/spot_map_screen.dart';
 import 'screens/profile_screen.dart';
+import 'screens/settings_screen.dart';
 import 'screens/publish_hub_screen.dart';
 import 'widgets/update_dialog.dart';
 
@@ -109,6 +111,10 @@ void main() async {
   // 恢复本地登录态：只要用户没点「退出登录」，重开 App 保持在线
   final session = SessionProvider();
   await session.restore();
+
+  // 本机偏好（字体大小 / 个性化推荐 / 鱼获隐私默认值）：必须在 runApp 前读完，
+  // 否则首帧用的是默认字号，进页面会看到字「跳」一下
+  await AppSettings.instance.load();
 
   // 系统通知（私信 / 评论 / 点赞 / 官方公告）
   await NotificationService.instance.init();
@@ -363,6 +369,17 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       theme: AppTheme.light,
       // 首帧还没画出来时，系统窗口底色用品牌绿，避免冷启动闪一下白屏
       color: AppTheme.primary,
+      // 字体大小：只缩放文字，不改布局尺寸（MaterialApp 级生效）
+      builder: (context, child) {
+        final scale = AppSettings.instance.fontScale;
+        if (scale == 1.0 || child == null) return child ?? const SizedBox.shrink();
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            textScaler: TextScaler.linear(scale),
+          ),
+          child: child,
+        );
+      },
       home: const StartupGate(),
       routes: {
         '/message-center': (_) => const MessageCenterScreen(),
@@ -376,6 +393,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         '/spot-map': (_) => const SpotMapScreen(),
         '/notify-settings': (_) => const NotifySettingsScreen(),
         '/permission-check': (_) => const PermissionCheckScreen(),
+        '/settings': (_) => const SettingsScreen(),
       },
     );
   }
