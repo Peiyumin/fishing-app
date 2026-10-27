@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/member.dart';
 import '../models/user_profile.dart';
+import 'account_history.dart';
 import 'api_client.dart';
 import 'api_config.dart';
 
@@ -125,7 +126,13 @@ class SessionProvider extends ChangeNotifier {
     await prefs.setInt(_kVipColor, _vipColor.value);
     await prefs.setInt(_kVipColor2, _vipColor2.value);
     await prefs.setString(_kVipExpire, _vipExpire);
+    // 记进「本机历史账号」（设置页可一键切换），登录/注册都会走到这里
+    await AccountHistoryStore.remember(Map<String, dynamic>.from(data));
   }
+
+  /// 用历史账号的登录数据直接切回该账号（免密）
+  /// 调用方需先确认 token 还有效，失效时不要调用
+  Future<void> switchAccount(Map<String, dynamic> data) => _apply(data);
 
   /// 修改我的资料（昵称 / 头像 / 个性签名），成功后同步全局状态与本地缓存
   Future<UserProfile> updateProfile(
