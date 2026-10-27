@@ -11,8 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_theme.dart';
 import '../data/fish_assets.dart';
-import '../models/fish.dart';
-import '../services/fish_service.dart';
+import '../services/post_service.dart';
 import '../widgets/fish_top_view.dart';
 import '../widgets/fish_photo.dart';
 
@@ -30,35 +29,91 @@ class PondSpec {
   static const double ry = 0.148;
 }
 
-/// 池塘里的一条鱼（纯本地存档）
+/// 池塘里的一条鱼 = 一次具体的渔获记录（按渔获投放，每条鱼对应一次真实渔获）
 class PondFish {
-  final String id;
-  final String name;
-  final String water; // fresh / salt
+  final String id; // 渔获记录 id（唯一，作为投放/收回的锚点）
+  final String name; // 鱼种名
+  final String water; // fresh / salt（仅影响找不到素材时的兜底图）
   final String rarity;
+  final double? lengthCm; // 真实体长（厘米）
+  final double? weightG; // 真实重量（克）
+  final String? caughtAt; // 钓获时间（ISO 字符串）
+  final String? location; // 钓点文字
+  final String? photo; // 渔获图（绝对地址）
 
   const PondFish({
     required this.id,
     required this.name,
-    required this.water,
-    required this.rarity,
+    this.water = 'fresh',
+    this.rarity = '',
+    this.lengthCm,
+    this.weightG,
+    this.caughtAt,
+    this.location,
+    this.photo,
   });
 
-  factory PondFish.fromSpecies(FishSpecies f) => PondFish(
-        id: f.id,
-        name: f.name,
-        water: f.waterType,
-        rarity: f.rarity,
-      );
+  /// 从「我的渔获」接口的一条记录造出池塘鱼
+  ///
+  /// 接口返回 `fish` 是 JSON 数组（可能一条渔获多条鱼），取第一条非空鱼名；
+  /// `image` 是单张绝对地址（不是数组）。
+  factory PondFish.fromCatch(Map<String, dynamic> c) {
+    final rawFish = c['fish'];
+    var name = '';
+    if (rawFish is List) {
+      for (final e in rawFish) {
+        final s = e?.toString().trim() ?? '';
+        if (s.isNotEmpty) {
+          name = s;
+          break;
+        }
+      }
+    } else if (rawFish is String) {
+      name = rawFish.trim();
+    }
+    final img = c['image'];
+    final photo = (img is String && img.isNotEmpty) ? img : null;
+    return PondFish(
+      id: (c['id'] ?? '').toString(),
+      name: name,
+      water: (c['water'] ?? 'fresh').toString() == 'salt' ? 'salt' : 'fresh',
+      rarity: (c['rarity'] ?? '').toString(),
+      lengthCm: _num(c['lengthCm']),
+      weightG: _num(c['weightG']),
+      caughtAt: c['createdAt']?.toString(),
+      location: (c['location'] ?? '').toString(),
+      photo: photo,
+    );
+  }
 
-  Map<String, dynamic> toJson() =>
-      {'id': id, 'name': name, 'water': water, 'rarity': rarity};
+  static double? _num(dynamic v) {
+    if (v == null) return null;
+    final d = v is num ? v.toDouble() : double.tryParse(v.toString());
+    return d != null && d > 0 ? d : null;
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'water': water,
+        'rarity': rarity,
+        'lengthCm': lengthCm,
+        'weightG': weightG,
+        'caughtAt': caughtAt,
+        'location': location,
+        'photo': photo,
+      };
 
   static PondFish fromJson(Map<String, dynamic> j) => PondFish(
         id: (j['id'] ?? '').toString(),
         name: (j['name'] ?? '').toString(),
         water: (j['water'] ?? 'fresh').toString(),
-        rarity: (j['rarity'] ?? 'common').toString(),
+        rarity: (j['rarity'] ?? '').toString(),
+        lengthCm: _num(j['lengthCm']),
+        weightG: _num(j['weightG']),
+        caughtAt: j['caughtAt']?.toString(),
+        location: j['location']?.toString(),
+        photo: j['photo']?.toString(),
       );
 }
 
@@ -134,6 +189,8 @@ class _PondScreenState extends State<PondScreen>
   Offset _gStartPan = Offset.zero;
   Offset _gFocal = Offset.zero;
   Offset _tapPos = Offset.zero;
+  Offset _gDownPos = Offset.zero;
+  bool _gMoved = false;
   AnimationController? _zoomCtl;
 
   /// 每帧复用的 Paint / Shader 缓存，避免每帧 new 几十个渐变
@@ -146,9 +203,12 @@ class _PondScreenState extends State<PondScreen>
   final Map<String, Color> _bodyColors = {};
 
   List<PondFish> _placed = const [];
-  List<FishSpecies> _all = const [];
+  List<PondFish> _myCatches = const [];
   bool _loading = true;
   bool _immersive = false;
+
+  /// 当前点选中的鱼（弹出信息卡）；null = 没有选中
+  PondFish? _selected;
 
   /// 放大后「复位」胶囊要不要显示（只在小范围重建，不带动整页）
   final ValueNotifier<bool> _zoomed = ValueNotifier<bool>(false);
@@ -228,22 +288,26 @@ class _PondScreenState extends State<PondScreen>
   }
 
   Future<void> _boot() async {
-    // ① 背景图 + 已养的鱼
+    // ① 背景图 + 已投放的鱼（本地存档，退出 App 也还在）
     final bg = await _loadImage('assets/pond/pond_bg.jpg');
-    final placed = await PondStore.load();
+    final stored = await PondStore.load();
     if (!mounted) return;
     setState(() {
       _bg = bg;
-      _placed = placed;
+      _placed = stored;
       _loading = false;
     });
     // ② 鱼图按需加载（只加载池里有的，不浪费内存）
-    await _ensureFishImages(placed);
-    // ③ 图鉴（放鱼面板要用）
-    final guide = await FishService.guide();
+    await _ensureFishImages(stored);
+    // ③ 拉取「我的渔获」：既给放鱼面板用，也用来校验已投放的鱼是否还在
+    final catches = await PostService.fetchMyCatches();
     if (!mounted) return;
+    final validIds = catches.map((c) => (c['id'] ?? '').toString()).toSet();
+    final pruned = stored.where((f) => validIds.contains(f.id)).toList();
+    if (pruned.length != stored.length) PondStore.save(pruned);
     setState(() {
-      _all = [...guide.fresh, ...guide.salt];
+      _myCatches = catches.map((c) => PondFish.fromCatch(c)).toList();
+      _placed = pruned;
     });
   }
 
@@ -281,31 +345,20 @@ class _PondScreenState extends State<PondScreen>
     });
   }
 
-  /// 投放 / 收回
-  ///
-  /// ★ 投放上限 = **图鉴里该鱼种已记录的条数**（FishSpecies.count）。
-  ///   发一条鱼获 → 后端按识别出的鱼种给图鉴 +1 → 这里就能多投一条。
-  ///   不再是无限制往池里加（用户明确要求「有多少条就可以投放多少条」）。
-  Future<void> _toggle(FishSpecies f) async {
-    final quota = f.count;
-    final same = _countOf(f.id);
-    if (quota <= 0) {
-      _toast('图鉴里还没有「${f.name}」\n发一条这种鱼的鱼获，图鉴 +1 后才能投放');
-      return;
-    }
+  /// 投放 / 收回：每条鱼对应一次具体渔获，按渔获记录 id 唯一
+  Future<void> _toggleCatch(PondFish c) async {
+    final idx = _placed.indexWhere((e) => e.id == c.id);
     List<PondFish> next;
-    if (same >= quota) {
-      // 已经投满 → 再点收回一条
-      final idx = _placed.lastIndexWhere((e) => e.id == f.id);
-      if (idx < 0) return;
+    if (idx >= 0) {
+      // 已在池里 → 收回这一条
       next = [..._placed]..removeAt(idx);
     } else {
       if (_placed.length >= kPondMaxFish) {
-        // 一屏画一百多条既看不清也掉帧，到上限就提示先收走几条
+        // 一屏画太多既看不清也掉帧，到上限就提示先收走几条
         _toast('池塘养满了（$kPondMaxFish 条），先收走几条再投');
         return;
       }
-      next = [..._placed, PondFish.fromSpecies(f)];
+      next = [..._placed, c];
     }
     setState(() => _placed = next);
     await PondStore.save(next);
@@ -319,27 +372,80 @@ class _PondScreenState extends State<PondScreen>
     ));
   }
 
-  int _countOf(String id) => _placed.where((e) => e.id == id).length;
+  /// 点鱼命中检测：把屏幕坐标反算成场景坐标，找最近且命中的鱼
+  void _handleTap(Offset tap) {
+    if (_bg == null) return;
+    final size = MediaQuery.of(context).size;
+    final v = _view.value;
+    // 屏幕坐标 → 场景坐标（与绘制时的 `translate(pan) scale(zoom)` 互逆）
+    final scene = Offset((tap.dx - v.pan.dx) / v.zoom,
+        (tap.dy - v.pan.dy) / v.zoom);
+    final water = _waterScene(size);
+    final swimmers = _buildSwimmers(_placed, _clock.value, water);
+    _Swimmer? hit;
+    var best = double.infinity;
+    for (final s in swimmers) {
+      final d = (scene - s.center).distance;
+      // 命中半径取体长的 0.6（半长多一点）；重叠时取最近的那条
+      if (d < s.bodyLen * 0.6 && d < best) {
+        best = d;
+        hit = s;
+      }
+    }
+    setState(() => _selected = hit?.fish);
+  }
+
+  /// 背景「cover」铺满后，水面椭圆在场景坐标系里的矩形（与绘制保持一致）
+  Rect _waterScene(Size size) {
+    final bg = _bg!;
+    final scale = math.max(size.width / bg.width, size.height / bg.height);
+    final dw = bg.width * scale;
+    final dh = bg.height * scale;
+    final dx = (size.width - dw) / 2;
+    final dy = (size.height - dh) / 2;
+    return Rect.fromCenter(
+      center: Offset(dx + PondSpec.cx * dw, dy + PondSpec.cy * dh),
+      width: PondSpec.rx * 2 * dw,
+      height: PondSpec.ry * 2 * dh,
+    );
+  }
+
+  String _fmtCm(double? cm) =>
+      cm == null ? '未知' : '${cm.toStringAsFixed(cm < 10 ? 1 : 0)} cm';
+  String _fmtG(double? g) {
+    if (g == null) return '未知';
+    return g >= 1000
+        ? '${(g / 1000).toStringAsFixed(2)} kg'
+        : '${g.toStringAsFixed(0)} g';
+  }
+
+  String _fmtTime(String iso) {
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return iso;
+    final local = dt.toLocal();
+    String p(int n) => n.toString().padLeft(2, '0');
+    return '${local.year}-${p(local.month)}-${p(local.day)} '
+        '${p(local.hour)}:${p(local.minute)}';
+  }
 
   Future<void> _openPicker() async {
-    if (_all.isEmpty) {
-      // 图鉴还没拉到（断网）时给个提示，但不影响看池塘
+    if (_myCatches.isEmpty) {
+      // 没有渔获记录时给个提示，但池塘照样能看
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('图鉴还在加载，稍等一下再放鱼'),
+        content: Text('还没有渔获记录。先去发布一条真实渔获，才能放进池塘。'),
         duration: Duration(seconds: 2),
       ));
       return;
     }
-    // 只有图鉴里有条数的鱼才能投（count > 0）
-    final unlocked = _all.where((f) => f.count > 0).toList();
+    final releasedIds = _placed.map((e) => e.id).toSet();
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _PondPickerSheet(
-        all: unlocked,
-        countOf: _countOf,
-        onTap: _toggle,
+        catches: _myCatches,
+        releasedIds: releasedIds,
+        onToggle: _toggleCatch,
       ),
     );
     if (mounted) setState(() {});
@@ -352,9 +458,14 @@ class _PondScreenState extends State<PondScreen>
     _gStartZoom = _view.value.zoom;
     _gStartPan = _view.value.pan;
     _gFocal = d.localFocalPoint;
+    _gDownPos = d.localFocalPoint;
+    _gMoved = false;
   }
 
   void _onScaleUpdate(ScaleUpdateDetails d) {
+    // 多指 / 缩放 / 明显移动 → 不是「点一下」，不触发选中
+    if (d.pointerCount > 1 || d.scale > 1.02 || d.scale < 0.98) _gMoved = true;
+    if ((d.localFocalPoint - _gDownPos).distance > 8) _gMoved = true;
     final size = MediaQuery.of(context).size;
     // 1 倍时不吃单指拖动：留着给系统的「向右滑返回」用
     if (_gStartZoom <= 1.001 && d.scale < 1.01) return;
@@ -367,6 +478,8 @@ class _PondScreenState extends State<PondScreen>
   }
 
   void _onScaleEnd(ScaleEndDetails d) {
+    // 单指轻点且没拖动 → 当成「点鱼」：命中则弹信息卡，否则收起卡片
+    if (!_gMoved && d.pointerCount <= 1) _handleTap(_gDownPos);
     // 松手时如果几乎回到 1 倍，直接归位（避免停在 1.004 这种别扭状态）
     if (_view.value.zoom < 1.05) _setView(const PondView(1, Offset.zero));
   }
@@ -425,7 +538,9 @@ class _PondScreenState extends State<PondScreen>
     final size = MediaQuery.of(context).size;
     return Scaffold(
       backgroundColor: const Color(0xFF10251C),
-      body: GestureDetector(
+      body: Stack(
+        children: [
+          GestureDetector(
         onScaleStart: _onScaleStart,
         onScaleUpdate: _onScaleUpdate,
         onScaleEnd: _onScaleEnd,
@@ -598,6 +713,9 @@ class _PondScreenState extends State<PondScreen>
       ),
         ),
       ),
+          if (_selected != null) _fishInfoCard(),
+        ],
+      ),
       // 横屏时提示转手机（池塘是竖构图，横过来会裁掉两岸）
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
       floatingActionButton: size.width > size.height
@@ -657,7 +775,7 @@ class _PondScreenState extends State<PondScreen>
                 const Padding(
                   padding: EdgeInsets.only(bottom: 10),
                   child: Text(
-                    '池塘还是空的，点「放鱼」把图鉴里点亮的鱼放进水里',
+                    '池塘还是空的，点「放鱼」把你的渔获放进池塘',
                     style: TextStyle(color: Colors.white, fontSize: 12.5),
                   ),
                 )
@@ -737,6 +855,78 @@ class _PondScreenState extends State<PondScreen>
                     ),
                   ),
                 ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 点中鱼后弹出的信息卡：体长 / 重量 / 钓获时间 / 钓点
+  ///
+  /// 用 `HitTestBehavior.opaque` 把卡片范围内的点击吞掉，避免点卡片时
+  /// 又把下面池塘的 GestureDetector 当成「点鱼」触发选中/收起。
+  Widget _fishInfoCard() {
+    final f = _selected!;
+    return Positioned(
+      left: 16,
+      right: 16,
+      bottom: _immersive ? 20 : 150,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(.74),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              FishPhoto(name: f.name, height: 44),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(f.name,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    Text(
+                      '体长 ${_fmtCm(f.lengthCm)}'
+                      '${f.weightG != null ? '   重量 ${_fmtG(f.weightG)}' : ''}',
+                      style: const TextStyle(
+                          color: Colors.white70, fontSize: 12.5),
+                    ),
+                    if (f.caughtAt != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Text('钓获时间 ${_fmtTime(f.caughtAt!)}',
+                            style: const TextStyle(
+                                color: Colors.white60, fontSize: 11.5)),
+                      ),
+                    if ((f.location ?? '').isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Text('钓点 ${f.location}',
+                            style: const TextStyle(
+                                color: Colors.white60, fontSize: 11.5)),
+                      ),
+                  ],
+                ),
+              ),
+              GestureDetector(
+                onTap: () => setState(() => _selected = null),
+                child: const Padding(
+                  padding: EdgeInsets.all(4),
+                  child: Icon(Icons.close, color: Colors.white70, size: 20),
+                ),
               ),
             ],
           ),
@@ -945,12 +1135,7 @@ class PondPainter extends CustomPainter {
     cache.ensure(size, water);
 
     // 每帧只算一次位置：水里的和空中的用同一份数据，否则跃水时会「两个影子」
-    final list =
-        fish.length > kPondMaxFish ? fish.sublist(0, kPondMaxFish) : fish;
-    final swimmers = <_Swimmer>[];
-    for (var i = 0; i < list.length; i++) {
-      swimmers.add(_Swimmer.of(list[i], i, list.length, t, water));
-    }
+    final swimmers = _buildSwimmers(fish, t, water);
     final under = <_Swimmer>[
       ...swimmers.where((s) => !s.airborne),
     ]..sort((a, b) => a.depth.compareTo(b.depth));
@@ -1108,6 +1293,32 @@ class PondPainter extends CustomPainter {
   }
 }
 
+/// 池塘鱼的显示体长占水宽的比例。
+///
+/// 真实体长（cm）先 ×10 得到「展示尺度」，再按常量映射成水宽占比——
+/// 这样**不同鱼之间的比例严格等于真实体长比例**（60cm 的鱼正好是 30cm 的两倍），
+/// 同时夹在 [0.05, 0.46] 保证看得见、也不会一条鱼撑满整个水面。
+/// 没填长度的按 25cm 估算，避免画成一团点。
+double pondSizeFraction(double? lengthCm) {
+  final realCm = lengthCm ?? 25.0;
+  const double kPondSizeScale = 0.00046; // realCm * 10 * k = 水宽占比
+  return (realCm * 10 * kPondSizeScale).clamp(0.05, 0.46);
+}
+
+/// 把池塘鱼列表算成运行时状态（位置 / 朝向 / 大小）。
+///
+/// 抽成函数是为了「点鱼命中检测」和「绘制」用同一套坐标，
+/// 否则点下去命中的位置会和画出来的位置对不上。
+List<_Swimmer> _buildSwimmers(List<PondFish> fish, double t, Rect water) {
+  final list =
+      fish.length > kPondMaxFish ? fish.sublist(0, kPondMaxFish) : fish;
+  final out = <_Swimmer>[];
+  for (var i = 0; i < list.length; i++) {
+    out.add(_Swimmer.of(list[i], i, list.length, t, water));
+  }
+  return out;
+}
+
 /// 一条鱼的运行时状态
 ///
 /// 位置 / 朝向 / 大小全部由「种子 + 当前时间」算出来，不保存任何动画状态：
@@ -1202,9 +1413,9 @@ class _Swimmer {
     // 池子看着像只有一条鱼。±0.10 池高，仍在椭圆内。
     final lane = (index % 3) - 1;
 
-    // 体长：池塘宽的 13.5%~24%。再大就像「池子里养了几条一米长的鲶鱼」——
-    // 用户给的真实鱼群照片里，一条鱼只占视野宽度的 1/10 左右。
-    final bodyLen = water.width * (.135 + depth * .105);
+    // 体长按「真实体长 ×10」比例缩放：不同鱼之间的相对大小 = 真实比例，
+    // 同时夹在可看范围内（约 5%~46% 水宽），没填长度的按 25cm 估算。
+    final bodyLen = water.width * pondSizeFraction(f.lengthCm);
     // 摆尾频率 1.1~2.0 Hz（真实鲫鱼巡游 1~3 Hz）。频率按鱼固定，
     // 推力另用 thrust 体现，避免「频率忽快忽慢」造成的抖动感。
     final hz = 1.15 + (1 - depth) * .45 + (seed % 4) * .09;
@@ -1297,14 +1508,14 @@ class _Swimmer {
 // ══════════════════════════ 放鱼面板 ══════════════════════════
 
 class _PondPickerSheet extends StatefulWidget {
-  final List<FishSpecies> all;
-  final int Function(String id) countOf;
-  final void Function(FishSpecies) onTap;
+  final List<PondFish> catches;
+  final Set<String> releasedIds;
+  final void Function(PondFish) onToggle;
 
   const _PondPickerSheet({
-    required this.all,
-    required this.countOf,
-    required this.onTap,
+    required this.catches,
+    required this.releasedIds,
+    required this.onToggle,
   });
 
   @override
@@ -1342,7 +1553,7 @@ class _PondPickerSheetState extends State<_PondPickerSheet> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '按图鉴条数投放 · 池里最多 $kPondMaxFish 条 · 退出 App 也还在',
+                    '每条鱼对应一次真实渔获 · 池里最多 $kPondMaxFish 条',
                     style: TextStyle(
                         fontSize: 11, color: AppTheme.textSecondary),
                   ),
@@ -1351,105 +1562,95 @@ class _PondPickerSheetState extends State<_PondPickerSheet> {
             ),
           ),
           Expanded(
-            child: widget.all.isEmpty
-                ? const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Text(
-                        '还没有点亮的鱼。先去「我的 → 鱼类图鉴」拍照记录渔获，\n点亮之后就能放进池塘养了。',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            fontSize: 13, color: AppTheme.textSecondary),
+            child: GridView.builder(
+              padding: const EdgeInsets.fromLTRB(14, 6, 14, 20),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                mainAxisSpacing: 10,
+                crossAxisSpacing: 10,
+                childAspectRatio: .88,
+              ),
+              itemCount: widget.catches.length,
+              itemBuilder: (_, i) {
+                final c = widget.catches[i];
+                final released = widget.releasedIds.contains(c.id);
+                final size = c.lengthCm == null
+                    ? ''
+                    : '${c.lengthCm!.toStringAsFixed(c.lengthCm! < 10 ? 1 : 0)}cm'
+                        '${c.weightG != null ? ' · ${c.weightG! >= 1000 ? (c.weightG! / 1000).toStringAsFixed(1) + 'kg' : c.weightG!.toStringAsFixed(0) + 'g'}' : ''}';
+                return InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () {
+                    widget.onToggle(c);
+                    setState(() {
+                      if (released) {
+                        widget.releasedIds.remove(c.id);
+                      } else {
+                        widget.releasedIds.add(c.id);
+                      }
+                    });
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: released
+                          ? AppTheme.primaryLight
+                          : AppTheme.primarySoft,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: released ? AppTheme.primary : Colors.transparent,
+                        width: 1.2,
                       ),
                     ),
-                  )
-                : GridView.builder(
-                    padding: const EdgeInsets.fromLTRB(14, 6, 14, 20),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      mainAxisSpacing: 10,
-                      crossAxisSpacing: 10,
-                      childAspectRatio: .88,
-                    ),
-                    itemCount: widget.all.length,
-                    itemBuilder: (_, i) {
-                      final f = widget.all[i];
-                      final n = widget.countOf(f.id);
-                      final quota = f.count;
-                      final full = n >= quota;
-                      return InkWell(
-                        borderRadius: BorderRadius.circular(12),
-                        onTap: () {
-                          widget.onTap(f);
-                          setState(() {});
-                        },
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: n > 0
-                                ? AppTheme.primaryLight
-                                : AppTheme.primarySoft,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: n > 0
-                                  ? AppTheme.primary
-                                  : Colors.transparent,
-                              width: 1.2,
-                            ),
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Stack(
-                                clipBehavior: Clip.none,
-                                children: [
-                                  FishPhoto(name: f.name, height: 40),
-                                  if (n > 0)
-                                    Positioned(
-                                      right: -10,
-                                      top: -6,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 6, vertical: 1),
-                                        decoration: BoxDecoration(
-                                          // 投满变灰：一眼看出这条鱼不能再加了
-                                          color: full
-                                              ? AppTheme.textSecondary
-                                              : AppTheme.primary,
-                                          borderRadius:
-                                              BorderRadius.circular(9),
-                                        ),
-                                        child: Text(
-                                          '$n/$quota',
-                                          style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 9.5,
-                                              fontWeight: FontWeight.w700),
-                                        ),
-                                      ),
-                                    ),
-                                ],
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            FishPhoto(name: c.name, height: 40),
+                            if (released)
+                              Positioned(
+                                right: -10,
+                                top: -6,
+                                child: Container(
+                                  padding: EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.primary,
+                                    borderRadius: BorderRadius.circular(9),
+                                  ),
+                                  child: Text(
+                                    '已投放',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.w700),
+                                  ),
+                                ),
                               ),
-                              const SizedBox(height: 6),
-                              Text(
-                                f.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    fontSize: 12, fontWeight: FontWeight.w600),
-                              ),
-                              Text(
-                                n > 0 ? '已投 $n / 共 $quota' : '可投 $quota 条',
-                                style: TextStyle(
-                                    fontSize: 9.5,
-                                    color: AppTheme.textSecondary),
-                              ),
-                            ],
-                          ),
+                          ],
                         ),
-                      );
-                    },
+                        const SizedBox(height: 6),
+                        Text(
+                          c.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.w600),
+                        ),
+                        Text(
+                          size.isEmpty ? '未填尺寸' : size,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 9.5, color: AppTheme.textSecondary),
+                        ),
+                      ],
+                    ),
                   ),
+                );
+              },
+            ),
           ),
         ],
       ),
