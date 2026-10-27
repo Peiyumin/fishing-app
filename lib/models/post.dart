@@ -254,13 +254,25 @@ class Post {
   /// 类别中文名
   String get categoryLabel => categoryLabels[category] ?? '动态';
 
+  /// 发布时间，按**本地墙上时间**给出（v2.1.43）
+  ///
+  /// 后端 `now_iso()` 是 `date('Y-m-d\TH:i:s') . 'Z'`，而服务器时区是 +8：
+  /// 库里存的其实是「北京时间 + 假 Z」。`DateTime.parse` 会把它当 UTC，
+  /// 再与 `DateTime.now()`（本地）相减就凭空多出 8 小时——刚发的帖子显示
+  /// 「8小时前」，详情页写发布时间也会变成次日凌晨。
+  /// 这里把 UTC 实例的墙面时间原样搬到本地时间轴上，之后所有展示都正确。
+  DateTime get postedAt => createdAt.isUtc
+      ? DateTime(createdAt.year, createdAt.month, createdAt.day,
+          createdAt.hour, createdAt.minute, createdAt.second)
+      : createdAt;
+
   /// 相对时间：刚刚 / 5分钟前 / 3小时前 / 日期
   String get timeAgo {
-    final diff = DateTime.now().difference(createdAt);
+    final diff = DateTime.now().difference(postedAt);
     if (diff.inMinutes < 1) return '刚刚';
     if (diff.inMinutes < 60) return '${diff.inMinutes}分钟前';
     if (diff.inHours < 24) return '${diff.inHours}小时前';
-    return DateFormat('MM-dd HH:mm').format(createdAt);
+    return DateFormat('MM-dd HH:mm').format(postedAt);
   }
 
   /// 不可变更新副本（用于点赞状态/计数本地即时刷新）
