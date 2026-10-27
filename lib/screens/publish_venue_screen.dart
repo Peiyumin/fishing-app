@@ -46,6 +46,7 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
   double _rating = 4.0;
   final Set<String> _tags = {}; // 推荐 / 黑坑 / 电话认证 …
   final List<String> _envFiles = []; // 环境展示图（本地路径，最多 9 张）
+  bool _delivery = false; // 渔具店是否支持外送
   bool _locatingAddr = false; // 定位填址中
   bool _uploading = false;
   bool _submitting = false;
@@ -58,8 +59,10 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
   bool get _isShop => widget.kind == 'shop';
   String get _pageTitle => _isShop ? '添加渔具店' : '添加本地钓场';
 
+  // 「野钓场」已删：野钓点有独立的地理标注入口（钓点页「野钓钓点」Tab），
+  // 本地钓场再留一个「野钓场」类型只会让两套数据混在一起。
   List<String> get _typeOptions =>
-      _isShop ? const ['渔具店'] : const ['黑坑', '路亚', '野钓场', '海钓'];
+      _isShop ? const ['渔具店'] : const ['黑坑', '路亚', '海钓'];
 
   static const List<String> _tagOptions = ['推荐', '黑坑', '电话认证', '环境好', '停车方便'];
 
@@ -186,6 +189,7 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
         images: images,
         phone: _phoneCtrl.text.trim(),
         rating: _rating,
+        delivery: _isShop && _delivery,
       );
       if (mounted) {
         // 审核提示
@@ -512,13 +516,61 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
                 // —— 收费 ——
                 TextField(
                   controller: _feeCtrl,
-                  decoration: const InputDecoration(
-                    labelText: '收费说明（选填）',
-                    hintText: '例如：正钓 200 元/4h，偷驴 100 元',
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    labelText: _isShop ? '外送/运费说明（选填）' : '收费说明（选填）',
+                    hintText: _isShop
+                        ? '例如：3 公里内免运费，超出 5 元'
+                        : '例如：正钓 200 元/4h，偷驴 100 元',
+                    border: const OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 12),
+                // —— 渔具店：是否支持外送 ——
+                if (_isShop)
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(12, 2, 8, 2),
+                    decoration: BoxDecoration(
+                      color: _delivery
+                          ? AppTheme.primaryLight
+                          : AppTheme.primarySoft,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: _delivery
+                            ? AppTheme.primary.withOpacity(.45)
+                            : AppTheme.divider,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.delivery_dining,
+                            size: 19,
+                            color: _delivery
+                                ? AppTheme.primary
+                                : AppTheme.textSecondary),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('支持外送',
+                                  style: TextStyle(
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w600)),
+                              Text('同城可送货/闪送，详情页会给钓友标注',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: AppTheme.textSecondary)),
+                            ],
+                          ),
+                        ),
+                        Switch(
+                          value: _delivery,
+                          onChanged: (v) => setState(() => _delivery = v),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (_isShop) const SizedBox(height: 12),
                 // —— 鱼种（渔具店则改为经营范围） ——
                 TextField(
                   controller: _fishCtrl,
