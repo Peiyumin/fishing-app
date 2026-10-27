@@ -23,6 +23,7 @@ import 'screens/startup/splash_screen.dart';
 import 'screens/startup/startup_ad_screen.dart';
 import 'screens/wallet_screen.dart';
 import 'services/app_service.dart';
+import 'services/app_shortcuts.dart';
 import 'services/app_settings.dart';
 import 'services/message_poller.dart';
 import 'services/notification_service.dart';
@@ -35,6 +36,7 @@ import 'screens/spot_map_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/publish_hub_screen.dart';
+import 'screens/publish_catch_screen.dart';
 import 'widgets/update_dialog.dart';
 
 /// 全局导航 key：用于「新消息」顶部弹条在任意页面悬浮展示
@@ -95,12 +97,9 @@ Future<void> _precacheSplash() async {
   stream.removeListener(listener);
 }
 
-void main() async {
+void main() {
   // Flutter 绑定初始化（必须在 async main 开头调用）
   WidgetsFlutterBinding.ensureInitialized();
-
-  // 注入老安卓缺失的现代根证书（必须在任何 HTTPS 请求之前完成）
-  await _injectRootCerts();
 
   // 图片解码缓存限制：默认 100MB / 1000 张，地图瓦片一屏几十张很容易顶满，
   // 在 2GB 内存的老机型上会被系统直接杀掉（表现为「打开地图闪退」）。
@@ -108,45 +107,20 @@ void main() async {
   PaintingBinding.instance.imageCache.maximumSizeBytes = 64 << 20;
   PaintingBinding.instance.imageCache.maximumSize = 500;
 
-  // 恢复本地登录态：只要用户没点「退出登录」，重开 App 保持在线
-  final session = SessionProvider();
-  await session.restore();
-
-  // 本机偏好（字体大小 / 个性化推荐 / 鱼获隐私默认值）：必须在 runApp 前读完，
-  // 否则首帧用的是默认字号，进页面会看到字「跳」一下
-  await AppSettings.instance.load();
-
-  // 系统通知（私信 / 评论 / 点赞 / 官方公告）
-  await NotificationService.instance.init();
-  NotificationService.instance.onTap = openFromNotification;
-
-  // 全局消息轮询：随登录态自动启停，App 生命周期内持续轮询
-  MessagePoller.instance.attach(session);
-  MessagePoller.instance.onNewItems = (items, summary) {
-    _showFeedBanner(items, summary);
-  };
-
-  // 预解码启动页底图：否则 Dart 首帧画出来时图还在解码，用户会多看到
-  // 两三百毫秒的纯黑（原生启动图本来就是黑的，视觉上像「黑屏一直不结束」）。
-  await _precacheSplash();
-
+  // ★★ v2.1.44：runApp 之前**不再**串行 await 任何初始化。
+  //
+  //   以前这里是：注入根证书 → 恢复登录态 → 读偏好 → 初始化推送 →
+  //   预解码启动图（最多 800ms），一路 await 完才 runApp。这期间屏幕上是
+  //   系统启动图（旧版还是纯黑），于是冷启动就是「黑屏好几秒才看到启动页」。
+  //   现在先把界面画出来，这些初始化全部挪到启动页背后并行跑
+  //   （_StartupGateState._prepare），做完才放行进主界面。
   runApp(
     // 用 Provider 在全局共享登录态
     ChangeNotifierProvider(
-      create: (_) => session,
+      create: (_) => SessionProvider(),
       child: const MyApp(),
     ),
   );
-
-  // 冷启动：App 是被「点击通知」拉起来的，等首帧画完再跳转
-  WidgetsBinding.instance.addPostFrameCallback((_) async {
-    final p = NotificationService.instance.pendingPayload;
-    if (p == null) return;
-    NotificationService.instance.pendingPayload = null;
-    // 给 StartupGate → MainShell 一点时间把 Navigator 挂稳
-    await Future.delayed(const Duration(milliseconds: 400));
-    await openFromNotification(p);
-  });
 }
 
 /// 点通知后跳转到对应页面
@@ -188,6 +162,29 @@ Future<void> openFromNotification(Map<String, dynamic> p) async {
     }
   }
   nav.pushNamed('/message-center');
+}
+
+/// 长按图标快捷项的跳转（我的图鉴 / 赛博鱼缸 / 记渔获）
+///
+/// 和通知跳转一样，冷启动时 Navigator 可能还没挂稳，最多等 2 秒。
+Future<void> _openShortcut(String type) async {
+  NavigatorState? nav = navigatorKey.currentState;
+  for (var i = 0; i < 10 && nav == null; i++) {
+    await Future.delayed(const Duration(milliseconds: 200));
+    nav = navigatorKey.currentState;
+  }
+  if (nav == null) return;
+  switch (type) {
+    case AppShortcuts.guide:
+      nav.pushNamed('/fish-guide');
+      break;
+    case AppShortcuts.tank:
+      nav.pushNamed('/fish-tank');
+      break;
+    case AppShortcuts.catchFish:
+      nav.push(MaterialPageRoute(builder: (_) => const PublishCatchScreen()));
+      break;
+  }
 }
 
 /// 新消息顶部横幅：带具体内容的卡片，点击直达对应页面
@@ -362,7 +359,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    // 监听本机偏好：v2.1.44 起 AppSettings 在 runApp 之后才 load，
+    // 读完会 notifyListeners → 这里重建一次 MaterialApp，
+    // builder 里的 textScaler 于是拿到正确的字号档位。
+    return AnimatedBuilder(
+      animation: AppSettings.instance,
+      builder: (context, _) => MaterialApp(
       navigatorKey: navigatorKey,
       title: '渔报',
       debugShowCheckedModeBanner: false,
@@ -395,6 +397,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         '/permission-check': (_) => const PermissionCheckScreen(),
         '/settings': (_) => const SettingsScreen(),
       },
+      ),
     );
   }
 }
@@ -419,31 +422,93 @@ class _StartupGateState extends State<StartupGate> {
   ///   涨到 100%」，播完调 [onFinished]，这里才真正放行。
   bool _splashDone = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
   /// 启动配置最多等这么久：超时就用「无启动内容」直接进首页。
   /// 服务器慢 / 断网时不能让用户一直干等在启动页（表现为「白屏过一会才进」）。
   static const _bootTimeout = Duration(milliseconds: 2500);
 
-  Future<void> _load() async {
-    AppBootstrap boot;
-    try {
-      boot = await AppService.bootstrap().timeout(_bootTimeout);
-    } catch (_) {
-      // 超时或后端不可用：不展示启动广告/预览页，直接进首页
-      boot = const AppBootstrap();
-    }
+  @override
+  void initState() {
+    super.initState();
+    _prepare();
+  }
+
+  /// 启动前要做的全部准备（v2.1.44：并行 + 不阻塞 runApp）
+  ///
+  /// 顺序上有两条硬约束：
+  ///   ① 根证书必须最先注入 —— 后面每一次 HTTPS（启动配置 / 天气 / 定位）
+  ///      在老安卓上都要靠它，晚一步就是一片 CERTIFICATE_VERIFY_FAILED；
+  ///   ② 登录态恢复完才能挂消息轮询，否则轮询用的是空 token。
+  /// 其余（本机偏好 / 推送 / 启动图预解码 / 启动配置接口）互不相干，全部并行。
+  Future<void> _prepare() async {
+    final session = context.read<SessionProvider>();
+
+    // ① 根证书（本地资源，几十毫秒）
+    await _injectRootCerts();
+
+    // ② 启动配置接口：先发出去，和下面几件事并行跑
+    final bootF = AppService.bootstrap()
+        .timeout(_bootTimeout)
+        .catchError((_) => const AppBootstrap());
+
+    await Future.wait<void>([
+      // 本机偏好：字体大小 / 个性化推荐 / 鱼获隐私默认值。
+      // 现在它在 runApp 之后才读，所以 MyApp 用 AnimatedBuilder 监听
+      // AppSettings，读完触发一次重建，字号档位照样立即生效。
+      AppSettings.instance.load().catchError((_) {}),
+      // 恢复登录态（SessionProvider 是 ChangeNotifier，恢复后自动通知）
+      session.restore().catchError((_) {}),
+      // 系统通知（私信 / 评论 / 点赞 / 官方公告）
+      _initPush(),
+      // 预解码启动页底图：Dart 启动页第一帧就能直接画出来，不会先黑一下
+      _precacheSplash(),
+      // 长按图标快捷入口：注册 channel + 取冷启动待处理项
+      AppShortcuts.init(),
+    ]);
+
+    // ③ 长按快捷入口：跳转逻辑交给 _openShortcut（等 navigator 就绪）
+    AppShortcuts.onAction = _openShortcut;
+
+    // ④ 登录态就绪后才挂全局消息轮询
+    MessagePoller.instance.attach(session);
+    MessagePoller.instance.onNewItems = (items, summary) {
+      _showFeedBanner(items, summary);
+    };
+
+    final boot = await bootF;
     if (!mounted) return;
     setState(() {
       _boot = boot;
       _loading = false;
     });
+
     // 启动后检查热更新（有新版本才弹窗；强制更新不可跳过）
     UpdateDialog.checkAndShow(context);
+  }
+
+  /// 推送初始化 + 挂点击回调（失败不影响启动）
+  Future<void> _initPush() async {
+    try {
+      await NotificationService.instance.init();
+      NotificationService.instance.onTap = openFromNotification;
+    } catch (_) {
+      // 用户拒绝通知权限 / 无网络时拿不到 token，正常现象
+    }
+  }
+
+  /// 冷启动是被「点击通知」拉起来的：等主界面挂稳再跳，只处理一次
+  bool _pendingNavHandled = false;
+
+  void _handlePendingNav() {
+    if (_pendingNavHandled) return;
+    _pendingNavHandled = true;
+    // 长按图标的快捷项（冷启动时攒下的）也在这一刻补跳
+    AppShortcuts.flushPending();
+    final p = NotificationService.instance.pendingPayload;
+    if (p == null) return;
+    NotificationService.instance.pendingPayload = null;
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (mounted) openFromNotification(p);
+    });
   }
 
   /// 清空启动内容 → 进入主框架
@@ -464,7 +529,11 @@ class _StartupGateState extends State<StartupGate> {
       );
     }
     final boot = _boot;
-    if (boot == null || !boot.hasStartupContent) return const MainShell();
+    if (boot == null || !boot.hasStartupContent) {
+      // 主界面挂完再处理「点通知冷启动」的跳转
+      WidgetsBinding.instance.addPostFrameCallback((_) => _handlePendingNav());
+      return const MainShell();
+    }
     if (boot.ads.isNotEmpty) {
       return StartupAdScreen(
         ads: boot.ads,
