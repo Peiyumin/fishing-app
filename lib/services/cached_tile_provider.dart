@@ -131,6 +131,55 @@ class CachedTileProvider extends TileProvider {
     );
   }
 
+  /// 当前地图瓦片缓存占用字节数（设置页「清除地图缓存」显示用）
+  static Future<int> cacheBytes() async {
+    final root = _root;
+    if (root == null) return 0;
+    try {
+      if (!await root.exists()) return 0;
+      var total = 0;
+      await for (final e in root.list(recursive: true, followLinks: false)) {
+        if (e is File) {
+          try {
+            total += await e.length();
+          } catch (_) {}
+        }
+      }
+      return total;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// 清空地图瓦片缓存（只删 map_tiles 目录里的文件，不动任何用户数据）
+  static Future<void> clearCache() async {
+    final root = _root;
+    if (root == null) return;
+    try {
+      if (!await root.exists()) return;
+      await for (final e in root.list(followLinks: false)) {
+        try {
+          await e.delete(recursive: true);
+        } catch (_) {}
+      }
+      // 清完顺手把内存里的瓦片解码缓存也丢了，否则还会显示旧图
+      PaintingBinding.instance.imageCache.clear();
+      PaintingBinding.instance.imageCache.clearLiveImages();
+      statDisk = 0;
+    } catch (_) {
+      // 删不掉就算了，不影响使用
+    }
+  }
+
+  /// 字节数 → 人类可读（3.5 MB / 812 KB）
+  static String formatBytes(int bytes) {
+    if (bytes <= 0) return '0 KB';
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    final mb = bytes / (1024 * 1024);
+    return mb >= 10 ? '${mb.toStringAsFixed(0)} MB' : '${mb.toStringAsFixed(1)} MB';
+  }
+
   /// 清理：超过上限就按最后修改时间删掉最旧的一批，降到 60%
   static Future<void> _prune() async {
     final root = _root;
