@@ -46,6 +46,10 @@ class _HomeScreenState extends State<HomeScreen>
   List<Post> _posts = [];
   bool _loadingWeather = true;
   bool _loadingPosts = true;
+  int _feedPage = 1;
+  bool _feedHasMore = true;
+  bool _feedLoadingMore = false;
+  final ScrollController _feedScroll = ScrollController();
 
   /// 当前定位的地名（首页左上角显示「禹州 / 许昌」这类短名）
   GeoPlace? _place;
@@ -89,6 +93,7 @@ class _HomeScreenState extends State<HomeScreen>
     // 发布成功（渔获 / 动态 / 钓点）后即时刷新首页，不用手动下拉
     RefreshBus.feedTick.addListener(_onFeedTick);
     RefreshBus.spotTick.addListener(_onSpotTick);
+    _feedScroll.addListener(_onFeedScroll);
     _startAutoRefresh();
     // 首帧渲染完成后再真正定位一次，保证打开 App 就自动获取当前位置
     WidgetsBinding.instance.addPostFrameCallback((_) => _autoLocate());
@@ -121,6 +126,7 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.removeObserver(this);
     RefreshBus.feedTick.removeListener(_onFeedTick);
     RefreshBus.spotTick.removeListener(_onSpotTick);
+    _feedScroll.dispose();
     _feedTimer?.cancel();
     _slowTimer?.cancel();
     super.dispose();
@@ -386,22 +392,83 @@ class _HomeScreenState extends State<HomeScreen>
     return CoordTransform.distanceMeters(lat, lng, s.lat, s.lng);
   }
 
-  Future<void> _loadFeed({bool silent = false}) async {
+  Future<void> _loadFeed({bool silent = false, bool loadMore = false}) async {
+    if (loadMore) {
+      if (_feedLoadingMore || !_feedHasMore || _posts.isEmpty) return;
+      _feedLoadingMore = true;
+      if (mounted) setState(() {});
+    }
     try {
-      final posts = await PostService.fetchFeed(limit: 20);
-      if (mounted) {
-        setState(() {
+      final page = loadMore ? _feedPage + 1 : 1;
+      final posts = await PostService.fetchFeed(limit: 20, offset: (page - 1) * 20);
+      if (!mounted) return;
+      setState(() {
+        if (loadMore) {
+          // 去重（演示模式回落时后端会返回同一批，避免死循环追加）
+          final seen = _posts.map((p) => p.id).toSet();
+          final fresh = posts.where((p) => !seen.contains(p.id)).toList();
+          _posts = [..._posts, ...fresh];
+          _feedPage = page;
+          if (fresh.length < posts.length || posts.length < 20) {
+            _feedHasMore = false;
+          }
+        } else {
           _posts = posts;
+          _feedPage = 1;
+          _feedHasMore = posts.length >= 20;
           _lastUpdated = DateTime.now();
-        });
-      }
+        }
+      });
     } catch (e) {
-      if (mounted && !silent) {
+      if (mounted && !silent && !loadMore) {
         CenterToast.show(context, '动态加载失败：$e');
       }
     } finally {
-      if (mounted) setState(() => _loadingPosts = false);
+      if (mounted) {
+        setState(() {
+          _loadingPosts = false;
+          if (loadMore) _feedLoadingMore = false;
+        });
+      }
     }
+  }
+
+  /// 首页信息流滚动接近底部时触发上滑加载更多
+  void _onFeedScroll() {
+    if (!_feedScroll.hasClients) return;
+    final pos = _feedScroll.position;
+    if (pos.maxScrollExtent <= 0) return;
+    if (pos.pixels >= pos.maxScrollExtent - 400) _loadFeedMore();
+  }
+
+  Future<void> _loadFeedMore() async {
+    await _loadFeed(loadMore: true);
+  }
+
+  /// 上滑加载更多的底部指示器（与顶部刷新提示条彻底分离）
+  Widget _feedFooter() {
+    if (!_feedHasMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 18),
+        child: Center(
+          child: Text('没有更多了',
+              style: TextStyle(color: AppTheme.textTertiary, fontSize: 12)),
+        ),
+      );
+    }
+    if (_feedLoadingMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 18),
+        child: Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    return const SizedBox(height: 18);
   }
 
   /// 手动下拉刷新：顺带重新定位一次，保证「附近钓点」距离是新的
@@ -441,7 +508,7 @@ class _HomeScreenState extends State<HomeScreen>
             children: [
               // —— 软件名：居中 ——
               const Text(
-                '垂钓圈',
+                '渔报',
                 style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
@@ -551,6 +618,7 @@ class _HomeScreenState extends State<HomeScreen>
       body: AppRefresh(
         onRefresh: _onRefresh,
         child: ListView(
+          controller: _feedScroll,
           children: [
             const GridNav(),
             // 天气（点击进入 7 天预报独立页）
@@ -641,14 +709,19 @@ class _HomeScreenState extends State<HomeScreen>
                           child: Text('还没有动态，点击中间「+」发布第一条吧'),
                         ),
                       )
-                    : WaterfallGrid(
-                        posts: _posts,
-                        shrinkWrap: true,
-                        padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-                        onTap: (p) => Navigator.of(context).push(
-                          MaterialPageRoute(
-                              builder: (_) => PostDetailScreen(post: p)),
-                        ),
+                    : Column(
+                        children: [
+                          WaterfallGrid(
+                            posts: _posts,
+                            shrinkWrap: true,
+                            padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+                            onTap: (p) => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (_) => PostDetailScreen(post: p)),
+                            ),
+                          ),
+                          _feedFooter(),
+                        ],
                       ),
           ],
         ),
