@@ -95,6 +95,19 @@ class Post {
     this.badges = const [],
   });
 
+  /// 容错布尔
+  ///
+  /// PHP 后端里这些标记位是直接赋 1/0 的（`$r['is_me'] = 1;`），JSON 里就是数字；
+  /// 老 Node 后端给的是 true/false。写成 `json['is_me'] == true` 会在数字 1 上
+  /// 判假 —— 「我的作品」按 isMe 过滤时会一条都筛不出来。
+  static bool truthy(dynamic v) {
+    if (v == null) return false;
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    final s = v.toString().trim().toLowerCase();
+    return s == '1' || s == 'true' || s == 'yes';
+  }
+
   /// 把 Supabase 返回的 JSON 转成 Post
   /// 注意：profiles 是嵌套对象，需要单独取字段
   factory Post.fromJson(Map<String, dynamic> json, {bool likedByMe = false}) {
@@ -125,8 +138,8 @@ class Post {
       city: (json['city'] ?? '').toString(),
       likedByMe: likedByMe,
       userLevel: (json['user_level'] as num?)?.toInt() ?? 1,
-      isFollowing: json['is_following'] == true,
-      isMe: json['is_me'] == true,
+      isFollowing: truthy(json['is_following']),
+      isMe: truthy(json['is_me']),
       authorVip: (json['user_vip'] as num?)?.toInt() ?? 0,
       fish: parseFish(json['fish']),
       locPublic: json['loc_public'] == null
