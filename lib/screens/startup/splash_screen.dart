@@ -321,7 +321,6 @@ class _ProgressClipper extends CustomClipper<Rect> {
 /// 启动页专用色（与底图取样一致，不进全局色板）
 class _SplashColors {
   static const mint = Color(0xFF12E8A8);
-  static const lime = Color(0xFFC6FF3D);
 
   /// 立字用的深色描边：比纯黑柔一点，和深绿背景融得住
   static const inkEdge = Color(0xE8051F08);
