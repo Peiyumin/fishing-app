@@ -22,6 +22,9 @@ class FishingSpot {
   final String fish; // 主要鱼种
   final String tags; // 标签（推荐/黑坑/电话认证…）
   final String phone; // 联系电话
+
+  /// 渔具店是否支持外送（其他类型恒 false）
+  final bool delivery;
   final int reportCount; // 被报错次数
   final bool verified; // 是否官方核实
   final int commentCount; // 评论数（钓场）
@@ -43,6 +46,7 @@ class FishingSpot {
     this.fish = '',
     this.tags = '',
     this.phone = '',
+    this.delivery = false,
     this.reportCount = 0,
     this.verified = false,
     this.commentCount = 0,
@@ -73,6 +77,7 @@ class FishingSpot {
     String? fish,
     String? tags,
     String? phone,
+    bool? delivery,
     int? reportCount,
     bool? verified,
     int? commentCount,
@@ -94,6 +99,7 @@ class FishingSpot {
       fish: fish ?? this.fish,
       tags: tags ?? this.tags,
       phone: phone ?? this.phone,
+      delivery: delivery ?? this.delivery,
       reportCount: reportCount ?? this.reportCount,
       verified: verified ?? this.verified,
       commentCount: commentCount ?? this.commentCount,
