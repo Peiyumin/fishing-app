@@ -52,7 +52,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   ///   ③ `RefreshIndicator` 被销毁后立刻重建，手指还在屏幕上的话会被再次
   ///      判定成一次下拉 → 又刷新 → 0.3~0.7 秒闪一次的自激循环
   ///      （用户录屏里前 11 秒闪着不停就是这个）；
-  ///   ④ `AppRefresh` 的「垂钓圈 为您玩命加载…」提示条刚滑出就被销毁，
+  ///   ④ `AppRefresh` 的「渔报 为您玩命加载…」提示条刚滑出就被销毁，
   ///      **从来没机会显示**。
   ///
   ///   现在只有首次进页面 / 切到一个还没数据的 tab 才转圈，刷新一律保留旧列表。
@@ -60,6 +60,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   String? _emptyHint; // 空列表时的说明（如同城未授权）
   String? _city; // 当前定位城市（同城 Tab）
+
+  /// 上滑加载更多：每个 tab 各自记页码与「是否还有下一页」
+  final Map<String, int> _pages = {};
+  final Map<String, bool> _hasMoreMap = {};
+  bool _loadingMore = false;
 
   /// 正在请求中的 tab：连点同一个 tab 不重复打请求
   final Set<String> _inflight = {};
@@ -82,25 +87,39 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   /// 当前 tab 要显示的列表（有缓存就用缓存，切回来不闪）
   List<Post> get _posts => _cache[_tabKey] ?? const <Post>[];
 
-  Future<void> _load() async {
+  Future<void> _load({bool loadMore = false}) async {
     final tab = _tabKey;
     final hasData = (_cache[tab] ?? const <Post>[]).isNotEmpty;
-    if (mounted) {
+
+    if (loadMore) {
+      // 上滑加载更多：已在飞 / 没有更多 / 还没有首屏数据 都不触发
+      if (_loadingMore || !(_hasMoreMap[tab] ?? true) || !hasData) return;
+      _loadingMore = true;
+      if (mounted) setState(() {});
+    } else if (mounted) {
       setState(() {
         // 有旧数据就继续显示，让下面的提示条去转圈；无数据才全屏等
         _loading = !hasData;
         _emptyHint = null;
       });
     }
-    if (_inflight.contains(tab)) return; // 同一个 tab 已有请求在飞，等它回来
-    if (hasData) {
+
+    if (_inflight.contains(tab)) {
+      if (loadMore && mounted) setState(() => _loadingMore = false);
+      return; // 同一个 tab 已有请求在飞，等它回来
+    }
+    if (!loadMore && hasData) {
       // 已经有内容了：0.6 秒内的重复触发直接吞掉（不影响首次进页面/tab）
       final now = DateTime.now();
       final last = _lastLoadAt[tab];
-      if (last != null && now.difference(last) < _minGap) return;
+      if (last != null && now.difference(last) < _minGap) {
+        if (mounted) setState(() => _loadingMore = false);
+        return;
+      }
       _lastLoadAt[tab] = now;
     }
     _inflight.add(tab);
+    final int page = loadMore ? (_pages[tab] ?? 1) + 1 : 1;
     try {
       String? city;
       if (tab == 'city') {
@@ -135,7 +154,12 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           return;
         }
       }
-      final posts = await PostService.fetchFeed(limit: 30, tab: tab, city: city);
+      final posts = await PostService.fetchFeed(
+        limit: 30,
+        tab: tab,
+        city: city,
+        offset: (page - 1) * 30,
+      );
       List<Post> result = posts;
       if (tab == 'follow') {
         // 本地兜底过滤：老后端忽略 tab 参数会返回全量，
@@ -158,28 +182,47 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           return;
         }
       }
-      if (mounted) {
-        setState(() {
-          // 请求期间用户可能已经切走：结果照样进缓存，但不改别的 tab 的界面
+      if (!mounted) return;
+      setState(() {
+        if (loadMore) {
+          // 去重（演示模式回落时后端会返回同一批，避免死循环追加）
+          final seen =
+              (_cache[tab] ?? const <Post>[]).map((p) => p.id).toSet();
+          final fresh = result.where((p) => !seen.contains(p.id)).toList();
+          _cache[tab] = [...?_cache[tab], ...fresh];
+          _pages[tab] = page;
+          // 本页不足 30 条，或出现重复（演示/老后端）→ 到底了
+          if (fresh.length < result.length || result.length < 30) {
+            _hasMoreMap[tab] = false;
+          }
+        } else {
           _cache[tab] = result;
+          _pages[tab] = 1;
+          _hasMoreMap[tab] = result.length >= 30;
           if (_tabKey == tab) {
             _loading = false;
             _emptyHint = (tab == 'city' && result.isEmpty)
                 ? '当前城市（${city ?? '未知'}）暂无动态，发布动态后会自动展示在这里'
                 : null;
           }
-        });
-      }
+        }
+      });
     } catch (e) {
       if (mounted) {
         setState(() {
-          if (_tabKey == tab) _loading = false;
+          if (_tabKey == tab && !loadMore) _loading = false;
         });
         CenterToast.show(context, '加载失败：$e');
       }
     } finally {
       _inflight.remove(tab);
+      if (loadMore && mounted) setState(() => _loadingMore = false);
     }
+  }
+
+  /// 上滑触底时由滚动监听调用
+  Future<void> _loadMore() async {
+    await _load(loadMore: true);
   }
 
   Future<void> _goLogin() async {
@@ -190,95 +233,86 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // ── 关键修复：发现页改用真正的 AppBar（与首页结构一致） ──
+    //
+    // 之前头部是画在 body 的 Column 里，AppRefresh 的提示条 `Positioned(top:0)`
+    // 就落在卡片区顶部、压在第一排卡片上（用户说的「表层」）。
+    // 现在头部进 AppBar，提示条自然落在导航栏下方、内容之上，和首页一样。
     return Scaffold(
       backgroundColor: AppTheme.background,
-      body: Column(
-        children: [
-          // ── 浅色头部：和设计稿一致 ──
-          //
-          // 钓友圈是「内容流」页面，头部让位给内容：底色就是页面底，
-          // 黑色大标题 + 冷灰副标，唯一的色块是选中那颗黑胶囊。
-          // 状态栏图标转深色（浅底上白字等于看不见）。
-          AnnotatedRegion<SystemUiOverlayStyle>(
-            value: SystemUiOverlayStyle.dark,
-            child: Container(
-              width: double.infinity,
-              color: AppTheme.background,
-              child: SafeArea(
-                bottom: false,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [_header(), _tabs()],
-                ),
-              ),
-            ),
-          ),
-          Expanded(
-            child: Container(
-              color: AppTheme.background,
-              child: _loading
-                  ? const Center(
-                      child: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  : AppRefresh(
-                      onRefresh: _load,
-                      // 每个 tab 各记一份「最后更新」，别把热门的刷新时间
-                      // 显示在关注 tab 上
-                      memoKey: 'discover_$_tabKey',
-                      child: _posts.isEmpty ? _empty() : _grid(),
-                    ),
-            ),
-          ),
-        ],
+      appBar: AppBar(
+        backgroundColor: AppTheme.background,
+        foregroundColor: AppTheme.textPrimary,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shadowColor: Colors.transparent,
+        automaticallyImplyLeading: false,
+        centerTitle: false,
+        toolbarHeight: 58,
+        systemOverlayStyle: SystemUiOverlayStyle.dark,
+        title: _header(),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(58),
+          child: _tabs(),
+        ),
       ),
+      body: _loading
+          ? const Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          : AppRefresh(
+              onRefresh: _load,
+              // 每个 tab 各记一份「最后更新」，别把热门的刷新时间
+              // 显示在关注 tab 上
+              memoKey: 'discover_$_tabKey',
+              child: _posts.isEmpty ? _empty() : _grid(),
+            ),
     );
   }
 
   /// 大标题 + 副标（左侧竖排，和参考图一致）
   Widget _header() {
     final place = _city ?? '附近';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              const Text(
-                '钓友圈',
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w800,
-                  height: 1.1,
-                  color: AppTheme.textPrimary,
-                  letterSpacing: .5,
-                ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            const Text(
+              '钓友圈',
+              style: TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.w800,
+                height: 1.1,
+                color: AppTheme.textPrimary,
+                letterSpacing: .5,
               ),
-              const SizedBox(width: 8),
-              // 右上角一个小圆点，让纯色标题行有节奏（不抢标题）
-              Container(
-                width: 6,
-                height: 6,
-                decoration: const BoxDecoration(
-                  color: AppTheme.accent,
-                  shape: BoxShape.circle,
-                ),
+            ),
+            const SizedBox(width: 8),
+            // 右上角一个小圆点，让纯色标题行有节奏（不抢标题）
+            Container(
+              width: 6,
+              height: 6,
+              decoration: const BoxDecoration(
+                color: AppTheme.accent,
+                shape: BoxShape.circle,
               ),
-            ],
-          ),
-          const SizedBox(height: 2),
-          Text(
-            '看渔获 · 找钓友 · $place',
-            style: const TextStyle(
-                fontSize: 12.5, color: AppTheme.textTertiary),
-          ),
-        ],
-      ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          '看渔获 · 找钓友 · $place',
+          style: const TextStyle(
+              fontSize: 12.5, color: AppTheme.textTertiary),
+        ),
+      ],
     );
   }
 
@@ -352,16 +386,63 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   Widget _grid() {
-    return WaterfallGrid(
-      // 每个 tab 一个独立的 element / 存储桶：来回切不会串滚动位置，
-      // 同一 tab 内重建也能把位置还原回去
-      key: PageStorageKey('discover_grid_$_tabKey'),
-      posts: _posts,
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 110),
-      onTap: (p) => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => PostDetailScreen(post: p)),
+    // 外层 ListView 才是滚动容器；瀑布流缩在里头（禁掉自己的滚动），
+    // 底部接一个独立的「上滑加载更多」指示条——和顶部刷新提示条彻底分离。
+    return NotificationListener<ScrollNotification>(
+      onNotification: (n) {
+        if ((n is ScrollEndNotification || n is ScrollUpdateNotification) &&
+            n.metrics.maxScrollExtent > 0 &&
+            n.metrics.pixels >= n.metrics.maxScrollExtent - 400) {
+          _loadMore();
+        }
+        return false;
+      },
+      child: ListView(
+        // 每个 tab 一个独立的 element / 存储桶：来回切不会串滚动位置，
+        // 同一 tab 内重建也能把位置还原回去
+        key: PageStorageKey('discover_list_$_tabKey'),
+        padding: EdgeInsets.zero,
+        children: [
+          WaterfallGrid(
+            posts: _posts,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 90),
+            onTap: (p) => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => PostDetailScreen(post: p)),
+            ),
+          ),
+          _loadMoreFooter(),
+        ],
       ),
     );
+  }
+
+  /// 上滑加载更多的底部指示器（与顶部刷新提示条完全分离）
+  Widget _loadMoreFooter() {
+    final hasMore = _hasMoreMap[_tabKey] ?? true;
+    if (!hasMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 20),
+        child: Center(
+          child: Text('没有更多了',
+              style: TextStyle(color: AppTheme.textTertiary, fontSize: 12)),
+        ),
+      );
+    }
+    if (_loadingMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 20),
+        child: Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    return const SizedBox(height: 20);
   }
 
   Widget _empty() {
