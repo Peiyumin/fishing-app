@@ -3,12 +3,16 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
 import '../widgets/emoji_panel.dart';
+import '../models/catch_weather.dart';
 import '../models/fishing_species.dart';
 import '../models/post.dart';
+import '../models/weather_forecast.dart';
 import '../services/api_client.dart';
 import '../services/api_config.dart';
 import '../services/fish_service.dart';
@@ -16,8 +20,10 @@ import '../services/location_service.dart';
 import '../services/post_service.dart';
 import '../services/refresh_bus.dart';
 import '../services/session_provider.dart';
+import '../services/weather_service.dart';
 import '../utils/geo_names.dart';
 import '../utils/image_data_uri.dart';
+import '../utils/watermark_stamp.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/location_prompt.dart';
 import 'auth_screen.dart';
@@ -363,6 +369,82 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
     return _catches.map((c) => '${c.species}×${c.count}').join(' · ');
   }
 
+  /// 抓一次「渔获时天气」：有钓点坐标就按钓点抓，没有就用当前定位的缓存包
+  Future<CatchWeather?> _catchWeatherSnapshot() async {
+    try {
+      WeatherBundle? b;
+      final lat = _lat, lng = _lng;
+      if (lat != null && lng != null) {
+        b = await WeatherService.fetchForecast(lat, lng);
+      } else {
+        b = await WeatherService.readCachedForecast();
+      }
+      if (b == null) return null;
+      return CatchWeather.fromBundle(b, DateTime.now());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 把「渔报 · 时间 · 天气 · 渔况 · 钓点」盖到照片**左上角**
+  ///
+  /// - 相机拍的照片已经盖过一次（临时文件名以 fishing_wm_ 开头），这里跳过，避免叠两层；
+  /// - 从相册选的图也统一盖一次 —— 用户要求成片上必须有这些信息，且必须在左上角；
+  /// - 任何一步失败都回退原图，绝不因为加水印挡住发布。
+  Future<List<String>> _stampImages(List<String> paths, CatchWeather? wx) async {
+    if (paths.isEmpty) return paths;
+    final out = <String>[];
+    final dir = await getTemporaryDirectory();
+    for (final p0 in paths) {
+      final name = p0.split(RegExp(r'[\\/]')).last;
+      if (name.startsWith('fishing_wm_')) {
+        out.add(p0);
+        continue;
+      }
+      try {
+        final lines = <WatermarkLine>[
+          const WatermarkLine(
+              '渔报 · 钓鱼打卡', 12.5, FontWeight.w600, Color(0xE6FFFFFF)),
+          WatermarkLine(
+              DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now()),
+              26,
+              FontWeight.w700,
+              const Color(0xFFFFFFFF),
+              4),
+        ];
+        if (wx != null) {
+          lines.add(WatermarkLine(
+            '${wx.description} ${wx.temp.round()}℃ · 湿度${wx.humidity}%'
+            ' · ${windLevelText(wx.windSpeed, wx.windDir)}'
+            ' · 气压${wx.pressure.round()}hPa',
+            12.5,
+            FontWeight.w500,
+            const Color(0xEBFFFFFF),
+          ));
+          lines.add(WatermarkLine(
+              '钓况${wx.score.round()} · ${wx.fishIndex}',
+              12.5,
+              FontWeight.w600,
+              AppTheme.star));
+        }
+        final place = (_placeLabel ?? '').trim();
+        if (place.isNotEmpty) {
+          lines.add(WatermarkLine(place, 12.5, FontWeight.w500,
+              const Color(0xDBFFFFFF)));
+        }
+        final bytes = await File(p0).readAsBytes();
+        final png = await stampWatermarkPng(bytes, lines);
+        final f = File('${dir.path}/fishing_wm_'
+            '${DateTime.now().millisecondsSinceEpoch}_${out.length}.png');
+        await f.writeAsBytes(png, flush: true);
+        out.add(f.path);
+      } catch (_) {
+        out.add(p0);
+      }
+    }
+    return out;
+  }
+
   Future<void> _submit() async {
     final sp = Provider.of<SessionProvider>(context, listen: false);
     if (ApiConfig.enabled && !sp.isLoggedIn) {
@@ -390,13 +472,17 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
     final lengthCm = double.tryParse(_lengthCtrl.text.trim());
     final weightG = double.tryParse(_weightCtrl.text.trim());
 
+    // 天气快照 + 图片水印都用「发布这一刻」的这一份，保证成片、详情页、池塘三处口径一致
+    final wx = await _catchWeatherSnapshot();
+
     setState(() => _submitting = true);
     try {
       if (_editMode) {
         // 编辑：本地新图上传后，与已有网络图合并；视频字段由后端保留原值
-        final uploaded = _images.isEmpty
+        final stamped = await _stampImages(_images, wx);
+        final uploaded = stamped.isEmpty
             ? <String>[]
-            : await ApiClient.uploadImages(_images, watermark: true);
+            : await ApiClient.uploadImages(stamped, watermark: true);
         final images = [..._existingImages, ...uploaded];
         await PostService.updatePost(
           widget.existing!.id,
@@ -408,6 +494,7 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
               .toList(growable: false),
           lengthCm: lengthCm,
           weightG: weightG,
+          weather: wx,
         );
         if (mounted) {
           RefreshBus.bumpFeed();
@@ -418,7 +505,9 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
         await PostService.publish(
           title: _autoTitle,
           body: story.isEmpty ? null : story,
-          imageFiles: _video == null ? _images : const [],
+          imageFiles: _video == null
+              ? await _stampImages(_images, wx)
+              : const <String>[],
           videoFile: _video,
           category: 'post',
           locationName: _locPublic ? _placeLabel : null,
@@ -433,6 +522,7 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
           markWatermark: true,
           lengthCm: lengthCm,
           weightG: weightG,
+          weather: wx,
         );
         if (mounted) {
           RefreshBus.bumpFeed();
