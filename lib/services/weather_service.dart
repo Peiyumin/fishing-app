@@ -33,6 +33,27 @@ class WeatherService {
   /// 缓存有效期（分钟）：超过则视为过期，强制重新拉取，避免显示过时实况。
   static const int _cacheTtlMinutes = 20;
 
+  /// 进程内「最近一次成功拿到的 7 天包」
+  ///
+  /// 为什么必须有一份内存缓存：详情页 / 池塘这类二级页面打开时必须**第一帧
+  /// 就有数**。走 SharedPreferences 是异步的（至少一个事件循环），用户会先
+  /// 看到「待联网」闪一下再出数字。首页基本一定先拉过一次，这里同步读一下
+  /// 就能立刻画出来，之后再静默按钓点刷新。
+  static WeatherBundle? _memory;
+  static DateTime? _memoryAt;
+
+  /// 最近一次成功的天气包（同步读；没有就是 null）
+  static WeatherBundle? get memoryBundle => _memory;
+
+  /// 上面那个包拿到的时间
+  static DateTime? get memoryAt => _memoryAt;
+
+  /// 供测试清理（避免用例之间互相污染）
+  static void clearMemory() {
+    _memory = null;
+    _memoryAt = null;
+  }
+
   /// 缓存是否仍在有效期内（20 分钟内）。无效 / 缺时间戳一律视为过期。
   static bool _isFresh(Map<String, dynamic> m) {
     final ts = m['ts'];
@@ -122,13 +143,18 @@ class WeatherService {
       final lat = (m['lat'] as num?)?.toDouble() ?? 0;
       final lng = (m['lng'] as num?)?.toDouble() ?? 0;
       final cma = m['cma'];
-      return WeatherBundle.fromOpenMeteo(
+      final b = WeatherBundle.fromOpenMeteo(
         lat,
         lng,
         Map<String, dynamic>.from(j),
         ensembleJson:
             cma is Map ? Map<String, dynamic>.from(cma) : null,
       );
+      // 从文件读出来的这份也塞进内存：冷启动时首页还没拉过，详情页靠它秒出
+      _memory ??= b;
+      _memoryAt ??= DateTime.fromMillisecondsSinceEpoch(
+          (m['ts'] as num?)?.toInt() ?? 0);
+      return b;
     } catch (_) {
       return null;
     }
@@ -146,7 +172,10 @@ class WeatherService {
   /// 拉取 7 天预报 + 逐小时（温度/湿度/气压/降雨概率/降雨量/风/紫外线）
   static Future<WeatherBundle> fetchForecast(double lat, double lng) async {
     if (testForecastOverride != null) {
-      return testForecastOverride!(lat, lng);
+      final b = await testForecastOverride!(lat, lng);
+      _memory = b;
+      _memoryAt = DateTime.now();
+      return b;
     }
     final cmaF = _fetchCma(lat, lng);
     final uri = Uri.parse(
@@ -170,6 +199,8 @@ class WeatherService {
     final cma = await cmaF;
     final bundle = WeatherBundle.fromOpenMeteo(lat, lng, json,
         ensembleJson: cma);
+    _memory = bundle;
+    _memoryAt = DateTime.now();
     await _saveCache(_fcCacheKey, {
       'lat': lat,
       'lng': lng,
@@ -178,6 +209,43 @@ class WeatherService {
       'cma': cma,
     });
     return bundle;
+  }
+
+  /// 拉一份「往前带 N 天」的逐时包（v2.1.43）
+  ///
+  /// 用途：**老渔获没有天气快照**（`posts.weather_json` 为空的旧数据）时，
+  /// 详情页要按发布时间还原那一刻的天气。Open-Meteo 的 forecast 接口支持
+  /// `past_days`（最多 92 天），一次请求就能拿到「几天前 + 未来 7 天」，
+  /// 不必换 archive 接口（那套延迟 5 天、字段也不一样）。
+  ///
+  /// ★ 这份包**不写缓存、不更新内存**：它的「当前小时」是几天前，混进首页
+  ///   缓存会把首页指数带偏。只在调用方自己那一次里用。
+  static Future<WeatherBundle?> fetchForecastAround(
+    double lat,
+    double lng, {
+    int pastDays = 5,
+  }) async {
+    if (testForecastOverride != null) return testForecastOverride!(lat, lng);
+    try {
+      final uri = Uri.parse(
+        '$_base?latitude=$lat&longitude=$lng'
+        '&hourly=temperature_2m,relative_humidity_2m,precipitation,'
+        'precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m,'
+        'pressure_msl,uv_index,cloud_cover'
+        '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,'
+        'precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant,'
+        'uv_index_max,sunrise,sunset'
+        '&timezone=auto&forecast_days=7'
+        '&past_days=${pastDays.clamp(1, 92)}',
+      );
+      final res = await _client.get(uri).timeout(_timeout);
+      if (res.statusCode != 200) return null;
+      final json = jsonDecode(res.body) as Map<String, dynamic>;
+      final b = WeatherBundle.fromOpenMeteo(lat, lng, json);
+      return b.hours.isEmpty ? null : b;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 读上次缓存里的坐标（不看有效期）
@@ -245,8 +313,17 @@ class FishingWeather {
     // ★ 用「当前所在的那一小时」（20:35 → 20:00），不是"绝对最近"
     //   （20:35 会挑到 21:00 那个还没到的时段）。天气页顶部卡用的是同一个函数，
     //   两处必须一致，否则同一时刻会显示两个时段。
-    final i = b.indexOfCurrentHour(now);
-    final h = i >= 0 ? b.hours[i] : null;
+    return FishingWeather.fromIndex(b, b.indexOfCurrentHour(now));
+  }
+
+  /// 按**指定小时**构造（v2.1.43）
+  ///
+  /// 用于「回放某一条渔获发布那一刻」：鱼获详情页要显示的是拍照/发布时的
+  /// 气温与指数，而不是打开页面这一刻的。老帖子没有快照时，客户端会按发布
+  /// 时间回拉历史逐时，再用 [indexOfCurrentHour] 定位到那一小时，交给这里算分。
+  /// 天气页、首页仍然走 [fromBundle]（= 现在这一小时），两者口径互不干扰。
+  factory FishingWeather.fromIndex(WeatherBundle b, int i) {
+    final h = i >= 0 && i < b.hours.length ? b.hours[i] : null;
     // 与天气页同源的水温/水氧（热惯性模型），保证两页指数可对齐
     final metrics = WaterMetrics.derive(b.hours);
     final w = i >= 0 && i < metrics.length
@@ -267,7 +344,7 @@ class FishingWeather {
             dissolvedOxygen: w.oxygen,
             weatherCode: b.curCode,
             precipProb: b.curPrecipProb,
-            hour: now.hour,
+            hour: h?.time.hour ?? DateTime.now().hour,
             dayRange: b.today.tempRange,
             sp: sp,
           );
