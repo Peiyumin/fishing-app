@@ -131,7 +131,8 @@ class _ArticleFeedState extends State<ArticleFeed>
   }
 
   Future<void> _load() async {
-    if (mounted) setState(() => _loading = true);
+    // 已有文章时刷新不清空列表，避免整块消失闪白
+    if (mounted) setState(() => _loading = _list.isEmpty);
     final list = await ContentService.fetchArticles(category: widget.category);
     if (!mounted) return;
     setState(() {
