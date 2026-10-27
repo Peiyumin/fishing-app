@@ -104,6 +104,7 @@ class SpotService {
       fish: (r['fish'] ?? '') as String,
       tags: (r['tags'] ?? '') as String,
       phone: (r['phone'] ?? '') as String,
+      delivery: (r['delivery'] as num?)?.toInt() == 1,
       reportCount: (r['report_count'] as num?)?.toInt() ?? 0,
       verified: (r['verified'] as num?)?.toInt() == 1,
       commentCount: (r['comment_count'] as num?)?.toInt() ?? 0,
@@ -135,6 +136,7 @@ class SpotService {
     List<String> images = const [], // 环境展示图（服务器绝对 URL，最多 9 张）
     String phone = '',
     double rating = 0,
+    bool delivery = false,
   }) async {
     if (!ApiConfig.enabled) {
       _userSpots.insert(
@@ -155,6 +157,7 @@ class SpotService {
           fish: fish,
           tags: tags,
           phone: phone,
+          delivery: delivery,
         ),
       );
       return;
@@ -175,6 +178,7 @@ class SpotService {
       'images': images,
       'phone': phone,
       'rating': rating,
+      'delivery': delivery,
     });
   }
 
