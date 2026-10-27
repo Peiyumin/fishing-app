@@ -184,7 +184,7 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
     if (code.contains('cameraaccessdenied') ||
         code.contains('permission') ||
         code.contains('denied')) {
-      return '相机权限没开，去「设置 → 垂钓圈 → 相机」打开后再进来';
+      return '相机权限没开，去「设置 → 渔报 → 相机」打开后再进来';
     }
     if (code.contains('audiodenied') || code.contains('microphone')) {
       return '麦克风权限没开，录像会没有声音';
@@ -402,7 +402,7 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
   List<WatermarkLine> _watermarkLines() {
     final lines = <WatermarkLine>[
       const WatermarkLine(
-          '垂钓圈 · 钓鱼打卡', 12.5, FontWeight.w600, Color(0xE6FFFFFF)),
+          '渔报 · 钓鱼打卡', 12.5, FontWeight.w600, Color(0xE6FFFFFF)),
       WatermarkLine(DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now()), 26,
           FontWeight.w700, const Color(0xFFFFFFFF), 4),
     ];
