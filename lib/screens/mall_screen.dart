@@ -32,7 +32,8 @@ class _MallScreenState extends State<MallScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    // 已有商品时刷新不清空列表，避免整块消失闪白
+    setState(() => _loading = _items.isEmpty);
     final results = await Future.wait([
       ShopService.fetchProducts(),
       ShopService.fetchMyPoints(),
@@ -72,11 +73,18 @@ class _MallScreenState extends State<MallScreen> {
           ),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : AppRefresh(
-              onRefresh: _load,
-              child: ListView(
+      body: AppRefresh(
+        onRefresh: _load,
+        child: _loading
+            ? ListView(
+                children: [
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.55,
+                    child: const Center(child: CircularProgressIndicator()),
+                  ),
+                ],
+              )
+            : ListView(
                 children: [
                   _banner(),
                   if (_cats.length > 1) _catBar(),
@@ -84,7 +92,7 @@ class _MallScreenState extends State<MallScreen> {
                   const SizedBox(height: 24),
                 ],
               ),
-            ),
+      ),
     );
   }
 
@@ -116,7 +124,7 @@ class _MallScreenState extends State<MallScreen> {
               children: [
                 Row(
                   children: [
-                    const Text('垂钓圈 · 渔具商城',
+                    const Text('渔报 · 渔具商城',
                         style: TextStyle(
                             color: Colors.white,
                             fontSize: 17,
