@@ -40,7 +40,7 @@ class _StampPreviewState extends State<StampPreview> {
       final res = await http.get(Uri.parse('sample_fish.jpg'));
       final lines = <WatermarkLine>[
         const WatermarkLine(
-            '垂钓圈 · 钓鱼打卡', 12.5, FontWeight.w600, Color(0xE6FFFFFF)),
+            '渔报 · 钓鱼打卡', 12.5, FontWeight.w600, Color(0xE6FFFFFF)),
         WatermarkLine('2026-10-23 21:03', 26, FontWeight.w700,
             const Color(0xFFFFFFFF), 4),
         const WatermarkLine(
@@ -71,7 +71,7 @@ class _StampPreviewState extends State<StampPreview> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('垂钓圈 · 钓鱼打卡 多云 湿度 钓况 厦门市 集美区'),
+              Text('渔报 · 钓鱼打卡 多云 湿度 钓况 厦门市 集美区'),
               SizedBox(height: 12),
               CircularProgressIndicator(),
             ],
