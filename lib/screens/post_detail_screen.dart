@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../app_theme.dart';
+import '../widgets/catch_sticker.dart';
 import '../widgets/emoji_panel.dart';
 import 'package:provider/provider.dart';
 
@@ -213,6 +214,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     }
   }
 
+  /// 发送中标志：表情是可以连点的（图没有禁用态），不挡一下会一口气发出好几条
+  bool _sending = false;
+
   Future<void> _send([String? preset]) async {
     final sp = Provider.of<SessionProvider>(context, listen: false);
     if (!sp.isLoggedIn) {
@@ -222,8 +226,10 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       );
       return;
     }
+    if (_sending) return;
     final text = (preset ?? _ctrl.text).trim();
     if (text.isEmpty) return;
+    setState(() => _sending = true);
     try {
       await PostService.addComment(_post.id, text);
       _ctrl.clear();
@@ -233,6 +239,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     } catch (e) {
       if (!mounted) return;
       CenterToast.show(context, '评论失败：$e');
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
   }
 
@@ -946,8 +954,17 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     );
   }
 
-  // ══════════════════════ 钓友们说 ══════════════════════
+  // ══════════════════════ 点赞统计 ══════════════════════
 
+  /// ★ 已停用（v2.1.40）：原来正文上方横着一条
+  ///   「钓友们说  😀×85  85 人夸过 >」，点过赞就会冒出来，等于把点赞数
+  ///   塞进了评论区的位置，看得人以为点赞也是一条评论。
+  ///   用户要求点赞不要出现在「钓友们说」，因此这里不再上屏：
+  ///   点赞数只在底部栏的拇指图标上体现。
+  ///
+  /// 代码先留着（不是删掉）：以后要做「谁赞过」的独立页，
+  /// 这条正好是入口，改成 push 一个点赞人列表页即可复活。
+  // ignore: unused_element
   Widget _praiseBar() {
     if (_post.likeCount <= 0) return const SizedBox.shrink();
     final shown = _post.likeCount > 99 ? '99+' : '${_post.likeCount}';
@@ -1490,6 +1507,30 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
   // ══════════════════════ 评论 ══════════════════════
 
+  /// 评论正文：纯表情的单独放大居中，和文字混排的行内小图
+  ///
+  /// 正文里存的还是「[好鱼！]」这种中文，只有装了新版才认得出是表情 ——
+  /// 老版本 / 网页后台看到的仍是能读懂的文字，不会变成乱码。
+  Widget _commentBody(String content) {
+    const base = TextStyle(
+        fontSize: 14.5, height: 1.5, color: AppTheme.textPrimary);
+    final only = StickerCodec.single(content);
+    if (only != null) {
+      // 只有表情：按表情包的大小给（比行内大，一眼能看清图上的字）
+      return Padding(
+        padding: const EdgeInsets.only(top: 2, bottom: 2),
+        child: StickerImage(sticker: only, size: 62, animate: true),
+      );
+    }
+    if (!StickerCodec.has(content)) return Text(content, style: base);
+    return Text.rich(
+      TextSpan(
+        children: StickerCodec.spans(content, size: 26),
+      ),
+      style: base,
+    );
+  }
+
   Widget _commentTile(Map<String, dynamic> c) {
     final name = (c['user_nickname'] as String?) ?? '钓友';
     final avatar = c['user_avatar'] as String?;
@@ -1548,11 +1589,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                Text(content,
-                    style: const TextStyle(
-                        fontSize: 14.5,
-                        height: 1.5,
-                        color: AppTheme.textPrimary)),
+                _commentBody(content),
                 const SizedBox(height: 5),
                 const Text('回复',
                     style: TextStyle(
@@ -1568,15 +1605,6 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   // ══════════════════════ 底部栏 ══════════════════════
 
   Widget _bottomBar() {
-    // ★ 原来这里用 🐟🔥😱📍 当贴纸图标。emoji 依赖系统彩色字体，
-    //   ROM 精简 / 老 Android 上会渲染成小方块。换成 Material 图标，
-    //   图标字体随包打包（uses-material-design: true），永远有字形。
-    const quick = [
-      (Icons.set_meal, '好鱼！'),
-      (Icons.local_fire_department, '爆护了'),
-      (Icons.sentiment_very_satisfied, '这么大？'),
-      (Icons.place, '求钓点'),
-    ];
     return Container(
       decoration: const BoxDecoration(
         color: AppTheme.surface,
@@ -1587,44 +1615,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 快捷贴纸：一点即发
-            SizedBox(
-              height: 44,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
-                children: [
-                  for (final q in quick)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-                        onTap: () => _send(q.$2),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                          decoration: BoxDecoration(
-                            color: AppTheme.primarySoft,
-                            borderRadius:
-                                BorderRadius.circular(AppTheme.radiusPill),
-                            border: Border.all(color: AppTheme.primaryBorder),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(q.$1, size: 15, color: AppTheme.primaryDark),
-                              const SizedBox(width: 5),
-                              Text(q.$2,
-                                  style: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                      color: AppTheme.primaryDark)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
+            // 快捷表情：一点即发（表情图本身带文字，不需要再加文字胶囊）
+            LiveStickerBar(onTap: (s) => _send(s.token)),
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
               child: Row(
@@ -1831,7 +1823,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     _authorCard(),
                     _waterCard(),
                     _statsCard(),
-                    _praiseBar(),
+                    // _praiseBar() 已按用户要求下线：点赞不占评论区的位置
                     // 正文
                     if ((_post.body ?? '').trim().isNotEmpty)
                       Padding(
