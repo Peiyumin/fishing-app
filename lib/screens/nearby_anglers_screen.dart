@@ -31,7 +31,8 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
 
   Future<void> _init() async {
     setState(() {
-      _loading = true;
+      // 已有列表时刷新不清空，避免整块消失闪白
+      _loading = _list.isEmpty;
       _error = null;
     });
     try {
