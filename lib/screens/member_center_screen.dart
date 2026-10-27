@@ -25,6 +25,9 @@ class _MemberCenterScreenState extends State<MemberCenterScreen> {
   bool _loading = true;
   String _planId = '';
   String _payType = 'points'; // points 积分 / balance 余额 / cash 现金
+  // `_center` 是不可空类型（默认空对象），不能拿它判「有没有拉到过」——
+  // 之前写成 `_center == null` 恒为 false，等于首屏永远不转圈。单独记一个标志。
+  bool _loadedOnce = false;
   bool _buying = false;
   bool _agreed = false;
 
@@ -35,8 +38,8 @@ class _MemberCenterScreenState extends State<MemberCenterScreen> {
   }
 
   Future<void> _load() async {
-    // 已加载过会员中心时刷新不清空，避免整块消失闪白
-    setState(() => _loading = _center == null);
+    // 已经拿到过数据时刷新不清空（只更新内容），避免整块消失闪白
+    setState(() => _loading = !_loadedOnce);
     try {
       final r = await MemberService.plans();
       final info = await MemberService.info();
@@ -47,6 +50,7 @@ class _MemberCenterScreenState extends State<MemberCenterScreen> {
         _info = info;
         _planId = _plans.isNotEmpty ? _plans.first.id : '';
         _loading = false;
+        _loadedOnce = true;
       });
     } catch (e) {
       if (!mounted) return;
