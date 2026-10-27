@@ -1,3 +1,4 @@
+import '../models/catch_weather.dart';
 import '../models/post.dart';
 import 'api_client.dart';
 import 'api_config.dart';
@@ -250,6 +251,7 @@ class PostService {
     bool markWatermark = false,
     double? lengthCm, // 渔获体长(cm)：AI 估算或用户手填
     double? weightG, // 渔获重量(g)
+    CatchWeather? weather, // 渔获时天气快照（发布那一刻抓，之后详情页不再重算）
   }) async {
     if (_demo) {
       _demoPosts.insert(
@@ -271,6 +273,7 @@ class PostService {
           locPublic: locPublic,
           lengthCm: lengthCm,
           weightG: weightG,
+          weather: weather,
           createdAt: DateTime.now(),
         ),
       );
@@ -308,6 +311,7 @@ class PostService {
       'locPublic': locPublic,
       if (lengthCm != null) 'lengthCm': lengthCm,
       if (weightG != null) 'weightG': weightG,
+      if (weather != null) 'weather': weather.toJson(),
     });
   }
 
@@ -391,6 +395,7 @@ class PostService {
     List<Map<String, dynamic>> fish = const [],
     double? lengthCm,
     double? weightG,
+    CatchWeather? weather,
   }) async {
     if (_demo) return;
     if (ApiClient.token == null) throw Exception('请先登录');
@@ -401,6 +406,8 @@ class PostService {
       'fish': fish,
       if (lengthCm != null) 'lengthCm': lengthCm,
       if (weightG != null) 'weightG': weightG,
+      // 编辑时一般不改天气；传了才覆盖，没传后端保留原快照
+      if (weather != null) 'weather': weather.toJson(),
     });
   }
 }
