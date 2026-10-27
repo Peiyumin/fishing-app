@@ -36,7 +36,8 @@ class _FollowListScreenState extends State<FollowListScreen> {
 
   Future<void> _load() async {
     setState(() {
-      _loading = true;
+      // 已有列表时刷新不清空，避免整块消失闪白
+      _loading = _users.isEmpty;
       _error = null;
     });
     try {
