@@ -11,11 +11,13 @@ import '../models/fishing_species.dart';
 import '../models/post.dart';
 import '../services/api_client.dart';
 import '../services/api_config.dart';
+import '../services/fish_service.dart';
 import '../services/location_service.dart';
 import '../services/post_service.dart';
 import '../services/refresh_bus.dart';
 import '../services/session_provider.dart';
 import '../utils/geo_names.dart';
+import '../utils/image_data_uri.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/location_prompt.dart';
 import 'auth_screen.dart';
@@ -54,6 +56,10 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
   final List<_CatchItem> _catches = [];
   bool _submitting = false;
 
+  /// 渔获尺寸：体长(cm) / 重量(g)。AI 视觉估算预填，用户可改。
+  final TextEditingController _lengthCtrl = TextEditingController();
+  final TextEditingController _weightCtrl = TextEditingController();
+
   static const int _maxMedia = 5;
   static const int _maxStory = 3000;
   final _picker = ImagePicker();
@@ -88,6 +94,8 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
   @override
   void dispose() {
     _storyCtrl.dispose();
+    _lengthCtrl.dispose();
+    _weightCtrl.dispose();
     super.dispose();
   }
 
@@ -372,6 +380,16 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
       CenterToast.show(context, '写点渔获故事或选择钓到的鱼');
       return;
     }
+
+    // 渔获照片核验（AI 视觉）：发布前扫描首图是否为真实鱼获
+    if (!_editMode && _images.isNotEmpty) {
+      final passed = await _verifyCatchPhoto(_images.first);
+      if (!passed) return; // 核验未通过（已提示），不发布
+    }
+
+    final lengthCm = double.tryParse(_lengthCtrl.text.trim());
+    final weightG = double.tryParse(_weightCtrl.text.trim());
+
     setState(() => _submitting = true);
     try {
       if (_editMode) {
@@ -388,6 +406,8 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
           fish: _catches
               .map((c) => {'name': c.species, 'count': c.count})
               .toList(growable: false),
+          lengthCm: lengthCm,
+          weightG: weightG,
         );
         if (mounted) {
           RefreshBus.bumpFeed();
@@ -411,6 +431,8 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
           city: await GeoNames.currentCity() ?? '',
           // 渔获照片上传时让后端叠加品牌水印（位置/大小/透明图由后台「图片水印」控制）
           markWatermark: true,
+          lengthCm: lengthCm,
+          weightG: weightG,
         );
         if (mounted) {
           RefreshBus.bumpFeed();
@@ -451,6 +473,78 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
     );
   }
 
+  // ───────────────────────── 渔获照片核验 ─────────────────────────
+
+  /// 发布前扫描首图是否为真实鱼获。
+  /// 返回 true=可以发布；false=核验未通过（已提示，调用方应中止发布）。
+  Future<bool> _verifyCatchPhoto(String path) async {
+    String dataUri;
+    try {
+      dataUri = await fileToScaledDataUri(File(path), maxWidth: 448);
+    } catch (_) {
+      return true; // 读图/缩放失败不阻塞发布
+    }
+    try {
+      final r = await FishService.recognize(dataUri);
+      // 明确判定为「没有鱼」→ 直接拒绝
+      if (r.hasFish == false) {
+        if (mounted) {
+          CenterToast.show(context, '这不是真实鱼获照片，请发布真实的渔获信息',
+              icon: Icons.block);
+        }
+        return false;
+      }
+      // AI 未配置（needManual）→ 降级为人工确认
+      if (r.hasFish == null) {
+        final sure = await _confirmRealCatch();
+        if (!sure) return false;
+      }
+      // 通过：用 AI 结果预填鱼种与尺寸（用户仍可改）
+      if (mounted) {
+        setState(() {
+          if (_catches.isEmpty && r.matched.isNotEmpty) {
+            _catches.add(_CatchItem(r.matched.first.name));
+          }
+          if (_lengthCtrl.text.trim().isEmpty && r.lengthCm != null) {
+            _lengthCtrl.text = r.lengthCm!.toStringAsFixed(1);
+          }
+          if (_weightCtrl.text.trim().isEmpty && r.weightG != null) {
+            _weightCtrl.text = r.weightG!.toStringAsFixed(0);
+          }
+        });
+      }
+      return true;
+    } catch (_) {
+      // AI 调用异常（网络/配额）→ 降级为人工确认，别把用户卡死
+      final sure = await _confirmRealCatch();
+      return sure;
+    }
+  }
+
+  /// AI 不可用时的兜底：让用户确认照片是真实渔获
+  Future<bool> _confirmRealCatch() async {
+    if (!mounted) return false;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('请确认渔获照片'),
+        content: const Text('当前无法自动核验照片，请确认这张照片是真实的钓鱼渔获。'
+            '发布非渔获内容将被管理员处理。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('确认发布'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   // ───────────────────────── UI ─────────────────────────
 
   @override
@@ -476,6 +570,8 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
           _storyCard(),
           const SizedBox(height: 12),
           _catchCard(),
+          const SizedBox(height: 12),
+          _sizeCard(),
         ],
       ),
       bottomNavigationBar: SafeArea(
@@ -971,6 +1067,79 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
           ),
           const SizedBox(height: 8),
           const Text('按钓法分了台钓 / 路亚 / 海钓三组目标鱼，选错组别也能在列表里找到',
+              style:
+                  TextStyle(fontSize: 10.5, color: AppTheme.textSecondary)),
+        ],
+      ),
+    );
+  }
+
+  /// 渔获尺寸：体长(cm) / 重量(g)。AI 核验后自动预填，用户可改。
+  Widget _sizeCard() {
+    return _card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _cardTitle(Icons.straighten_outlined, '渔获尺寸',
+              trailing: '用于池塘按比例缩放'),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _lengthCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  maxLength: 6,
+                  buildCounter: (_,
+                          {required currentLength, required maxLength, required isFocused}) =>
+                      null,
+                  decoration: InputDecoration(
+                    hintText: '体长',
+                    hintStyle: TextStyle(
+                        fontSize: 12.5, color: AppTheme.textSecondary),
+                    suffixText: 'cm',
+                    filled: true,
+                    fillColor: AppTheme.primarySoft,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _weightCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  maxLength: 8,
+                  buildCounter: (_,
+                          {required currentLength, required maxLength, required isFocused}) =>
+                      null,
+                  decoration: InputDecoration(
+                    hintText: '重量',
+                    hintStyle: TextStyle(
+                        fontSize: 12.5, color: AppTheme.textSecondary),
+                    suffixText: 'g',
+                    filled: true,
+                    fillColor: AppTheme.primarySoft,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text('尺寸真实填写后，池塘里的鱼会按真实大小 ×10 显示',
               style:
                   TextStyle(fontSize: 10.5, color: AppTheme.textSecondary)),
         ],
