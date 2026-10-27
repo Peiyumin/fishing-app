@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:intl/intl.dart';
 
 import 'badge.dart';
+import 'catch_weather.dart';
 
 /// 动态/渔获发布 数据模型
 /// 对应 posts 表，并通过外联 users 取到作者昵称与头像
@@ -51,6 +52,9 @@ class Post {
   final double? lengthCm;
   final double? weightG;
 
+  /// 渔获时天气快照（发布那一刻抓的，之后永不变；老帖子为 null）
+  final CatchWeather? weather;
+
   static const Map<String, String> categoryLabels = {
     'post': '渔获',
     'ask': '问答',
@@ -87,6 +91,7 @@ class Post {
     this.locPublic = true,
     this.lengthCm,
     this.weightG,
+    this.weather,
     this.badges = const [],
   });
 
@@ -131,8 +136,25 @@ class Post {
               : (json['loc_public'] as num?)?.toInt() != 0),
       lengthCm: (json['length_cm'] as num?)?.toDouble(),
       weightG: (json['weight_g'] as num?)?.toDouble(),
+      // 列表/详情走 posts.*（weather_json 是字符串），/catch/mine 给的是 weather 对象
+      weather: parseWeather(json['weather'] ?? json['weather_json']),
       badges: parseBadges(json['badges']),
     );
+  }
+
+  /// 天气快照：可能是 JSON 字符串、Map，或者没有
+  static CatchWeather? parseWeather(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is Map) return CatchWeather.fromJson(raw);
+    if (raw is String && raw.trim().isNotEmpty) {
+      try {
+        final v = jsonDecode(raw);
+        return v is Map ? CatchWeather.fromJson(v) : null;
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
   }
 
   /// 徽章字段（后端可能直接返回数组，也可能给 JSON 字符串）
@@ -257,6 +279,7 @@ class Post {
     bool? locPublic,
     double? lengthCm,
     double? weightG,
+    CatchWeather? weather,
     List<BadgeItem>? badges,
   }) {
     return Post(
@@ -287,6 +310,7 @@ class Post {
       locPublic: locPublic ?? this.locPublic,
       lengthCm: lengthCm ?? this.lengthCm,
       weightG: weightG ?? this.weightG,
+      weather: weather ?? this.weather,
       badges: badges ?? this.badges,
     );
   }
