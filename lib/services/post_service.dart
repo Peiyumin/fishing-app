@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import '../models/catch_weather.dart';
 import '../models/post.dart';
 import 'api_client.dart';
@@ -100,6 +102,11 @@ class PostService {
   static List<Post> get demoPosts => List<Post>.from(_demoPosts);
 
   /// 把后端 JSON 行映射为 Post 模型
+  /// 对外暴露一层的映射（只给测试用）：后端 /posts 行的字段名与模型不完全一致
+  /// （user_nickname / content / images / is_me=1），这里保证只有一份解析逻辑
+  @visibleForTesting
+  static Post mapApiRow(Map row) => _fromApi(row);
+
   static Post _fromApi(Map row) {
     return Post(
       id: row['id'] as String,
@@ -127,11 +134,19 @@ class PostService {
       viewCount: (row['view_count'] as num?)?.toInt() ?? 0,
       city: (row['city'] as String?) ?? '',
       authorVip: (row['user_vip'] as num?)?.toInt() ?? 0,
-      isMe: (row['is_me'] as bool?) ?? false,
+      // ★ is_me 后端给的是 1/0（PHP 里赋值 `$r['is_me'] = 1`），JSON 里是数字不是
+      //   true/false —— 用 `as bool?` 会拿到 null，「我的作品」兜底里按 isMe 过滤
+      //   就会一条都筛不出来。统一走容错解析。
+      isMe: Post.truthy(row['is_me']),
+      isFollowing: Post.truthy(row['is_following']),
+      userLevel: (row['user_level'] as num?)?.toInt() ?? 1,
       fish: Post.parseFish(row['fish']),
       locPublic: row['loc_public'] == null
           ? true
-          : ((row['loc_public'] as num?)?.toInt() ?? 1) != 0,
+          : Post.truthy(row['loc_public']),
+      lengthCm: (row['length_cm'] as num?)?.toDouble(),
+      weightG: (row['weight_g'] as num?)?.toDouble(),
+      weather: Post.parseWeather(row['weather'] ?? row['weather_json']),
     );
   }
 
@@ -363,15 +378,46 @@ class PostService {
 
   /// 我的发布列表（按当前登录用户查询自己的全部未删除动态）
   /// 用 Post.fromJson 解析，带上 is_me 标记，确保「我的发布」页完整且可编辑/删除
+  ///
+  /// ★ 这里**绝不能**回落到 _demoPosts：那三条（老钓翁/路亚小王/野钓阿强）是
+  ///   内置演示数据，不是当前用户发的，一旦接口出错就会在「我的作品」里
+  ///   冒出一堆别人的帖子（用户实测截图就是这么来的）。
+  ///   - 未登录 → 空列表（页面会提示去登录）
+  ///   - /posts/mine 失败（老后端把 mine 当成 post id 查了）→ 用公开列表
+  ///     翻几页、按 is_me 过滤兜底，保证仍能看到自己的作品
   static Future<List<Post>> fetchMyPosts() async {
     if (_demo) return List<Post>.from(_demoPosts);
+    if (ApiClient.token == null) return const [];
     try {
       final data = await ApiClient.get('/posts/mine') as List;
-      return data.map((row) => Post.fromJson(row as Map<String, dynamic>)).toList();
+      return data.map((row) => _fromApi(row as Map)).toList();
     } catch (_) {
-      // 后端不可达：回落到演示数据，保证 App 始终可用
-      return List<Post>.from(_demoPosts);
+      return _fetchMyPostsByScan();
     }
+  }
+
+  /// 兜底：翻公开列表，挑出 is_me 的（最多翻 3 页 / 150 条）
+  static Future<List<Post>> _fetchMyPostsByScan() async {
+    const pageSize = 50;
+    final mine = <Post>[];
+    try {
+      for (var page = 1; page <= 3; page++) {
+        final data = await ApiClient.get('/posts', {
+          'page': '$page',
+          'size': '$pageSize',
+        }) as List;
+        if (data.isEmpty) break;
+        for (final row in data) {
+          final p = _fromApi(row as Map);
+          if (p.isMe) mine.add(p);
+        }
+        if (data.length < pageSize) break;
+      }
+    } catch (_) {
+      // 连公开列表都取不到：返回已经拿到的部分（可能为空），由页面提示重试
+    }
+    mine.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return mine;
   }
 
   /// 删除自己发布的动态（仅作者，后端二次校验）
