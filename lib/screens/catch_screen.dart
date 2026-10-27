@@ -44,7 +44,9 @@ class _CatchScreenState extends State<CatchScreen> {
 
   Future<void> _load() async {
     setState(() {
-      _loading = true;
+      // 已有内容时刷新不再清空列表：否则 AppRefresh 被整块销毁 → 闪白 +
+      // 滚动位置归零，提示条也没机会显示。只在「本来就没数据」时全屏转圈。
+      _loading = _posts.isEmpty;
       _emptyHint = null;
     });
     try {
@@ -153,40 +155,49 @@ class _CatchScreenState extends State<CatchScreen> {
           ),
         ),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : AppRefresh(
-              onRefresh: _load,
-              child: _posts.isEmpty
-                  ? ListView(
-                      children: [
-                        SizedBox(
-                          height: MediaQuery.of(context).size.height * 0.55,
-                          child: Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.phishing,
-                                    size: 46,
-                                    color: Colors.grey.withOpacity(0.45)),
-                                const SizedBox(height: 10),
-                                Text(
-                                  _emptyHint ?? '这里还没有渔获，下拉刷新试试',
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                      fontSize: 14,
-                                      color: AppTheme.textSecondary),
-                                ),
-                              ],
-                            ),
+      // ★ AppRefresh 永远挂在树上（刷新时不清空列表），只在其内部切换
+      //   首屏转圈 / 空态 / 列表 —— 这样下拉刷新不会闪白、滚动位置不丢。
+      body: AppRefresh(
+        onRefresh: _load,
+        child: _loading
+            ? ListView(
+                children: [
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.55,
+                    child: const Center(child: CircularProgressIndicator()),
+                  ),
+                ],
+              )
+            : _posts.isEmpty
+                ? ListView(
+                    children: [
+                      SizedBox(
+                        height: MediaQuery.of(context).size.height * 0.55,
+                        child: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.phishing,
+                                  size: 46,
+                                  color: Colors.grey.withOpacity(0.45)),
+                              const SizedBox(height: 10),
+                              Text(
+                                _emptyHint ?? '这里还没有渔获，下拉刷新试试',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                    fontSize: 14,
+                                    color: AppTheme.textSecondary),
+                              ),
+                            ],
                           ),
                         ),
-                      ],
-                    )
-                  : ListView(
-                      children: _posts.map((p) => PostCard(post: p)).toList(),
-                    ),
-            ),
+                      ),
+                    ],
+                  )
+                : ListView(
+                    children: _posts.map((p) => PostCard(post: p)).toList(),
+                  ),
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _publish,
         backgroundColor: AppTheme.primary,
