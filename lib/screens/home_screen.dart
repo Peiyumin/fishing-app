@@ -30,6 +30,7 @@ import 'weather_screen.dart';
 import 'spots_screen.dart';
 import 'spot_detail_screen.dart';
 import '../widgets/app_refresh.dart';
+import '../services/app_settings.dart';
 
 /// 首页：搜索框 + 宫格导航 + 天气/钓点 + 实时动态流
 class HomeScreen extends StatefulWidget {
@@ -169,10 +170,16 @@ class _HomeScreenState extends State<HomeScreen>
       final changed =
           newIds.length != oldIds.length || !oldIds.containsAll(newIds);
       if (changed) {
-        setState(() {
-          _posts = posts;
-          _lastUpdated = DateTime.now();
-        });
+        // 个性化推荐开启时首页是「推荐序」，不能直接塞时间序的那一页，
+        // 否则新帖到达后整列顺序会突然跳一次 —— 重新按当前排序拉一页
+        if (AppSettings.instance.personalized) {
+          await _loadFeed(silent: true);
+        } else {
+          setState(() {
+            _posts = posts;
+            _lastUpdated = DateTime.now();
+          });
+        }
       }
     } catch (_) {
       // 轮询失败静默，下次再试
@@ -400,7 +407,12 @@ class _HomeScreenState extends State<HomeScreen>
     }
     try {
       final page = loadMore ? _feedPage + 1 : 1;
-      final posts = await PostService.fetchFeed(limit: 20, offset: (page - 1) * 20);
+      final posts = await PostService.fetchFeed(
+        limit: 20,
+        offset: (page - 1) * 20,
+        // 「设置 - 个性化推荐」关掉后按纯时间倒序，不再按热度推荐
+        tab: AppSettings.instance.personalized ? 'recommend' : null,
+      );
       if (!mounted) return;
       setState(() {
         if (loadMore) {
