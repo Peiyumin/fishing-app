@@ -14,14 +14,17 @@ import '../widgets/location_prompt.dart';
 import 'auth_screen.dart';
 import 'publish_spot_screen.dart';
 import 'publish_venue_screen.dart';
+import 'shop_detail_screen.dart';
 import 'spot_detail_screen.dart';
 import 'spot_map_gl.dart';
 import 'spot_map_screen.dart';
 import '../widgets/app_refresh.dart';
 
-/// 钓点页：双 Tab
+/// 钓点页：三 Tab（v2.1.39 起渔具店从「本地钓场」筛选里独立成一级入口）
 ///   ① 本地钓场：图2 样式卡片列表（封面 / 星级 / 标签 / 地址 / 距离 / 收费 / 简介）
 ///   ② 野钓钓点：卫星地图（高德卫星 + 路网），用户可在地图上添加标记，全员实时可见
+///   ③ 渔具店：渔具店列表 → 点进独立的渔具店详情页（店内店外图 / 售卖种类 /
+///      具体位置 / 是否外送 / 顾客评价 / 导航调起本机地图 App）
 class SpotsScreen extends StatefulWidget {
   /// 打开时预选的钓场类型（「路亚」页会带 '路亚' 进来直接过滤）
   final String initialType;
@@ -42,7 +45,10 @@ class _SpotsScreenState extends State<SpotsScreen>
   bool _loading = true;
   bool _locating = false; // 正在定位（按钮转圈，避免「点了没反应」的错觉）
   bool _refreshing = false; // 正在手动刷新钓点（刷新按钮转圈）
-  final List<String> _types = ['全部', '黑坑', '路亚', '野钓场', '海钓', '渔具店'];
+  // ★ 「野钓场」已删除（用户要求）：野钓点有独立 Tab，本地钓场再留这个类型
+  //   只会让两套数据混在一起。
+  // ★ 「渔具店」也从筛选里移走 —— 它现在是一级 Tab，和钓场不是一回事。
+  final List<String> _types = ['全部', '黑坑', '路亚', '海钓'];
   late String _type =
       _types.contains(widget.initialType) ? widget.initialType : '全部';
 
@@ -53,7 +59,7 @@ class _SpotsScreenState extends State<SpotsScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     // 左右滑动切换时同步胶囊高亮
     _tabController.addListener(() {
       if (mounted) setState(() {});
@@ -106,6 +112,9 @@ class _SpotsScreenState extends State<SpotsScreen>
         );
       }
     } catch (e) {
+      // ★ 失败也要把 _loading 放下来：否则三个 Tab 会一直转圈（空列表 + 永真 loading），
+      //   看起来像"卡死了"，实际是网络挂了。
+      if (mounted) setState(() => _loading = false);
       if (feedback && mounted) {
         CenterToast.show(context, '刷新失败：$e',
             icon: Icons.cloud_off_outlined);
@@ -154,14 +163,10 @@ class _SpotsScreenState extends State<SpotsScreen>
     return CoordTransform.formatDistance(m);
   }
 
-  /// 本地钓场 Tab 展示：钓场 + 渔具店（均审核后展示），按类型筛选
+  /// 本地钓场 Tab 展示：只放钓场（kind=venue），渔具店已独立成 Tab
   List<FishingSpot> get _visibleVenues {
-    final all = [..._venues, ..._shops];
-    if (_type == '全部') return all;
-    if (_type == '渔具店') {
-      return _shops;
-    }
-    return all.where((s) => s.type == _type).toList();
+    if (_type == '全部') return _venues;
+    return _venues.where((s) => s.type == _type).toList();
   }
 
   @override
@@ -180,8 +185,9 @@ class _SpotsScreenState extends State<SpotsScreen>
             color: Colors.white,
             child: Row(
               children: [
-                _tabChip(0, '本地钓场（${_venues.length + _shops.length}）'),
+                _tabChip(0, '本地钓场（${_venues.length}）'),
                 _tabChip(1, '野钓钓点'),
+                _tabChip(2, '渔具店（${_shops.length}）'),
               ],
             ),
           ),
@@ -206,6 +212,7 @@ class _SpotsScreenState extends State<SpotsScreen>
         children: [
           _TabKeepAlive(child: _buildVenueTab()),
           _TabKeepAlive(child: _buildWildTab()),
+          _TabKeepAlive(child: _buildShopTab()),
         ],
       ),
     );
@@ -230,12 +237,18 @@ class _SpotsScreenState extends State<SpotsScreen>
               color: selected ? AppTheme.primary : Colors.transparent,
               borderRadius: BorderRadius.circular(16),
             ),
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                color: selected ? Colors.white : AppTheme.textSecondary,
+            // 三颗胶囊平分宽度后只有 ~110px，窄屏（320）上「本地钓场（12）」
+            // 会顶到边界。FittedBox 让它按需缩字，绝不溢出。
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                label,
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: selected ? Colors.white : AppTheme.textSecondary,
+                ),
               ),
             ),
           ),
@@ -347,21 +360,6 @@ class _SpotsScreenState extends State<SpotsScreen>
                     // 名称 + 星级
                     Row(
                       children: [
-                        if (s.kind == 'shop') ...[
-                          Container(
-                            margin: const EdgeInsets.only(right: 5),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 5, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: AppTheme.violetLight,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text('渔具店',
-                                style: TextStyle(
-                                    fontSize: 10,
-                                    color: AppTheme.violet)),
-                          ),
-                        ],
                         Expanded(
                           child: Text(s.name,
                               maxLines: 1,
@@ -628,9 +626,224 @@ class _SpotsScreenState extends State<SpotsScreen>
     );
   }
 
-  void _openDetail(FishingSpot s) {
+  // ==================== Tab ③ 渔具店 ====================
+  //
+  // 渔具店原来混在「本地钓场」的类型筛选里（选「渔具店」才出结果），
+  // 用户反馈这样找不到店，所以提成一级 Tab：
+  //   列表 → 点一条 → ShopDetailScreen（店内店外图 / 售卖种类 / 具体位置 /
+  //   是否外送 / 顾客评价 / 导航调起本机地图 App）
+  Widget _buildShopTab() {
+    // ★ 有数据时刷新不清空（和全站一致）：否则下拉一次闪一下白
+    if (_loading && _shops.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return AppRefresh(
+      onRefresh: _load,
+      child: _shops.isEmpty
+          ? ListView(children: const [
+              SizedBox(height: 84),
+              Center(
+                child: Icon(Icons.storefront_outlined,
+                    size: 44, color: AppTheme.textSecondary),
+              ),
+              SizedBox(height: 10),
+              Center(
+                child: Text('附近还没有渔具店',
+                    style: TextStyle(fontSize: 14, color: AppTheme.textSecondary)),
+              ),
+              SizedBox(height: 8),
+              Center(
+                child: Text('点右上角「+」提交渔具店，审核通过后展示',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+              ),
+            ])
+          : ListView.separated(
+              padding: const EdgeInsets.fromLTRB(0, 8, 0, 20),
+              itemCount: _shops.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (_, i) => _shopCard(_shops[i]),
+            ),
+    );
+  }
+
+  /// 渔具店卡片：封面 / 店名 / 外送角标 / 星级 / 售卖种类 / 地址距离 / 评价数
+  Widget _shopCard(FishingSpot s) {
+    final cats = s.fish
+        .split(RegExp(r'[,，、/|;；\s]+'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final distance = _distanceText(s);
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => _openDetail(s, distanceText: distance),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 封面（尽量用店外照）
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: SizedBox(
+                  width: 104,
+                  height: 104,
+                  child: s.coverUrl != null
+                      ? Image.network(
+                          s.coverUrl!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            color: AppTheme.violetLight,
+                            child: const Icon(Icons.storefront_outlined,
+                                color: AppTheme.violet, size: 30),
+                          ),
+                        )
+                      : Container(
+                          color: AppTheme.violetLight,
+                          child: const Icon(Icons.storefront_outlined,
+                              color: AppTheme.violet, size: 30),
+                        ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 店名 + 星级
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(s.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 15, fontWeight: FontWeight.bold)),
+                        ),
+                        const Icon(Icons.star, size: 15, color: AppTheme.star),
+                        const SizedBox(width: 3),
+                        Text(s.rating.toStringAsFixed(1),
+                            style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.star)),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    // 外送 + 推荐/认证 角标
+                    Wrap(
+                      spacing: 5,
+                      runSpacing: 4,
+                      children: [
+                        if (s.delivery)
+                          _miniBadge('支持外送', AppTheme.primary,
+                              AppTheme.primaryLight, Icons.delivery_dining),
+                        if (s.tags.contains('推荐'))
+                          _miniBadge('推荐', AppTheme.warning,
+                              AppTheme.warningLight, Icons.thumb_up_alt_outlined),
+                        if (s.tags.contains('认证'))
+                          _miniBadge('电话认证', AppTheme.primary,
+                              AppTheme.primaryLight, Icons.verified_outlined),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    // 售卖种类
+                    Row(
+                      children: [
+                        const Icon(Icons.category_outlined,
+                            size: 13, color: Colors.grey),
+                        const SizedBox(width: 3),
+                        Expanded(
+                          child: Text(
+                            cats.isEmpty ? '经营范围待补充' : cats.join(' · '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 11.5, color: Colors.black54),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    // 地址 + 距离
+                    Row(
+                      children: [
+                        const Icon(Icons.location_on_outlined,
+                            size: 13, color: Colors.grey),
+                        const SizedBox(width: 3),
+                        Expanded(
+                          child: Text(
+                            s.address.isNotEmpty ? s.address : '地址待补充',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 11.5, color: Colors.grey),
+                          ),
+                        ),
+                        if (distance != null) ...[
+                          const SizedBox(width: 6),
+                          Text(distance,
+                              style: const TextStyle(
+                                  fontSize: 11.5,
+                                  color: AppTheme.textSecondary,
+                                  fontWeight: FontWeight.w600)),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        const Icon(Icons.rate_review_outlined,
+                            size: 12, color: Colors.grey),
+                        const SizedBox(width: 3),
+                        Text('${s.commentCount} 条顾客评价',
+                            style: const TextStyle(
+                                fontSize: 11.5, color: Colors.grey)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 小角标（外送 / 推荐 / 电话认证）
+  Widget _miniBadge(String text, Color fg, Color bg, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 10, color: fg),
+          const SizedBox(width: 2),
+          Text(text,
+              style: TextStyle(
+                  fontSize: 9.5, height: 1.3, color: fg, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+
+  void _openDetail(FishingSpot s, {String? distanceText}) {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => SpotDetailScreen(spot: s)),
+      MaterialPageRoute(
+        builder: (_) => s.kind == 'shop'
+            // 渔具店：独立详情页（店内店外图 / 售卖种类 / 外送 / 顾客评价…
+            // 布局和钓场页完全不同，硬塞进 SpotDetailScreen 会两边都不像）
+            ? ShopDetailScreen(spot: s, distanceText: distanceText)
+            : SpotDetailScreen(spot: s),
+      ),
     );
   }
 
