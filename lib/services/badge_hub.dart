@@ -16,7 +16,7 @@ import 'api_config.dart';
 class BadgeHub {
   BadgeHub._();
 
-  /// 每个用户已获得的徽章（最多 3 枚），命中的 id 才在表里
+  /// 每个用户已获得的徽章（最多 4 枚），命中的 id 才在表里
   static final Map<String, List<BadgeItem>> _cache = {};
 
   /// 已请求过但确实没有徽章 / 请求失败的 id，避免重复请求
@@ -64,7 +64,7 @@ class BadgeHub {
   /// 直接覆盖某用户的徽章（个人页已经拿到 badges 时可以回填，省一次请求）
   static void seed(String userId, List<BadgeItem> badges) {
     if (userId.isEmpty || _known.contains(userId)) return;
-    _cache[userId] = badges.take(3).toList();
+    _cache[userId] = badges.take(4).toList();
     _known.add(userId);
     revision.value++;
   }
@@ -87,7 +87,7 @@ class BadgeHub {
               .whereType<Map>()
               .map((m) => BadgeItem.fromJson(Map<String, dynamic>.from(m)))
               .where((b) => b.name.isNotEmpty || b.icon.isNotEmpty)
-              .take(3)
+              .take(4)
               .toList();
           changed = true;
         }
