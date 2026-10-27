@@ -11,6 +11,15 @@ import '../widgets/app_refresh.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/fish_photo.dart';
 
+/// ★ AI 识鱼入口开关（v2.1.45）
+///
+/// 用户要求：图鉴页里的「AI 识鱼」入口**先隐藏**，不让用户点，
+/// 但**功能代码保留**在文件里（[_FishGuideScreenState._aiCard] /
+/// _recognize / _showMatchSheet / _showManualPicker / _unlock 全部在位）。
+///
+/// 想重新放出来，只改这一行为 `true`，不需要恢复任何代码。
+const bool kShowAiRecognitionEntry = false;
+
 /// 鱼种图鉴（v27，参考图五）
 /// 淡水 / 海水两大类；解锁进度驱动等级晋升；未解锁置灰。
 class FishGuideScreen extends StatefulWidget {
@@ -83,7 +92,8 @@ class _FishGuideScreenState extends State<FishGuideScreen>
           children: [
             if (_loading) _loadingBar(),
             _header(session, lv, need),
-            _aiCard(),
+            // 入口按开关隐藏（功能代码保留，见文件顶部 kShowAiRecognitionEntry）
+            if (kShowAiRecognitionEntry) _aiCard(),
             _statsBar(),
             _tabBar(),
             _grid(_tab.index == 0 ? _guide.fresh : _guide.salt),
