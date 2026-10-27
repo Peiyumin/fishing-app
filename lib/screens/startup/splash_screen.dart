@@ -33,11 +33,21 @@ class _SplashScreenState extends State<SplashScreen>
   static const double _imgW = 1140;
   static const double _imgH = 2050;
 
-  /// 胶囊外缘（含白色描边）在底图中的位置。
-  /// 实测方式：逐行扫底图里的白色像素，得到 左 251 / 右 889 /
-  /// 上 1816 / 下 1952 —— 宽 638、高 136，高度正好等于两倍圆角
-  /// （也就是两端是全圆角的「跑道形」）。
-  static const Rect _pillSrc = Rect.fromLTWH(251, 1816, 638, 136);
+  /// 进度条外缘在底图中的位置（v2.1.44 改版）。
+  ///
+  /// 原来是 638×136 的「胶囊按钮」（251,1816），用户反馈「太高太短」——
+  /// 高 136 在 2050 高的图上占 6.6%，看着像一颗圆角方块，不像加载条。
+  /// 现在改成 **780×40** 的细长条，中心不变（1884），两端仍是全圆角：
+  ///   宽 780 → 屏宽 390 时约 321dp（两侧各留 34dp），比原来长 22%；
+  ///   高  40 → 约 16dp，是原胶囊的三分之一，视觉上就是一根进度条。
+  static const Rect _barSrc = Rect.fromLTWH(180, 1864, 780, 40);
+
+  /// 进度条上方那行小字（正在获取最新渔情）在设计稿里的顶部 y
+  static const double _labelTop = 1802;
+
+  /// 文案字号（设计稿坐标）：比原胶囊的 60 小，因为条本身变扁了，
+  /// 文字再那么大就会「字比条粗」，看着像按钮不是进度条。
+  static const double _labelSize = 44;
 
   /// 进度前 90% 由时间推进（像真在加载），最后 10% 等数据真的到位
   static const Duration _growDuration = Duration(milliseconds: 2100);
@@ -163,14 +173,41 @@ class _SplashScreenState extends State<SplashScreen>
                     },
                   ),
                 ),
+                // 文案放在条的上方，不再塞进条里：
+                // 条只有 40 高（屏上约 16dp），字放进去会顶满、像按钮
+                Positioned(
+                  left: dx,
+                  top: dy + _labelTop * s,
+                  width: _imgW * s,
+                  child: Center(
+                    child: Text(
+                      _pillText,
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: _labelSize * s,
+                        height: 1.0,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1 * s,
+                        color: Colors.white.withOpacity(.92),
+                        shadows: [
+                          Shadow(
+                            color: const Color(0xCC00140A),
+                            blurRadius: 6 * s,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                // 进度条本体
                 Positioned.fromRect(
                   rect: Rect.fromLTWH(
-                    dx + _pillSrc.left * s,
-                    dy + _pillSrc.top * s,
-                    _pillSrc.width * s,
-                    _pillSrc.height * s,
+                    dx + _barSrc.left * s,
+                    dy + _barSrc.top * s,
+                    _barSrc.width * s,
+                    _barSrc.height * s,
                   ),
-                  child: _PillProgress(progress: _c, scale: s),
+                  child: _SplashBar(progress: _c, scale: s),
                 ),
               ],
             );
@@ -181,12 +218,15 @@ class _SplashScreenState extends State<SplashScreen>
   }
 }
 
-/// 「正在获取最新渔情」胶囊 + 内部渐变进度条
+/// 启动进度条（v2.1.44）
 ///
-/// 视觉完全复刻底图里原来那个胶囊（左暗右亮的绿底 + 白色粗描边 +
-/// 白色粗体字），只在内部多一层从左往右涨的渐变进度。
-class _PillProgress extends StatelessWidget {
-  const _PillProgress({required this.progress, required this.scale});
+/// 从「胶囊按钮」改成真正的细长进度条：白色细边 + 深绿轨道 + 渐变填充，
+/// 填充从左往右长。高度只有 40 个设计像素，圆角取一半，两端仍是圆的。
+///
+/// ★ 白边内侧特意留一圈深色衬底（[Padding]）：填充段最左端是亮青绿，
+///   和纯白描边的明度差很小，不留衬底会被吃成「看起来没有边框」。
+class _SplashBar extends StatelessWidget {
+  const _SplashBar({required this.progress, required this.scale});
 
   final Animation<double> progress;
 
@@ -195,108 +235,52 @@ class _PillProgress extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final height = 136 * scale;
-    final radius = height / 2;
-    // 描边要够粗才压得住亮青绿（2px 会被青绿吞成「没有边框」）
-    final stroke = math.max(2.0, 7 * scale);
-    // 原图 8 个字横跨约 500px → 单字 ≈ 62px
-    final fontSize = 60 * scale;
+    final h = 40 * scale;
+    final radius = h / 2;
+    final stroke = math.max(1.0, 2.2 * scale);
+    final rim = stroke * 1.3;
 
     return AnimatedBuilder(
       animation: progress,
       builder: (_, __) {
         final p = progress.value.clamp(0.0, 1.0);
-        // 白描边内侧留一圈暗色「衬底」。
-        //
-        // ★ 为什么不能白边直接贴亮填充：进度段的起点是亮青绿，
-        //   亮青绿和纯白的明度差只有 0.35，描边会被吃成「看起来没有边框」。
-        //   中间垫 2px 暗环之后，白边永远有深色托底，任何进度下都清晰 ——
-        //   这才是原设计稿里那种「白圈包着绿」的观感。
-        final rim = stroke + math.max(0.8, 1.6 * scale);
         return DecoratedBox(
           decoration: BoxDecoration(
+            // 未完成的轨道：比底图暗一档，「跑到哪」一眼能看出来
+            color: const Color(0xFF06170C),
             borderRadius: BorderRadius.circular(radius),
-            // 未完成的轨道：比底图胶囊暗一档，这样「跑到哪」一眼能看出来
-            gradient: const LinearGradient(
-              colors: [Color(0xFF07280C), Color(0xFF0B6B1A)],
+            border: Border.all(
+              color: Colors.white.withOpacity(.88),
+              width: stroke,
             ),
-            border: Border.all(color: Colors.white, width: stroke),
             boxShadow: [
               BoxShadow(
-                color: _SplashColors.mint.withOpacity(.28),
-                blurRadius: 18 * scale,
-                spreadRadius: 1,
+                color: _SplashColors.mint.withOpacity(.20),
+                blurRadius: 12 * scale,
+                spreadRadius: 0.5,
               ),
             ],
           ),
           child: Padding(
             padding: EdgeInsets.all(rim),
             child: ClipRRect(
-            borderRadius: BorderRadius.circular(math.max(2, radius - rim)),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                // ① 进度填充：先铺满整条渐变，再按进度裁掉右侧 ——
-                //    不能把渐变塞进「按比例变窄的容器」里，那样无论进度
-                //    多少，渐变的三个色永远被压缩在同一小段里，看起来
-                //    像是整块变亮，而不是「从左往右流过去」。
-                ClipRect(
-                  clipper: _ProgressClipper(p),
-                  child: const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.centerLeft,
-                        end: Alignment.centerRight,
-                        colors: _SplashColors.grad,
-                        stops: [0.0, 0.55, 1.0],
-                      ),
+              borderRadius: BorderRadius.circular(math.max(1, radius - rim)),
+              child: ClipRect(
+                // 先铺满整条渐变，再按进度裁掉右侧 —— 不能把渐变塞进
+                // 「按比例变窄的容器」里，那样渐变色会被压在同一小段里，
+                // 看起来像整块变亮，而不是「从左往右流过去」。
+                clipper: _ProgressClipper(p),
+                child: const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      colors: _SplashColors.grad,
+                      stops: [0.0, 0.55, 1.0],
                     ),
                   ),
                 ),
-                // ② 文案：白字 + 深色描边
-                //
-                // ★ 为什么必须描边：进度涨到黄绿段（#C6FF3D）时，纯白字的
-                //   对比度只剩 1.1:1，等于糊成一片。描一圈深绿黑边之后，
-                //   白字在「暗绿底」和「亮黄绿底」上都能读 —— 这也是原
-                //   设计稿里那行粗白字的观感。
-                Center(
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        Text(
-                          _pillText,
-                          maxLines: 1,
-                          style: TextStyle(
-                            fontSize: fontSize,
-                            height: 1.0,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 1 * scale,
-                            foreground: Paint()
-                              ..style = PaintingStyle.stroke
-                              ..strokeWidth = math.max(1.2, 3 * scale)
-                              ..strokeJoin = StrokeJoin.round
-                              ..color = _SplashColors.inkEdge,
-                          ),
-                        ),
-                        Text(
-                          _pillText,
-                          maxLines: 1,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: fontSize,
-                            height: 1.0,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 1 * scale,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
             ),
           ),
         );
@@ -322,8 +306,6 @@ class _ProgressClipper extends CustomClipper<Rect> {
 class _SplashColors {
   static const mint = Color(0xFF12E8A8);
 
-  /// 立字用的深色描边：比纯黑柔一点，和深绿背景融得住
-  static const inkEdge = Color(0xE8051F08);
   static const grad = [Color(0xFF12CE96), Color(0xFF63E052),
       Color(0xFFAEE637)];
 }
