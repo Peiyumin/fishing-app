@@ -34,13 +34,15 @@ class FishGuideScreen extends StatefulWidget {
 
 class _FishGuideScreenState extends State<FishGuideScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tab = TabController(length: 2, vsync: this);
+  // 见 article_list_screen 同款注释：不要用惰性初始化，否则 dispose 时才构造会崩
+  late final TabController _tab;
   FishGuide _guide = FishService.fallback;
   bool _loading = true;
 
   @override
   void initState() {
     super.initState();
+    _tab = TabController(length: 2, vsync: this);
     _load();
   }
 
