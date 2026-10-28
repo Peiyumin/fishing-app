@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
+import '../utils/json_num.dart';
 
 /// 本机登录过的账号（设置 - 历史账号）
 ///
@@ -50,7 +51,7 @@ class AccountHistory {
     if (d is! Map) return null;
     DateTime at;
     try {
-      at = DateTime.parse((j['at'] ?? '').toString());
+      at = jsonDate(j['at']) ?? DateTime.now();
     } catch (_) {
       at = DateTime.now();
     }
