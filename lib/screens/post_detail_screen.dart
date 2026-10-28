@@ -27,6 +27,7 @@ import 'fish_guide_screen.dart';
 import '../services/refresh_bus.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/follow_button.dart';
+import '../utils/json_num.dart';
 
 // ─────────────────────────────────────────────────────────────
 // 渔获详情页（v2.1.34 按参考稿重做）
@@ -1641,7 +1642,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             url: ApiConfig.mediaUrl(avatar),
             userId: c['user_id'] as String?,
             radius: 17,
-            vipLevel: (c['user_vip'] as num?)?.toInt() ?? 0,
+            vipLevel: jsonInt(c['user_vip']) ?? 0,
           ),
           const SizedBox(width: 10),
           Expanded(
