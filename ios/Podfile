@@ -37,5 +37,29 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    target.build_configurations.each do |config|
+      # ★ permission_handler_apple 的权限是「编译期开关」：
+      #   宏没打开，Permission.xxx.request() 在 iOS 上会直接返回 denied，
+      #   而且**不会弹系统授权框**（表现就是「首次权限引导页全红、点了没反应」）。
+      #   安卓那边权限是运行时的，不需要这个，所以只有 iOS 要补。
+      #   以后要用新权限（通讯录 / 日历 / 传感器…）必须在这里加对应宏。
+      #
+      #   官方 README 给的是 `||=`，但那会在 pod 已有 GCC_PREPROCESSOR_DEFINITIONS
+      #   （比如 '$(inherited) COCOAPODS=1'）时整段跳过 —— 这里改成合并，保证一定写进去。
+      defs = config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] || ['$(inherited)']
+      defs = defs.split(' ') if defs.is_a?(String)
+      defs = defs.map(&:to_s)
+      defs << '$(inherited)' unless defs.include?('$(inherited)')
+      %w[
+        PERMISSION_CAMERA
+        PERMISSION_MICROPHONE
+        PERMISSION_PHOTOS
+        PERMISSION_LOCATION
+        PERMISSION_NOTIFICATIONS
+      ].each do |name|
+        defs << "#{name}=1" unless defs.any? { |d| d.start_with?("#{name}=") }
+      end
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = defs
+    end
   end
 end
