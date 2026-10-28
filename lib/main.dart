@@ -39,6 +39,7 @@ import 'screens/profile_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/publish_hub_screen.dart';
 import 'screens/publish_catch_screen.dart';
+import 'widgets/login_gate.dart';
 import 'widgets/update_dialog.dart';
 
 /// 全局导航 key：用于「新消息」顶部弹条在任意页面悬浮展示
@@ -601,8 +602,9 @@ class _StartupGateState extends State<StartupGate> {
     if (boot == null || !boot.hasStartupContent) {
       // 主界面挂完再处理「点通知冷启动」的跳转
       WidgetsBinding.instance.addPostFrameCallback((_) => _handlePendingNav());
-      // 本机第一次装好打开时，先过一遍「所有权限都问一遍」的引导
-      return const FirstRunPermissionGate(child: MainShell());
+      // 本机第一次装好打开时，先过一遍「所有权限都问一遍」的引导；
+      // 权限给完自动关闭，然后没登录的直接进登录页（可「随便看看」）
+      return const FirstRunPermissionGate(child: LoginOrApp());
     }
     if (boot.ads.isNotEmpty) {
       return StartupAdScreen(
@@ -618,6 +620,34 @@ class _StartupGateState extends State<StartupGate> {
       );
     }
     return PreviewPagerScreen(previews: boot.previews, onFinished: _enterApp);
+  }
+}
+
+/// 启动后的第一屏：已登录直接进主框架；没登录先给登录页（可「随便看看」）
+///
+/// 需求（v2.1.48）：打开 App → 权限给完 → 登录页；不想登录可以「随便看看」，
+/// 但之后点任何内容都会再弹回这套登录页。
+class LoginOrApp extends StatefulWidget {
+  const LoginOrApp({super.key});
+
+  @override
+  State<LoginOrApp> createState() => _LoginOrAppState();
+}
+
+class _LoginOrAppState extends State<LoginOrApp> {
+  /// 用户点过「随便看看」，本次前台会话内不再强制弹登录
+  bool _guest = false;
+
+  @override
+  Widget build(BuildContext context) {
+    // watch：别处登录成功（比如从某个页面里登进来）也要立刻切到主框架
+    final logged = context.watch<SessionProvider>().isLoggedIn;
+    if (logged || _guest) return const MainShell();
+    return AuthScreen(
+      onSkip: () {
+        if (mounted) setState(() => _guest = true);
+      },
+    );
   }
 }
 
@@ -643,6 +673,25 @@ class _MainShellState extends State<MainShell> {
 
   void _onTabTapped(int index) => setState(() => _currentIndex = index);
 
+  /// 点底部 tab：未登录只放行首页，其余三个都先弹登录页
+  Future<void> _onTabTap(int index) async {
+    if (index != 0 && !context.read<SessionProvider>().isLoggedIn) {
+      const names = ['首页', '发现', '钓点', '我的'];
+      final ok = await ensureLogin(context, hint: '登录后查看「${names[index]}」');
+      if (!ok || !mounted) return;
+    }
+    _onTabTapped(index);
+  }
+
+  /// 中间发布按钮：未登录先弹登录页
+  Future<void> _onPublish() async {
+    final ok = await ensureLogin(context, hint: '登录后即可发布渔获、钓点与动态');
+    if (!ok || !mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const PublishHubScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -658,9 +707,7 @@ class _MainShellState extends State<MainShell> {
           borderRadius: BorderRadius.circular(18),
         ),
         tooltip: '发布',
-        onPressed: () => Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const PublishHubScreen()),
-        ),
+        onPressed: _onPublish,
         child: const Icon(Icons.add, size: 30),
       ),
       bottomNavigationBar: BottomAppBar(
@@ -691,7 +738,7 @@ class _MainShellState extends State<MainShell> {
     final selected = _currentIndex == index;
     return Expanded(
       child: InkWell(
-        onTap: () => _onTabTapped(index),
+        onTap: () => _onTabTap(index),
         borderRadius: BorderRadius.circular(14),
         child: Container(
           margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
