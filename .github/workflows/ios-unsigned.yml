@@ -82,8 +82,12 @@ jobs:
               ('Dart 快照：一键开启全部权限',       u16('一键开启全部权限') in app),
               ('Dart 快照：接口 /auth/sms/login',   b'/auth/sms/login' in app),
               ('Dart 快照：通道 fishing/wechat',    b'fishing/wechat' in app),
-              ('Swift 桥：fishing/wechat',          b'fishing/wechat' in runner),
-              ('Swift 桥：not_integrated',          b'not_integrated' in runner),
+              # ★ Swift 侧别拿短字符串当探针！Swift 对 **≤15 字节** 的字面量做
+              #   small-string 内联（直接编进指令），不进 __cstring：
+              #   fishing/wechat(14)、not_integrated(14) 搜不到是正常的，
+              #   而 fishing/shortcuts(17)、pending_shortcut(16) 能搜到。
+              #   这里用 33 字节的中文文案当探针才可靠。
+              ('Swift 桥：微信登录文案', '当前版本未内置微信登录'.encode('utf-8') in runner),
               ('Swift 快捷入口：fishing/shortcuts',  b'fishing/shortcuts' in runner),
               ('Info.plist：weixin 查询 scheme',
                'weixin' in (pl.get('LSApplicationQueriesSchemes') or [])),
