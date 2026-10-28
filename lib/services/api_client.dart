@@ -5,6 +5,27 @@ import 'dart:typed_data';
 import '../utils/text_safe.dart';
 import 'api_config.dart';
 
+/// 接口错误。
+///
+/// v2.1.49 新增。以前所有失败都抛裸 `Exception(文案)`，调用方只能靠
+/// `e.toString().contains('404')` 这种字符串匹配去猜是哪种失败 —— 结果就是
+/// 「用户不存在」被当成「后端没升级」，给用户弹了一句莫名其妙的话。
+///
+/// 现在把三件事分开带出来：
+///   · [message] 服务器给的**人话**（`{"ok":false,"error":"用户不存在"}`）
+///   · [status]  业务状态码（后端 v38 起放在 `status` 字段，缺省 0）
+///   · [html]    响应是不是 HTML 错误页（nginx 404 页 / PHP 致命错误页）
+class ApiException implements Exception {
+  const ApiException(this.message, {this.status = 0, this.html = false});
+
+  final String message;
+  final int status;
+  final bool html;
+
+  @override
+  String toString() => message;
+}
+
 /// 轻量 HTTP 客户端：JSON 请求 + 手写 multipart 图片上传（零第三方依赖）
 class ApiClient {
   static String? _token;
@@ -156,19 +177,21 @@ class ApiClient {
   ///   U+FFFD 或半个代理项 —— 在 Text 里就是一个小方块。挂在这里能一次
   ///   覆盖全站，比在每个 model 的 fromJson 里各写一遍可靠得多。
   static dynamic _decode(String body) {
-    if (body.isEmpty) throw Exception('服务器无响应');
+    if (body.isEmpty) throw const ApiException('服务器无响应');
     // ★ 服务端返回了 HTML（nginx 的 404/502 错误页、PHP 致命错误页）。
     //   直接把 "<html>" 丢给 jsonDecode 会抛 `FormatException: Unexpected
     //   character (at character 1) <html>`，用户完全看不懂这是什么意思。
     //   宁可给一句人话，也不要暴露内部细节。
     final head = body.trimLeft();
     if (head.startsWith('<')) {
-      throw Exception('服务器开小差了，请稍后再试');
+      throw const ApiException('服务器开小差了，请稍后再试', html: true);
     }
     final json = jsonDecode(body);
     if (json is! Map || json['ok'] != true) {
-      throw Exception(
-          json is Map ? safeText(json['error'] ?? '请求失败') : '请求失败');
+      throw ApiException(
+        json is Map ? safeText(json['error'] ?? '请求失败') : '请求失败',
+        status: json is Map ? ((json['status'] as num?)?.toInt() ?? 0) : 0,
+      );
     }
     return sanitizeDeep(json['data']);
   }
