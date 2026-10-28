@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'api_client.dart';
 import 'api_config.dart';
 import '../models/user_profile.dart';
+import '../utils/json_num.dart';
 /// 关注 / 粉丝：资料、关注切换、粉丝/关注列表
 /// 后端未升级（无 /users 路由）时，走演示数据并标记功能不可用
 class FollowService {
@@ -12,7 +13,7 @@ class FollowService {
   static Future<UserProfile> fetchProfile(String userId) async {
     if (_demo) return _demoProfile(userId);
     try {
-      final data = await ApiClient.get('/users/$userId') as Map;
+      final data = jsonMap(await ApiClient.get('/users/$userId'));
       return UserProfile.fromJson(Map<String, dynamic>.from(data));
     } catch (e) {
       if (_isNotAvailable(e)) throw const FollowNotAvailableException();
@@ -24,7 +25,7 @@ class FollowService {
   static Future<UserProfile> fetchMe() async {
     if (_demo) return _demoProfile('me', isMe: true);
     try {
-      final data = await ApiClient.get('/users/me') as Map;
+      final data = jsonMap(await ApiClient.get('/users/me'));
       return UserProfile.fromJson(Map<String, dynamic>.from(data));
     } catch (e) {
       if (_isNotAvailable(e)) throw const FollowNotAvailableException();
@@ -41,10 +42,10 @@ class FollowService {
     }
     try {
       final data =
-          await ApiClient.post('/users/$userId/follow') as Map;
+          jsonMap(await ApiClient.post('/users/$userId/follow'));
       return (
-        following: (data['following'] as bool?) ?? !currentlyFollowing,
-        followerCount: (data['followerCount'] as num?)?.toInt() ?? 0,
+        following: jsonBool(data['following'], fallback: !currentlyFollowing),
+        followerCount: jsonInt(data['followerCount']) ?? 0,
       );
     } catch (e) {
       if (_isNotAvailable(e)) throw const FollowNotAvailableException();
@@ -56,7 +57,7 @@ class FollowService {
   static Future<List<UserProfile>> fetchFollowers(String userId) async {
     if (_demo) return [];
     try {
-      final data = await ApiClient.get('/users/$userId/followers') as List;
+      final data = jsonList(await ApiClient.get('/users/$userId/followers'));
       return data
           .map((e) => UserProfile.fromJson(Map<String, dynamic>.from(e as Map)))
           .toList();
@@ -70,7 +71,7 @@ class FollowService {
   static Future<List<UserProfile>> fetchFollowing(String userId) async {
     if (_demo) return [];
     try {
-      final data = await ApiClient.get('/users/$userId/following') as List;
+      final data = jsonList(await ApiClient.get('/users/$userId/following'));
       return data
           .map((e) => UserProfile.fromJson(Map<String, dynamic>.from(e as Map)))
           .toList();
