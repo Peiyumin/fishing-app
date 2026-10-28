@@ -6,6 +6,7 @@ import '../models/wallet.dart';
 import '../services/session_provider.dart';
 import '../services/wallet_service.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/login_gate.dart';
 import '../widgets/app_refresh.dart';
 
 /// 钱包（v27）：余额 + 积分 + 流水 + 充值
@@ -546,8 +547,8 @@ class WalletEntry {
   static Future<void> open(BuildContext context) async {
     final session = context.read<SessionProvider>();
     if (!session.isLoggedIn) {
-      CenterToast.show(context, '请先登录');
-      return;
+      if (!await ensureLogin(context, hint: '登录后查看钱包与积分')) return;
+      if (!context.mounted) return;
     }
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const WalletScreen()),
