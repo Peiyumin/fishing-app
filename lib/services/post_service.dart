@@ -157,6 +157,14 @@ class PostService {
   ///   hot       热门：按浏览人数取前 50 随机打乱（服务端打乱）
   ///   city      同城：city 地级市精确过滤
   ///   follow    关注：只看已关注用户（需登录）
+  /// 仅测试用：非 null 时 [fetchFeed] 直接返回它，不碰网络。
+  ///
+  /// v2.1.49 去掉了「接口失败回落演示数据」之后，发现页的刷新测试没法再靠
+  /// 「假 HttpClient 请求失败」拿到首屏数据了（那正是我们要禁掉的行为）。
+  /// 给它一个显式注入口，比在测试里伪造一整套 HTTP 响应干净。
+  @visibleForTesting
+  static List<Post>? debugFeedOverride;
+
   static Future<List<Post>> fetchFeed({
     int limit = 20,
     int offset = 0,
@@ -164,6 +172,8 @@ class PostService {
     String? city,
     String? keyword,
   }) async {
+    final injected = debugFeedOverride;
+    if (injected != null) return List<Post>.from(injected);
     if (_demo) {
       await Future.delayed(const Duration(milliseconds: 300));
       var list = List<Post>.from(_demoPosts);
@@ -219,8 +229,20 @@ class PostService {
       }
       return list;
     } catch (_) {
-      // 后端不可达：回落到演示数据，保证 App 始终可用
-      return List<Post>.from(_demoPosts);
+      // ★★ v2.1.49：生产模式下**绝不能**回落演示数据。
+      //
+      //   以前这里无条件 `return _demoPosts`，接口只要超时一次，首页就会冒出
+      //   「老钓翁 / 路亚阿杰 / 野钓阿强」这些内置假帖子。用户点进去看得到
+      //   （详情是本地对象，不发请求），一评论就 POST /posts/d5/comment ——
+      //   服务端根本没有 d5 这个 id → 返回 404 → nginx 的 fastcgi_intercept_errors
+      //   把 404 换成静态 HTML 页 → App 端 jsonDecode 抛
+      //   `FormatException: Unexpected character (at character 1) <html>`。
+      //   用户看到的就是「评论失败：<html>」。
+      //
+      //   宁可让首页显示「动态加载失败，下拉重试」，也不能喂假数据 ——
+      //   假数据的每一个交互都会失败，而且失败信息完全看不懂。
+      if (_demo) return List<Post>.from(_demoPosts);
+      rethrow;
     }
   }
 
