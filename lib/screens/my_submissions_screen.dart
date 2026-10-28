@@ -23,8 +23,15 @@ class MySubmissionsScreen extends StatefulWidget {
 
 class _MySubmissionsScreenState extends State<MySubmissionsScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tab =
-      TabController(length: 2, vsync: this, initialIndex: widget.initialTab);
+  // 惰性初始化 + dispose 时首次访问 = 退出页面必崩（见 article_list_screen 注释）
+  late final TabController _tab;
+
+  @override
+  void initState() {
+    super.initState();
+    _tab = TabController(
+        length: 2, vsync: this, initialIndex: widget.initialTab);
+  }
 
   @override
   void dispose() {
