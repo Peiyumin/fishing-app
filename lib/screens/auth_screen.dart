@@ -69,10 +69,16 @@ class _AuthScreenState extends State<AuthScreen> {
   ///
   /// 原生端（iOS AppDelegate / Android MainActivity）都注册了 `fishing/wechat`，
   /// 当前版本回 false；SDK 接上后改成 `WXApi.isWXAppInstalled()`。
+  ///
+  /// ★ 必须带超时：这个调用挡在 `_loadCfg` 前面，原生通道要是**既不返回也不
+  ///   报错**（漏注册某些情况下就是静默不回），登录页会一直停在转圈上，
+  ///   比微信登录不可用更糟。800ms 收不到就当不可用。
   Future<bool> _wechatAvailable() async {
     try {
       const ch = MethodChannel('fishing/wechat');
-      final v = await ch.invokeMethod<bool>('available');
+      final v = await ch
+          .invokeMethod<bool>('available')
+          .timeout(const Duration(milliseconds: 800));
       return v == true;
     } catch (_) {
       return false;
