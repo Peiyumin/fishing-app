@@ -10,6 +10,7 @@ import '../services/refresh_bus.dart';
 import '../services/shop_service.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/login_gate.dart';
 import '../widgets/user_avatar.dart';
 
 /// 商品详情页（v25）
@@ -57,8 +58,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   Future<void> _order({required bool usePoints}) async {
     final session = context.read<SessionProvider>();
     if (!session.isLoggedIn) {
-      CenterToast.show(context, '请先登录后再购买');
-      return;
+      if (!await ensureLogin(context, hint: '登录后即可下单购买')) return;
     }
     if (usePoints && !_p.canRedeem) {
       CenterToast.show(context, '该商品不支持积分兑换');
@@ -123,11 +123,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   // ---------------- 评价 ----------------
 
-  void _showReviewSheet() {
+  Future<void> _showReviewSheet() async {
     final session = context.read<SessionProvider>();
     if (!session.isLoggedIn) {
-      CenterToast.show(context, '请先登录后再评价');
-      return;
+      if (!await ensureLogin(context, hint: '登录后即可评价')) return;
+      if (!mounted) return;
     }
     int stars = 5;
     final ctrl = TextEditingController();
