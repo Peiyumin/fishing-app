@@ -29,6 +29,7 @@ import '../widgets/center_toast.dart';
 import '../widgets/location_prompt.dart';
 import 'auth_screen.dart';
 import 'watermark_camera_screen.dart';
+import '../utils/json_num.dart';
 
 /// 渔获发布页
 ///  - 进入即自动定位，可开关「是否公开钓点位置」
@@ -89,7 +90,7 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
         final name = (f['name'] ?? '').toString().trim();
         if (name.isEmpty) continue;
         final c = _CatchItem(name);
-        c.count = (f['count'] as num?)?.toInt() ?? 1;
+        c.count = jsonInt(f['count']) ?? 1;
         _catches.add(c);
       }
       _lat = ex.lat;
