@@ -2,6 +2,7 @@ import '../models/ai_spot.dart';
 import '../models/fish.dart';
 import 'api_client.dart';
 import 'api_config.dart';
+import '../utils/json_num.dart';
 
 /// 鱼种图鉴
 class FishService {
@@ -18,7 +19,7 @@ class FishService {
   static Future<FishGuide> guide() async {
     if (!ApiConfig.enabled) return _cache ?? fallback;
     try {
-      final data = await ApiClient.get('/fish/guide') as Map;
+      final data = jsonMap(await ApiClient.get('/fish/guide'));
       final g = FishGuide.fromJson(data.cast<String, dynamic>());
       _cache = g;
       return g;
@@ -29,10 +30,10 @@ class FishService {
 
   /// 手动激活鱼种
   static Future<FishGuide> unlock(String speciesId, {String image = ''}) async {
-    final data = await ApiClient.post('/fish/unlock', {
+    final data = jsonMap(await ApiClient.post('/fish/unlock', {
       'speciesId': speciesId,
       if (image.isNotEmpty) 'image': image,
-    }) as Map;
+    }));
     final g = FishGuide.fromJson(
         (data['guide'] as Map?)?.cast<String, dynamic>() ?? const {});
     _cache = g;
@@ -41,21 +42,21 @@ class FishService {
 
   /// AI 识别（未配置 AI 时 needManual = true）
   static Future<FishRecognize> recognize(String imageUrl) async {
-    final data = await ApiClient.post('/fish/recognize', {'image': imageUrl}) as Map;
+    final data = jsonMap(await ApiClient.post('/fish/recognize', {'image': imageUrl}));
     return FishRecognize.fromJson(data.cast<String, dynamic>());
   }
 
   /// AI 大模型鱼口判断：把逐时天气 + 鱼种习性交给大模型。
   /// 后端未配置 AI 时 ok=false（App 回退本地规则引擎）；网络异常抛错由调用方兜底。
   static Future<AiBite> biteAi(Map<String, dynamic> payload) async {
-    final data = await ApiClient.post('/fish/bite-ai', payload) as Map;
+    final data = jsonMap(await ApiClient.post('/fish/bite-ai', payload));
     return AiBite.fromJson(data.cast<String, dynamic>());
   }
 
   /// AI 找钓点：附近水域 + 当前天气 → 大模型推荐现在最值得去的水域。
   /// 后端未配置 AI 时 ok=false。
   static Future<AiSpotRec> spotAi(Map<String, dynamic> payload) async {
-    final data = await ApiClient.post('/fish/spot-ai', payload) as Map;
+    final data = jsonMap(await ApiClient.post('/fish/spot-ai', payload));
     return AiSpotRec.fromJson(data.cast<String, dynamic>());
   }
 }
