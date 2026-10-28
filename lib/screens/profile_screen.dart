@@ -29,6 +29,7 @@ import 'weather_screen.dart';
 import 'my_posts_screen.dart';
 import 'settings_screen.dart';
 import '../widgets/app_refresh.dart';
+import '../utils/json_num.dart';
 
 /// 我的页
 ///
@@ -666,7 +667,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     for (final p in _myPosts) {
       if (!p.isCatch) continue;
       for (final f in p.fish) {
-        n += (f['count'] as num?)?.toInt() ?? 1;
+        n += jsonInt(f['count']) ?? 1;
       }
       // 没有记鱼种的老帖子，按 1 条算
       if (p.fish.isEmpty) n += 1;
