@@ -56,6 +56,12 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
   bool _reading = true;
   bool _running = false;
 
+  /// 已经放过行（防止「自动关闭」和用户手动点重复触发）
+  bool _finished = false;
+
+  /// 「全部已开启 → 自动进首页」只排一次
+  bool _autoExit = false;
+
   @override
   void initState() {
     super.initState();
@@ -78,6 +84,16 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
         ..addAll(map);
       _reading = false;
     });
+
+    // 进页面时（或从系统设置回来时）发现已经全开了 → 稍等一下直接进首页，
+    // 不让用户对着一个「没什么可做」的清单页发呆
+    final all = _rows.every((r) => map[r.perm]?.isGranted == true);
+    if (all && !_autoExit && !_finished) {
+      _autoExit = true;
+      Future.delayed(const Duration(milliseconds: 450), () {
+        if (mounted && !_finished) _done();
+      });
+    }
   }
 
   /// 逐项申请（串行）。每一项都回读系统状态再继续。
@@ -114,7 +130,11 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
     }).toList();
     if (!mounted) return;
     if (denied.isEmpty) {
-      CenterToast.show(context, '全部权限已开启', icon: Icons.check_circle);
+      // ★ 全部开启 → 自动关闭引导页进首页（用户明确要求：给完权限就自动进）
+      CenterToast.show(context, '全部权限已开启，正在进入渔报', icon: Icons.check_circle);
+      await Future.delayed(const Duration(milliseconds: 700));
+      if (!mounted) return;
+      await _done();
     } else {
       CenterToast.show(
         context,
@@ -132,6 +152,8 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
   }
 
   Future<void> _done() async {
+    if (_finished) return;
+    _finished = true;
     final prefs = await SharedPreferences.getInstance();
     // 只记「引导看过」；权限状态每次进来都重新读系统，不缓存
     await prefs.setBool(kPermOnboardDone, true);
@@ -234,7 +256,9 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                     width: double.infinity,
                     height: 48,
                     child: ElevatedButton(
-                      onPressed: _running ? null : _requestAll,
+                      onPressed: _running
+                          ? null
+                          : (allDone ? _done : _requestAll),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppTheme.primary,
                         foregroundColor: Colors.white,
@@ -248,7 +272,7 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                               height: 20,
                               child: CircularProgressIndicator(
                                   color: Colors.white, strokeWidth: 2.2))
-                          : Text(allDone ? '重新检查一遍' : '一键开启全部权限',
+                          : Text(allDone ? '进入渔报' : '一键开启全部权限',
                               style: const TextStyle(
                                   fontSize: 15, fontWeight: FontWeight.w700)),
                     ),
