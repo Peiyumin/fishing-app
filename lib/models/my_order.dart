@@ -2,6 +2,8 @@
 ///
 /// 状态与后台一致：
 ///   0 = 待处理（待发货）  1 = 已发货  2 = 已完成  3 = 已取消
+import '../utils/json_num.dart';
+
 class MyOrder {
   final String id;
   final String productId;
@@ -32,7 +34,7 @@ class MyOrder {
   });
 
   factory MyOrder.fromJson(Map<String, dynamic> m) {
-    final qty = (m['quantity'] as num?)?.toInt() ?? 1;
+    final qty = jsonInt(m['quantity']) ?? 1;
     final amt = double.tryParse((m['amount'] ?? '0').toString()) ?? 0;
     return MyOrder(
       id: (m['id'] ?? '').toString(),
@@ -41,10 +43,10 @@ class MyOrder {
       productImage: (m['product_image'] ?? '').toString(),
       type: (m['type'] ?? 'points').toString(),
       amount: (m['amount'] ?? '0').toString(),
-      unitAmount: (m['unit_amount'] as num?)?.toDouble() ??
+      unitAmount: jsonDouble(m['unit_amount']) ??
           (qty > 0 ? amt / qty : amt),
       quantity: qty <= 0 ? 1 : qty,
-      status: (m['status'] as num?)?.toInt() ?? 0,
+      status: jsonInt(m['status']) ?? 0,
       statusLabel: (m['status_label'] ?? '').toString(),
       remark: (m['remark'] ?? '').toString(),
       createdAt: (m['created_at'] ?? '').toString(),
