@@ -130,6 +130,18 @@ class SessionProvider extends ChangeNotifier {
     return isNew;
   }
 
+  /// 本机号码一键登录
+  ///
+  /// [token] 由运营商取号 SDK 拿到的一次性凭证，**服务端拿它去服务商换真实号码**。
+  /// 客户端不上报手机号 —— 否则任何人填别人号码就能登进别人账号。
+  Future<bool> signInByOneKey(String token) async {
+    final data =
+        await ApiClient.post('/auth/onekey/login', {'token': token}) as Map;
+    final isNew = data['isNew'] == true;
+    await _apply(data);
+    return isNew;
+  }
+
   /// 写入登录态：内存 + 本地持久化
   Future<void> _apply(Map data) async {
     _token = data['token'] as String?;
