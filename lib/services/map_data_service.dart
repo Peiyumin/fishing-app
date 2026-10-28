@@ -6,6 +6,7 @@ import '../models/no_fishing_zone.dart';
 import '../models/water_body.dart';
 import 'api_client.dart';
 import 'api_config.dart';
+import '../utils/json_num.dart';
 
 /// 钓点地图数据服务
 /// ------------------------------------------------------------
@@ -99,8 +100,8 @@ class MapDataService {
       final data = await ApiClient.get('/app/map-stats') as Map?;
       if (data != null && data['ok'] == 1) {
         return {
-          'spots': ((data['spots'] as num?) ?? 0).toInt(),
-          'catches': ((data['catches'] as num?) ?? 0).toInt(),
+          'spots': (jsonNum(data['spots']) ?? 0).toInt(),
+          'catches': (jsonNum(data['catches']) ?? 0).toInt(),
         };
       }
     } catch (_) {}
