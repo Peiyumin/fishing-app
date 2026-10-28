@@ -6,6 +6,7 @@ import '../models/user_profile.dart';
 import 'account_history.dart';
 import 'api_client.dart';
 import 'api_config.dart';
+import 'fish_service.dart';
 
 /// 全局登录态管理（Provider）
 /// 对接自建后端 /api/auth（手机号 + 密码）
@@ -101,6 +102,34 @@ class SessionProvider extends ChangeNotifier {
     await _apply(data);
   }
 
+  /// 发短信验证码（返回体里可能带 debugCode，调试模式下直接给到前端）
+  Future<Map> sendSmsCode(String phone) async {
+    final data = await ApiClient.post('/auth/sms/send', {'phone': phone});
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  /// 手机号 + 短信验证码登录（**没注册过就自动注册**，注册即登录）
+  /// 返回 true 表示这次是新注册出来的账号
+  Future<bool> signInBySms(String phone, String code, {String? nickname}) async {
+    final data = await ApiClient.post('/auth/sms/login', {
+      'phone': phone,
+      'code': code,
+      if (nickname != null && nickname.trim().isNotEmpty)
+        'nickname': nickname.trim(),
+    }) as Map;
+    final isNew = data['isNew'] == true;
+    await _apply(data);
+    return isNew;
+  }
+
+  /// 微信登录（code 由微信 SDK 授权后拿到）
+  Future<bool> signInByWechat(String code) async {
+    final data = await ApiClient.post('/auth/wechat/login', {'code': code}) as Map;
+    final isNew = data['isNew'] == true;
+    await _apply(data);
+    return isNew;
+  }
+
   /// 写入登录态：内存 + 本地持久化
   Future<void> _apply(Map data) async {
     _token = data['token'] as String?;
@@ -114,6 +143,8 @@ class SessionProvider extends ChangeNotifier {
     _vipColor2 = MemberStyle.parseColor(data['vipColor2'], MemberStyle.normalColor2);
     _vipExpire = (data['vipExpire'] as String?) ?? '';
     ApiClient.setToken(_token);
+    // 换了账号：图鉴是按账号统计的，旧缓存必须丢，否则显示上一个人的进度
+    FishService.clearCache();
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kToken, _token ?? '');
@@ -186,6 +217,7 @@ class SessionProvider extends ChangeNotifier {
     _vipColor2 = MemberStyle.normalColor2;
     _vipExpire = '';
     ApiClient.setToken(null);
+    FishService.clearCache();
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kToken);
