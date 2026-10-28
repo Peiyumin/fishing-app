@@ -9,6 +9,7 @@ import '../services/fish_service.dart';
 import '../services/session_provider.dart';
 import '../widgets/app_refresh.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/login_gate.dart';
 import '../widgets/fish_photo.dart';
 
 import 'auth_screen.dart';
@@ -196,8 +197,8 @@ class _FishGuideScreenState extends State<FishGuideScreen>
   Future<void> _recognize() async {
     final session = context.read<SessionProvider>();
     if (!session.isLoggedIn) {
-      CenterToast.show(context, '请先登录后再使用 AI 识鱼');
-      return;
+      if (!await ensureLogin(context, hint: '登录后使用 AI 识鱼')) return;
+      if (!mounted) return;
     }
     try {
       final picked = await ImagePicker()
