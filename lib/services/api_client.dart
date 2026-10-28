@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import '../utils/text_safe.dart';
 import 'api_config.dart';
+import '../utils/json_num.dart';
 
 /// 接口错误。
 ///
@@ -190,7 +191,7 @@ class ApiClient {
     if (json is! Map || json['ok'] != true) {
       throw ApiException(
         json is Map ? safeText(json['error'] ?? '请求失败') : '请求失败',
-        status: json is Map ? ((json['status'] as num?)?.toInt() ?? 0) : 0,
+        status: json is Map ? (jsonInt(json['status']) ?? 0) : 0,
       );
     }
     return sanitizeDeep(json['data']);
