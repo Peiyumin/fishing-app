@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../models/signin.dart';
 import 'api_client.dart';
 import 'api_config.dart';
+import '../utils/json_num.dart';
 
 /// 每日签到
 class SigninService {
@@ -77,7 +78,7 @@ class SigninService {
   static Future<SigninStatus> status() async {
     if (!ApiConfig.enabled) return fallback;
     try {
-      final data = await ApiClient.get('/signin') as Map;
+      final data = jsonMap(await ApiClient.get('/signin'));
       final s = SigninStatus.fromJson(data.cast<String, dynamic>());
       _cache['status'] = s;
       return s;
@@ -88,11 +89,11 @@ class SigninService {
 
   /// 执行签到，返回最新状态与本次奖励
   static Future<({SigninStatus status, SigninReward reward, int streak})> checkin() async {
-    final data = await ApiClient.post('/signin', {}) as Map;
+    final data = jsonMap(await ApiClient.post('/signin', {}));
     final map = data.cast<String, dynamic>();
     final reward = SigninReward.fromJson(
         (map['reward'] as Map?)?.cast<String, dynamic>() ?? const {});
-    final streak = (map['streak'] as num?)?.toInt() ?? 0;
+    final streak = jsonInt(map['streak']) ?? 0;
     final s = await status();
     // ★ status() 是在 POST 之后拉的，服务端已经包含本次签到，
     //   直接用它的积分/天数，不要再 +1 / +reward ——
@@ -128,7 +129,7 @@ class SigninService {
         bool already,
         String msg,
       })> claimTask(String key) async {
-    final data = await ApiClient.post('/signin/tasks', {'key': key}) as Map;
+    final data = jsonMap(await ApiClient.post('/signin/tasks', {'key': key}));
     final map = data.cast<String, dynamic>();
     final list = (map['tasks'] as List?) ?? const [];
     final tasks = list
@@ -138,14 +139,14 @@ class SigninService {
     if (s != null) {
       _cache['status'] = s.copyWith(
         tasks: tasks,
-        points: (map['total'] as num?)?.toInt() ?? s.points,
+        points: jsonInt(map['total']) ?? s.points,
       );
     }
     return (
-      points: (map['points'] as num?)?.toInt() ?? 0,
-      total: (map['total'] as num?)?.toInt() ?? 0,
+      points: jsonInt(map['points']) ?? 0,
+      total: jsonInt(map['total']) ?? 0,
       tasks: tasks,
-      already: (map['already'] as bool?) ?? false,
+      already: jsonBool(map['already'], fallback: false),
       msg: (map['msg'] as String?) ?? '',
     );
   }
@@ -153,7 +154,7 @@ class SigninService {
   /// 只刷新任务列表（不发全量状态）
   static Future<List<DailyTask>> tasks() async {
     try {
-      final data = await ApiClient.get('/signin/tasks') as Map;
+      final data = jsonMap(await ApiClient.get('/signin/tasks'));
       final list = (data['tasks'] as List?) ?? const [];
       return list
           .map((r) => DailyTask.fromJson((r as Map).cast<String, dynamic>()))
