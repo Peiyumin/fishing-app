@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/user_profile.dart';
+import '../services/api_client.dart';
 import '../services/follow_service.dart';
 import '../app_theme.dart';
 import 'center_toast.dart';
@@ -57,9 +58,17 @@ class _FollowButtonState extends State<FollowButton> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _following = prev); // 回滚
-      final msg = e is FollowNotAvailableException
-          ? e.message
-          : '操作失败，请稍后再试';
+      // ★ v2.1.49：优先显示服务器给的原因（「用户不存在」「不能关注自己」…），
+      //   只有真的读不到原因时才用泛化文案。原来一律回「操作失败，请稍后再试」，
+      //   用户没法判断是自己网络问题还是这条内容的问题。
+      final String msg;
+      if (e is FollowNotAvailableException) {
+        msg = e.message;
+      } else if (e is ApiException && e.message.trim().isNotEmpty) {
+        msg = e.message;
+      } else {
+        msg = '操作失败，请稍后再试';
+      }
       CenterToast.show(context, msg);
     } finally {
       if (mounted) setState(() => _busy = false);
