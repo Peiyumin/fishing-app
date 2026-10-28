@@ -37,8 +37,23 @@ class ArticleListScreen extends StatefulWidget {
 
 class _ArticleListScreenState extends State<ArticleListScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tab =
-      TabController(length: widget.tabs.length, vsync: this);
+  late final TabController _tab;
+
+  // ★★ v2.1.50：TabController 必须在这里显式创建。
+  //
+  //   原来写的是 `late final TabController _tab = TabController(...)` —— 那是
+  //   **惰性初始化**：只要页面里没读过 _tab（单分类时不会走 TabBar 分支），
+  //   它就一直是未初始化状态；等到 dispose() 里 `_tab.dispose()` 第一次读取，
+  //   Dart 才去构造 TabController，而 TabController 的 createTicker 需要向上找
+  //   TickerMode → 此时元素已经 deactivated → 抛
+  //   `Looking up a deactivated widget's ancestor is unsafe`。
+  //   表现就是「退出这个页面时偶尔闪一下错误」，日志里全是这句话。
+
+  @override
+  void initState() {
+    super.initState();
+    _tab = TabController(length: widget.tabs.length, vsync: this);
+  }
 
   @override
   void dispose() {
