@@ -1,4 +1,5 @@
 import 'package:latlong2/latlong.dart';
+import '../utils/json_num.dart';
 
 /// 水域（钓点地图 · 蓝色图层）
 ///
@@ -34,14 +35,14 @@ class WaterBody {
       id: j['id'] as String? ?? '',
       name: j['name'] as String? ?? '未名水域',
       isRiver: river,
-      level: (j['level'] as num?)?.toInt() ?? 2,
+      level: jsonInt(j['level']) ?? 2,
       basin: j['basin'] as String? ?? '',
       kindLabel: j['kind'] as String? ?? '湖泊',
       area: j['area'] as String? ?? '',
       desc: j['desc'] as String? ?? '',
       geometry: raw
           .whereType<List>()
-          .map((p) => LatLng((p[0] as num).toDouble(), (p[1] as num).toDouble()))
+          .map((p) => LatLng(jsonNum(p[0])!.toDouble(), jsonNum(p[1])!.toDouble()))
           .toList(),
     );
   }
