@@ -1,5 +1,6 @@
 import '../models/nearby_angler.dart';
 import 'api_client.dart';
+import '../utils/json_num.dart';
 
 /// 附近钓友（所有登录用户可用）
 class NearbyService {
@@ -8,10 +9,10 @@ class NearbyService {
     required double lat,
     required double lng,
   }) async {
-    final data = await ApiClient.get('/nearby/anglers', {
+    final data = jsonList(await ApiClient.get('/nearby/anglers', {
       'lat': '$lat',
       'lng': '$lng',
-    }) as List;
+    }));
     return data
         .map((e) => NearbyAngler.fromJson((e as Map).cast<String, dynamic>()))
         .toList();
