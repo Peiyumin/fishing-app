@@ -82,12 +82,22 @@ jobs:
               ('Dart 快照：一键开启全部权限',       u16('一键开启全部权限') in app),
               ('Dart 快照：接口 /auth/sms/login',   b'/auth/sms/login' in app),
               ('Dart 快照：通道 fishing/wechat',    b'fishing/wechat' in app),
+              # v2.1.48 新增：一键登录（短信降级 + 运营商取号两条路）
+              ('Dart 快照：本机号码一键登录',       u16('本机号码一键登录') in app),
+              ('Dart 快照：用短信验证码登录',       u16('用短信验证码登录') in app),
+              ('Dart 快照：其他手机号登录',         u16('其他手机号登录') in app),
+              ('Dart 快照：接口 /auth/onekey/login', b'/auth/onekey/login' in app),
+              ('Dart 快照：通道 fishing/onekey',    b'fishing/onekey' in app),
               # ★ Swift 侧别拿短字符串当探针！Swift 对 **≤15 字节** 的字面量做
               #   small-string 内联（直接编进指令），不进 __cstring：
               #   fishing/wechat(14)、not_integrated(14) 搜不到是正常的，
               #   而 fishing/shortcuts(17)、pending_shortcut(16) 能搜到。
               #   这里用 33 字节的中文文案当探针才可靠。
               ('Swift 桥：微信登录文案', '当前版本未内置微信登录'.encode('utf-8') in runner),
+              # onekey 通道名 fishing/onekey 只有 14 字节，会被 Swift 内联成指令；
+              # 换 >15 字节的中文错误文案当探针才搜得到。
+              ('Swift 桥：一键登录文案',
+               'iOS 需要运营商取号服务，当前版本未内置'.encode('utf-8') in runner),
               ('Swift 快捷入口：fishing/shortcuts',  b'fishing/shortcuts' in runner),
               ('Info.plist：weixin 查询 scheme',
                'weixin' in (pl.get('LSApplicationQueriesSchemes') or [])),
@@ -99,6 +109,15 @@ jobs:
               print(('OK   ' if ok else 'MISS ') + name)
               if not ok: bad.append(name)
           print('版本:', pl.get('CFBundleShortVersionString'), pl.get('CFBundleVersion'))
+          # 版本号必须与 pubspec 对齐，否则用户装了还是看到旧版本号
+          want = open('pubspec.yaml', encoding='utf-8').read().split('version:')[1].split()[0]
+          ver, build = want.split('+')
+          if pl.get('CFBundleShortVersionString') != ver:
+              print('!! CFBundleShortVersionString 期望', ver,
+                    '实际', pl.get('CFBundleShortVersionString')); bad.append('版本号')
+          if str(pl.get('CFBundleVersion')) != build:
+              print('!! CFBundleVersion 期望', build, '实际', pl.get('CFBundleVersion'))
+              bad.append('构建号')
           if bad:
               print('!! 产物缺东西，别发布:', bad); sys.exit(1)
           PY
