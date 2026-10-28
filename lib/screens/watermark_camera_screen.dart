@@ -247,8 +247,8 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
       setState(() {
         _weather = results[1] as FishingWeather?;
         if (geo != null) {
-          final city = (geo['city'] ?? '') as String;
-          final display = (geo['display'] ?? '') as String;
+          final city = (geo['city'] ?? '').toString();
+          final display = (geo['display'] ?? '').toString();
           var detail = display;
           for (final prefix in ['中国, ', '中国,']) {
             if (detail.startsWith(prefix)) {
