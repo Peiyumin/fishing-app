@@ -69,8 +69,14 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
   @override
   void initState() {
     super.initState();
+    // 只用来「进后台时停掉录像计时」，不碰相机控制器（见下面的说明）
     WidgetsBinding.instance.addObserver(this);
-    _openCamera();
+    // 相机必须在**首帧画完之后**再初始化：
+    // 安卓上 Activity 的 Surface 还没就绪就去 initialize()，
+    // 插件会拿不到预览 surface，表现就是预览反复重建（用户看到的「狂闪」）。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _openCamera();
+    });
     // 天气/位置单独取，取不到就不显示那一行，不影响拍照
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadInfo());
   }
@@ -85,32 +91,35 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
     super.dispose();
   }
 
+  // ★ v2.1.46 删掉了 didChangeAppLifecycleState 里的手动 dispose / 重开。
+  //   原因见下面「相机」段落开头的说明：插件自己已经在管生命周期，
+  //   两份逻辑叠加会让安卓端的预览反复重建（狂闪、拍不了）。
+  //   这里只保留一件插件管不到的事：进后台时把录像计时停掉。
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      // 从后台/别的 App 回来：控制器已经被释放过，重新打开
-      if (_cam == null && !_opening) _openCamera(index: _camIndex);
-      return;
-    }
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused) {
-      final c = _cam;
-      if (c == null) return;
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
       _recTimer?.cancel();
       _recTimer = null;
-      setState(() {
-        _cam = null;
-        _recording = false;
-      });
-      // 注意：这里不要 await，避免平台通道在后台卡住
-      c.dispose();
+      if (_recording && mounted) setState(() => _recording = false);
     }
   }
 
   // ───────────────────────── 相机 ─────────────────────────
+  //
+  // ★ 生命周期一律交给 camera 插件自己管（v2.1.46 修复「安卓开相机狂闪」）：
+  //   camera 0.11 的 CameraController 内部已经订阅了 App 生命周期——
+  //   进后台它会自己释放、回前台它会自己重建。我们原来又在
+  //   didChangeAppLifecycleState 里手动 dispose + 重新 open，两份逻辑叠加：
+  //   安卓上「权限弹窗 / 下拉通知栏」都会触发 inactive→resumed，
+  //   于是每次都是一次「新建控制器 → 立刻 dispose → 再新建」，
+  //   预览就疯狂闪、永远进不去。现在这里**不再监听生命周期**。
 
   Future<void> _openCamera({int? index}) async {
     if (!mounted) return;
+    // 重入保护：切换前后摄 / 点重试时连点会开出两个控制器互相抢摄像头
+    if (_opening) return;
     setState(() {
       _opening = true;
       _error = null;
@@ -118,7 +127,7 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
     try {
       if (_cameras.isEmpty) _cameras = await availableCameras();
     } catch (e) {
-      _fail('无法访问摄像头：${_brief(e)}');
+      _retryOrFail('无法访问摄像头：${_brief(e)}');
       return;
     }
     if (_cameras.isEmpty) {
@@ -148,16 +157,16 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
         await candidate.dispose();
         // 只有麦克风权限被拒才值得降级重试，其它错误直接报
         if (tryAudio && _isAudioDenied(e)) continue;
-        _fail(_describe(e));
+        _retryOrFail(_describe(e));
         return;
       } catch (e) {
         await candidate.dispose();
-        _fail('相机启动失败:${_brief(e)}');
+        _retryOrFail('相机启动失败:${_brief(e)}');
         return;
       }
     }
     if (c == null) {
-      _fail('相机启动失败，请检查权限后重试');
+      _retryOrFail('相机启动失败，请检查权限后重试');
       return;
     }
     if (!mounted) {
@@ -172,6 +181,22 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
       _opening = false;
     });
     await old?.dispose();
+  }
+
+  /// 刚授予权限的那一瞬间，安卓的系统相机服务常还没准备好，
+  /// 第一次 initialize 会失败。这里自动补一次（只补一次，不无限重试）。
+  int _autoRetry = 0;
+
+  void _retryOrFail(String msg) {
+    if (_autoRetry < 1 && !msg.contains('权限')) {
+      _autoRetry++;
+      _opening = false;
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (mounted) _openCamera();
+      });
+      return;
+    }
+    _fail(msg);
   }
 
   bool _isAudioDenied(CameraException e) {
