@@ -1,4 +1,6 @@
 /// 鱼种（图鉴词库中的一种鱼）
+import '../utils/json_num.dart';
+
 class FishSpecies {
   final String id;
   final String name;
@@ -38,8 +40,8 @@ class FishSpecies {
         rarity: (j['rarity'] ?? 'common').toString(),
         image: (j['image'] ?? '').toString(),
         intro: (j['intro'] ?? '').toString(),
-        unlocked: (j['unlocked'] as bool?) ?? false,
-        count: (j['count'] as num?)?.toInt() ?? 0,
+        unlocked: jsonBool(j['unlocked'], fallback: false),
+        count: jsonInt(j['count']) ?? 0,
         catchImg: (j['catchImg'] ?? '').toString(),
         firstAt: (j['firstAt'] ?? '').toString(),
       );
@@ -60,10 +62,10 @@ class FishLevel {
   });
 
   factory FishLevel.fromJson(Map<String, dynamic> j) => FishLevel(
-        level: (j['level'] as num?)?.toInt() ?? 0,
+        level: jsonInt(j['level']) ?? 0,
         name: (j['name'] ?? '临渊羡鱼').toString(),
         nextName: (j['nextName'] ?? '').toString(),
-        nextNeed: (j['nextNeed'] as num?)?.toInt() ?? 0,
+        nextNeed: jsonInt(j['nextNeed']) ?? 0,
       );
 }
 
@@ -89,8 +91,8 @@ class FishGuide {
     return FishGuide(
       level: FishLevel.fromJson(
           (j['level'] as Map?)?.cast<String, dynamic>() ?? const {}),
-      unlockedCount: (j['unlockedCount'] as num?)?.toInt() ?? 0,
-      totalCount: (j['totalCount'] as num?)?.toInt() ?? 0,
+      unlockedCount: jsonInt(j['unlockedCount']) ?? 0,
+      totalCount: jsonInt(j['totalCount']) ?? 0,
       fresh: fresh
           .map((f) => FishSpecies.fromJson((f as Map).cast<String, dynamic>()))
           .toList(),
@@ -154,17 +156,17 @@ class FishRecognize {
     final matched = (j['matched'] as List?) ?? const [];
     final hf = j['hasFish'];
     return FishRecognize(
-      ok: (j['ok'] as bool?) ?? false,
-      needManual: (j['needManual'] as bool?) ?? true,
+      ok: jsonBool(j['ok'], fallback: false),
+      needManual: jsonBool(j['needManual'], fallback: true),
       hasFish: hf is bool ? hf : null,
       names: names.map((e) => e.toString()).toList(),
       matched: matched
           .map((e) => FishMatch.fromJson((e as Map).cast<String, dynamic>()))
           .toList(),
       msg: (j['msg'] ?? '').toString(),
-      lengthCm: (j['lengthCm'] as num?)?.toDouble(),
-      weightG: (j['weightG'] as num?)?.toDouble(),
-      confidence: (j['confidence'] as num?)?.toDouble(),
+      lengthCm: jsonDouble(j['lengthCm']),
+      weightG: jsonDouble(j['weightG']),
+      confidence: jsonDouble(j['confidence']),
     );
   }
 }
@@ -194,9 +196,9 @@ class AiBite {
   });
 
   factory AiBite.fromJson(Map<String, dynamic> j) => AiBite(
-        ok: (j['ok'] as bool?) ?? false,
+        ok: jsonBool(j['ok'], fallback: false),
         msg: (j['msg'] ?? '').toString(),
-        score: (j['score'] as num?)?.round(),
+        score: jsonNum(j['score'])?.round(),
         grade: (j['grade'] ?? '').toString(),
         summary: (j['summary'] ?? '').toString(),
         positives: ((j['positives'] as List?) ?? const [])
