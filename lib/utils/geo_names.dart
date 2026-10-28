@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:geolocator/geolocator.dart' show LocationAccuracy;
 
 import '../services/location_service.dart';
+import 'json_num.dart';
 
 /// 逆地编码：经纬度 → 中文地址 / 地级市名
 ///
@@ -148,7 +149,7 @@ class GeoNames {
         final parts = <String>[];
         for (final a in admin) {
           if (a is! Map) continue;
-          final level = (a['adminLevel'] as num?)?.toInt() ?? 0;
+          final level = jsonInt(a['adminLevel']) ?? 0;
           final name = (a['name'] ?? '').toString().trim();
           // 跳过国家(2)；层级 4/5/6/8 = 省/市/区县/街道
           if (level == 4 || level == 5 || level == 6 || level == 8) {
