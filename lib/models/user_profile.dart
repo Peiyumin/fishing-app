@@ -1,6 +1,7 @@
 import '../models/badge.dart';
 import '../models/member.dart';
 import '../services/api_config.dart';
+import '../utils/json_num.dart';
 
 /// 用户公开资料（关注/粉丝 / 我的页 / 会员 / 徽章）
 /// 对应后端 /users/me 与 /users/:id 返回结构
@@ -45,23 +46,23 @@ class UserProfile {
 
   factory UserProfile.fromJson(Map<String, dynamic> json) {
     return UserProfile(
-      id: json['id'] as String,
-      userNo: (json['userNo'] as num?)?.toInt() ?? 0,
+      id: (json['id'] ?? '').toString(),
+      userNo: jsonInt(json['userNo']) ?? 0,
       nickname: (json['nickname'] as String?) ?? '钓友',
       avatar: ApiConfig.mediaUrl(json['avatar'] as String?),
       bio: (json['bio'] ?? '').toString(),
-      followerCount: (json['followerCount'] as num?)?.toInt() ?? 0,
-      followingCount: (json['followingCount'] as num?)?.toInt() ?? 0,
-      postCount: (json['postCount'] as num?)?.toInt() ?? 0,
-      isFollowing: (json['isFollowing'] as bool?) ?? false,
-      isMe: (json['isMe'] as bool?) ?? false,
-      points: (json['points'] as num?)?.toInt() ?? 0,
+      followerCount: jsonInt(json['followerCount']) ?? 0,
+      followingCount: jsonInt(json['followingCount']) ?? 0,
+      postCount: jsonInt(json['postCount']) ?? 0,
+      isFollowing: jsonBool(json['isFollowing'], fallback: false),
+      isMe: jsonBool(json['isMe'], fallback: false),
+      points: jsonInt(json['points']) ?? 0,
       pointsName: (json['pointsName'] as String?)?.isNotEmpty == true
           ? json['pointsName'] as String
           : '积分',
-      likeCount: (json['likeCount'] as num?)?.toInt() ?? 0,
-      level: (json['level'] as num?)?.toInt() ?? 1,
-      catchCount: (json['catchCount'] as num?)?.toInt() ?? 0,
+      likeCount: jsonInt(json['likeCount']) ?? 0,
+      level: jsonInt(json['level']) ?? 1,
+      catchCount: jsonInt(json['catchCount']) ?? 0,
       vip: MemberStyle.fromJson(json),
       badges: (json['badges'] is List)
           ? (json['badges'] as List)
