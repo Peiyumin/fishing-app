@@ -1,4 +1,5 @@
 import '../services/api_config.dart';
+import '../utils/json_num.dart';
 
 /// 商城商品（测试版：展示 + 两种下单方式，现金支付未接入）
 /// 对应后端 GET /shop/products 返回结构
@@ -49,7 +50,7 @@ class ShopProduct {
       name: (json['name'] ?? '').toString(),
       image: ApiConfig.mediaUrl(img) ?? '',
       price: (json['price'] ?? '0').toString(),
-      pointsPrice: (json['points_price'] as num?)?.toInt() ?? 0,
+      pointsPrice: jsonInt(json['points_price']) ?? 0,
       originalPrice: (json['original_price'] ?? '').toString(),
       description: (json['description'] ?? '').toString(),
       detailImages: _mergeImages(ApiConfig.mediaList(json['detail_images']), inline),
@@ -57,9 +58,9 @@ class ShopProduct {
       brand: (json['brand'] ?? '').toString(),
       origin: (json['origin'] ?? '').toString(),
       material: (json['material'] ?? '').toString(),
-      stock: (json['stock'] as num?)?.toInt() ?? 0,
-      rating: (json['rating'] as num?)?.toDouble() ?? 0,
-      reviewCount: (json['review_count'] as num?)?.toInt() ?? 0,
+      stock: jsonInt(json['stock']) ?? 0,
+      rating: jsonDouble(json['rating']) ?? 0,
+      reviewCount: jsonInt(json['review_count']) ?? 0,
     );
   }
 
