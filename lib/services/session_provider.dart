@@ -7,6 +7,7 @@ import 'account_history.dart';
 import 'api_client.dart';
 import 'api_config.dart';
 import 'fish_service.dart';
+import '../utils/json_num.dart';
 
 /// 全局登录态管理（Provider）
 /// 对接自建后端 /api/auth（手机号 + 密码）
@@ -45,7 +46,11 @@ class SessionProvider extends ChangeNotifier {
     if (_vipLevel <= 0) return false;
     if (_vipExpire.isEmpty) return true;
     try {
-      return DateTime.parse(_vipExpire).isAfter(DateTime.now());
+      // 以前这里直接 DateTime.parse，后台把日期格式改一下（或存了空串）
+    // 整个「我的」页就会崩。解析不出来按「未过期」处理更保守？不 ——
+    // 宁可当未开通，也不要让会员权益凭空消失以外的崩溃发生。
+    final d = jsonDate(_vipExpire);
+    return d != null && d.isAfter(DateTime.now());
     } catch (_) {
       return true;
     }
@@ -85,20 +90,20 @@ class SessionProvider extends ChangeNotifier {
 
   /// 登录（手机号 + 密码）
   Future<void> signIn(String phone, String password) async {
-    final data = await ApiClient.post(
+    final data = jsonMap(await ApiClient.post(
       '/auth/login',
       {'phone': phone, 'password': password},
-    ) as Map;
+    ));
     await _apply(data);
   }
 
   /// 注册（手机号 + 密码 + 昵称），成功后自动登录
   Future<void> signUp(String phone, String password, String nickname) async {
-    final data = await ApiClient.post('/auth/register', {
+    final data = jsonMap(await ApiClient.post('/auth/register', {
       'phone': phone,
       'nickname': nickname,
       'password': password,
-    }) as Map;
+    }));
     await _apply(data);
   }
 
@@ -111,12 +116,12 @@ class SessionProvider extends ChangeNotifier {
   /// 手机号 + 短信验证码登录（**没注册过就自动注册**，注册即登录）
   /// 返回 true 表示这次是新注册出来的账号
   Future<bool> signInBySms(String phone, String code, {String? nickname}) async {
-    final data = await ApiClient.post('/auth/sms/login', {
+    final data = jsonMap(await ApiClient.post('/auth/sms/login', {
       'phone': phone,
       'code': code,
       if (nickname != null && nickname.trim().isNotEmpty)
         'nickname': nickname.trim(),
-    }) as Map;
+    }));
     final isNew = data['isNew'] == true;
     await _apply(data);
     return isNew;
@@ -124,7 +129,7 @@ class SessionProvider extends ChangeNotifier {
 
   /// 微信登录（code 由微信 SDK 授权后拿到）
   Future<bool> signInByWechat(String code) async {
-    final data = await ApiClient.post('/auth/wechat/login', {'code': code}) as Map;
+    final data = jsonMap(await ApiClient.post('/auth/wechat/login', {'code': code}));
     final isNew = data['isNew'] == true;
     await _apply(data);
     return isNew;
@@ -136,7 +141,7 @@ class SessionProvider extends ChangeNotifier {
   /// 客户端不上报手机号 —— 否则任何人填别人号码就能登进别人账号。
   Future<bool> signInByOneKey(String token) async {
     final data =
-        await ApiClient.post('/auth/onekey/login', {'token': token}) as Map;
+        jsonMap(await ApiClient.post('/auth/onekey/login', {'token': token}));
     final isNew = data['isNew'] == true;
     await _apply(data);
     return isNew;
@@ -149,7 +154,7 @@ class SessionProvider extends ChangeNotifier {
     _nickname = (data['nickname'] as String?) ?? '钓友';
     _avatar = data['avatar'] as String?;
     if (data['bio'] != null) _bio = data['bio'] as String?;
-    _vipLevel = (data['vipLevel'] as num?)?.toInt() ?? 0;
+    _vipLevel = jsonInt(data['vipLevel']) ?? 0;
     _vipName = (data['vipName'] as String?) ?? '';
     _vipColor = MemberStyle.parseColor(data['vipColor'], MemberStyle.normalColor);
     _vipColor2 = MemberStyle.parseColor(data['vipColor2'], MemberStyle.normalColor2);
@@ -180,11 +185,11 @@ class SessionProvider extends ChangeNotifier {
   /// 修改我的资料（昵称 / 头像 / 个性签名），成功后同步全局状态与本地缓存
   Future<UserProfile> updateProfile(
       {String? nickname, String? avatar, String? bio}) async {
-    final data = await ApiClient.post('/users/me/profile', {
+    final data = jsonMap(await ApiClient.post('/users/me/profile', {
       if (nickname != null) 'nickname': nickname,
       if (avatar != null) 'avatar': avatar,
       if (bio != null) 'bio': bio,
-    }) as Map;
+    }));
     final profile = UserProfile.fromJson(Map<String, dynamic>.from(data));
     _nickname = profile.nickname;
     _avatar = profile.avatar;
