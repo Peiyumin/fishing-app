@@ -2,6 +2,8 @@
 ///
 /// 只包含**后台已审核通过**的评论（status=1）。
 /// 用户自己刚发的评论会处于待审核状态，前台不展示，接口返回 pending=true。
+import '../utils/json_num.dart';
+
 class SpotComment {
   final String id;
   final String spotId;
@@ -33,8 +35,8 @@ class SpotComment {
       nickname: (j['user_nickname'] ?? '钓友').toString(),
       avatarUrl: j['user_avatar'] as String?,
       content: (j['content'] ?? '').toString(),
-      userLevel: (j['user_level'] as num?)?.toInt() ?? 1,
-      vipLevel: (j['user_vip'] as num?)?.toInt() ?? 0,
+      userLevel: jsonInt(j['user_level']) ?? 1,
+      vipLevel: jsonInt(j['user_vip']) ?? 0,
       createdAt: DateTime.tryParse((j['created_at'] ?? '').toString()) ??
           DateTime.now(),
     );
