@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import 'badge.dart';
 import 'catch_weather.dart';
+import '../utils/json_num.dart';
 
 /// 动态/渔获发布 数据模型
 /// 对应 posts 表，并通过外联 users 取到作者昵称与头像
@@ -114,8 +115,10 @@ class Post {
     final profile = json['profiles'] as Map<String, dynamic>?;
     final images = json['image_urls'];
     return Post(
-      id: json['id'] as String,
-      userId: json['user_id'] as String,
+      // id / user_id 后端一定给，但历史数据里 user_id 有空的时候；
+      // 用 toString 兜底，别让一条脏数据把整页信息流打死
+      id: (json['id'] ?? '').toString(),
+      userId: (json['user_id'] ?? '').toString(),
       username: profile?['username'] as String?,
       avatarUrl: profile?['avatar_url'] as String?,
       title: json['title'] as String? ?? '无标题',
@@ -129,26 +132,26 @@ class Post {
           : 'post',
       price: (json['price'] as String?) ?? '',
       locationName: json['location_name'] as String?,
-      lat: (json['lat'] as num?)?.toDouble(),
-      lng: (json['lng'] as num?)?.toDouble(),
-      createdAt: DateTime.parse(json['created_at'] as String),
-      likeCount: (json['like_count'] as num?)?.toInt() ?? 0,
-      commentCount: (json['comment_count'] as num?)?.toInt() ?? 0,
-      viewCount: (json['view_count'] as num?)?.toInt() ?? 0,
+      lat: jsonDouble(json['lat']),
+      lng: jsonDouble(json['lng']),
+      createdAt: jsonDateOrNow(json['created_at']),
+      likeCount: jsonInt(json['like_count']) ?? 0,
+      commentCount: jsonInt(json['comment_count']) ?? 0,
+      viewCount: jsonInt(json['view_count']) ?? 0,
       city: (json['city'] ?? '').toString(),
       likedByMe: likedByMe,
-      userLevel: (json['user_level'] as num?)?.toInt() ?? 1,
+      userLevel: jsonInt(json['user_level']) ?? 1,
       isFollowing: truthy(json['is_following']),
       isMe: truthy(json['is_me']),
-      authorVip: (json['user_vip'] as num?)?.toInt() ?? 0,
+      authorVip: jsonInt(json['user_vip']) ?? 0,
       fish: parseFish(json['fish']),
       locPublic: json['loc_public'] == null
           ? true
           : (json['loc_public'] is bool
               ? json['loc_public'] as bool
-              : (json['loc_public'] as num?)?.toInt() != 0),
-      lengthCm: (json['length_cm'] as num?)?.toDouble(),
-      weightG: (json['weight_g'] as num?)?.toDouble(),
+              : jsonInt(json['loc_public']) != 0),
+      lengthCm: jsonDouble(json['length_cm']),
+      weightG: jsonDouble(json['weight_g']),
       // 列表/详情走 posts.*（weather_json 是字符串），/catch/mine 给的是 weather 对象
       weather: parseWeather(json['weather'] ?? json['weather_json']),
       badges: parseBadges(json['badges']),
@@ -232,7 +235,7 @@ class Post {
     for (final f in fish) {
       final name = (f['name'] ?? '').toString().trim();
       if (name.isEmpty) continue;
-      final n = (f['count'] as num?)?.toInt() ?? 1;
+      final n = jsonInt(f['count']) ?? 1;
       parts.add('$name ${n <= 0 ? 1 : n} 条');
     }
     return parts.join(' · ');
@@ -242,7 +245,7 @@ class Post {
   int get catchTotal {
     var total = 0;
     for (final f in fish) {
-      final n = (f['count'] as num?)?.toInt() ?? 0;
+      final n = jsonInt(f['count']) ?? 0;
       total += n <= 0 ? 1 : n;
     }
     return total;
