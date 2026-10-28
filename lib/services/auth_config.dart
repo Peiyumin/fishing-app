@@ -1,5 +1,6 @@
 import 'api_client.dart';
 import 'api_config.dart';
+import '../utils/json_num.dart';
 
 /// 登录方式配置（v2.1.48）
 ///
@@ -85,7 +86,7 @@ class AuthConfig {
   static Future<AuthConfig> load() async {
     if (!ApiConfig.enabled) return current;
     try {
-      final data = await ApiClient.get('/auth/config') as Map;
+      final data = jsonMap(await ApiClient.get('/auth/config'));
       current = AuthConfig.fromJson(data);
       return current;
     } catch (_) {
