@@ -5,6 +5,7 @@ import '../models/user_profile.dart';
 import 'api_client.dart';
 import 'api_config.dart';
 import 'follow_service.dart';
+import '../utils/json_num.dart';
 
 /// 商城：商品 / 评价 / 下单（后台「商城管理」配置商品，前端展示 + 下单）
 ///
@@ -144,7 +145,7 @@ class ShopService {
       return List<ShopProduct>.from(_demoItems);
     }
     try {
-      final data = await ApiClient.get('/shop/products') as List;
+      final data = jsonList(await ApiClient.get('/shop/products'));
       return data
           .map((e) => ShopProduct.fromJson(Map<String, dynamic>.from(e as Map)))
           .toList();
@@ -163,7 +164,7 @@ class ShopService {
       return null;
     }
     try {
-      final data = await ApiClient.get('/shop/products/$id') as Map;
+      final data = jsonMap(await ApiClient.get('/shop/products/$id'));
       return ShopProduct.fromJson(Map<String, dynamic>.from(data));
     } catch (_) {
       return null;
@@ -177,10 +178,10 @@ class ShopService {
       return _demoReviews.where((r) => r.productId == productId).toList();
     }
     try {
-      final data = await ApiClient.get(
+      final data = jsonList(await ApiClient.get(
         '/shop/reviews',
         {'product_id': productId},
-      ) as List;
+      ));
       return data
           .map((e) => ShopReview.fromJson(Map<String, dynamic>.from(e as Map)))
           .toList();
@@ -233,11 +234,11 @@ class ShopService {
       };
     }
     if (ApiClient.token == null) throw Exception('请先登录');
-    final data = await ApiClient.post('/shop/order', {
+    final data = jsonMap(await ApiClient.post('/shop/order', {
       'product_id': productId,
       'type': usePoints ? 'points' : 'cash',
       'quantity': quantity,
-    }) as Map;
+    }));
     return Map<String, dynamic>.from(data);
   }
 
@@ -266,7 +267,7 @@ class ShopService {
       return (
         ok: true,
         msg: (m['message'] ?? '订单已取消').toString(),
-        pointsBack: (m['points_back'] as num?)?.toInt() ?? 0,
+        pointsBack: jsonInt(m['points_back']) ?? 0,
       );
     } catch (e) {
       return (ok: false, msg: _msgOf(e), pointsBack: 0);
