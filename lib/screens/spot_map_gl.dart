@@ -17,6 +17,7 @@ import '../app_theme.dart';
 import '../models/fishing_spot.dart';
 import '../models/no_fishing_zone.dart';
 import '../models/water_body.dart';
+import 'ai_radar_screen.dart';
 import '../services/location_service.dart';
 import '../services/map_config_service.dart';
 import '../services/ai_spot_service.dart';
@@ -1797,7 +1798,11 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     } catch (_) {}
   }
 
-  /// 点「AI 找钓点」：定位 → 结合天气与水体分析 → 标注 + 弹出由近到远列表
+  /// 点「AI 找钓点」：定位 → 全屏雷达扫描（过程可视化）→ 回填标注
+  ///
+  /// ★ v2.1.49：不再「转个圈直接弹一个白色底部面板」。
+  ///   现在打开雷达扫描页，扫描线转一圈、水域逐个点亮，扫完把结果列表
+  ///   推上来；用户点某一条就飞过去。整个过程用户能看见 AI 在算。
   Future<void> _findAiSpots() async {
     if (_aiBusy) return;
     setState(() => _aiBusy = true);
@@ -1817,22 +1822,36 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         }
         await _drawMe();
       }
-      final list = await AiSpotService.recommend(
-        lat: lat,
-        lng: lng,
-        spots: _spots,
-        waters: _waters,
+      // 走到这里 lat/lng 一定非空（要么原本就有，要么上面刚赋过）
+      final useLat = lat;
+      final useLng = lng;
+      if (!mounted) return;
+
+      final result = await Navigator.of(context).push<AiRadarResult>(
+        PageRouteBuilder(
+          opaque: false,
+          barrierColor: Colors.black.withOpacity(0.62),
+          transitionDuration: const Duration(milliseconds: 260),
+          reverseTransitionDuration: const Duration(milliseconds: 200),
+          pageBuilder: (_, anim, __) => FadeTransition(
+            opacity: anim,
+            child: AiRadarScreen(
+              lat: useLat,
+              lng: useLng,
+              spots: _spots,
+              waters: _waters,
+            ),
+          ),
+        ),
       );
-      if (!mounted) return;
-      setState(() => _aiSpots = list);
+      if (!mounted || result == null) return;
+
+      setState(() => _aiSpots = result.list);
       await _renderAiSpots();
-      if (!mounted) return;
-      if (list.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('附近 60 公里内没找到合适的水域，换个位置再试')));
-        return;
+      final picked = result.picked;
+      if (picked != null && mounted) {
+        await _landCamera(picked.lat, picked.lng);
       }
-      _showAiSheet(list);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -1843,194 +1862,6 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     }
   }
 
-  /// 推荐结果面板：按距离由近到远，点一条就直接飞过去
-  void _showAiSheet(List<AiSpot> list) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppTheme.surface,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        final h = MediaQuery.of(ctx).size.height;
-        return SafeArea(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: h * 0.64),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(height: 10),
-                Container(
-                  width: 38,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: const Color(0x22000000),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 30,
-                        height: 30,
-                        decoration: const BoxDecoration(
-                          color: AppTheme.accentLight,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.auto_awesome,
-                            size: 17, color: AppTheme.accentDark),
-                      ),
-                      const SizedBox(width: 10),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('AI 推荐钓点',
-                              style: TextStyle(
-                                  fontSize: 15.5,
-                                  fontWeight: FontWeight.bold)),
-                          Text(
-                              '按离你由近到远排序 · 共 ${list.length} 个 · '
-                              '${list.first.score >= 60 ? '当前条件不错' : '当前条件一般'}',
-                              style: const TextStyle(
-                                  fontSize: 11.5,
-                                  color: AppTheme.textSecondary)),
-                        ],
-                      ),
-                      const Spacer(),
-                      InkWell(
-                        onTap: () => Navigator.of(ctx).pop(),
-                        child: const Padding(
-                          padding: EdgeInsets.all(4),
-                          child: Icon(Icons.close,
-                              size: 20, color: AppTheme.textSecondary),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(height: 1, color: AppTheme.divider),
-                Flexible(
-                  child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
-                    itemCount: list.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (_, i) {
-                      final s = list[i];
-                      return GestureDetector(
-                        onTap: () {
-                          Navigator.of(ctx).pop();
-                          _landCamera(s.lat, s.lng);
-                        },
-                        behavior: HitTestBehavior.opaque,
-                        child: Container(
-                          padding: const EdgeInsets.all(11),
-                          decoration: BoxDecoration(
-                            color: AppTheme.primarySoft,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: AppTheme.border),
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // 序号：与地图上的橙色圆标一致
-                              Container(
-                                width: 26,
-                                height: 26,
-                                alignment: Alignment.center,
-                                decoration: const BoxDecoration(
-                                  color: AppTheme.accent,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Text('${i + 1}',
-                                    style: const TextStyle(
-                                        color: AppTheme.primary,
-                                        fontSize: 12.5,
-                                        fontWeight: FontWeight.w700)),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Flexible(
-                                          child: Text(s.name,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(
-                                                  fontSize: 14,
-                                                  fontWeight:
-                                                      FontWeight.w600)),
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Text(
-                                            '${AiSpotService.kmText(s.km)} · ${s.kind}',
-                                            style: const TextStyle(
-                                                fontSize: 11,
-                                                color:
-                                                    AppTheme.textSecondary)),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(s.reason,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            fontSize: 11.5,
-                                            height: 1.35,
-                                            color: AppTheme.textSecondary)),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: _aiScoreColor(s.score)
-                                      .withOpacity(0.14),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Column(
-                                  children: [
-                                    Text('${s.score}',
-                                        style: TextStyle(
-                                            fontSize: 14,
-                                            height: 1.1,
-                                            fontWeight: FontWeight.w700,
-                                            color: _aiScoreColor(s.score))),
-                                    Text(s.grade,
-                                        style: TextStyle(
-                                            fontSize: 9,
-                                            color: _aiScoreColor(s.score))),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  static Color _aiScoreColor(int s) {
-    if (s >= 80) return AppTheme.accentDark;
-    if (s >= 60) return AppTheme.starDark;
-    if (s >= 40) return AppTheme.warning;
-    return AppTheme.danger;
-  }
 
   Future<void> _locate({bool silent = false}) async {
     if (_locating) return;
@@ -2071,7 +1902,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         await c.addLayer(
             'me',
             'me-circle',
-            CircleLayerProperties(
+            const CircleLayerProperties(
               circleColor: _Hex.water,
               circleRadius: 6,
               circleStrokeColor: _Hex.white,
