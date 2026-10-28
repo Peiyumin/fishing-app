@@ -1,8 +1,11 @@
 import '../models/fishing_spot.dart';
 import '../models/spot_comment.dart';
 import '../models/spot_report.dart';
+import 'package:flutter/foundation.dart';
+
 import 'api_client.dart';
 import 'api_config.dart';
+import '../utils/json_num.dart';
 
 /// 钓点服务
 /// 对接自建后端 /api/spots；后端不可用或未配置时自动走「演示模式」
@@ -50,8 +53,8 @@ class SpotService {
     }
     try {
       // 后端 /spots 支持 keyword：按 名称 / 简介 / 地址 模糊匹配
-      final data = await ApiClient.get('/spots',
-          keyword.isEmpty ? null : {'keyword': keyword}) as List;
+      final data = jsonList(await ApiClient.get('/spots',
+          keyword.isEmpty ? null : {'keyword': keyword}));
       return data.map((row) => _fromApi(row as Map)).toList();
     } catch (_) {
       // 后端不可达：回落演示数据
@@ -73,7 +76,7 @@ class SpotService {
     }
     try {
       final data =
-          await ApiClient.get('/spots', {'kind': kind}) as List;
+          jsonList(await ApiClient.get('/spots', {'kind': kind}));
       return data.map((row) => _fromApi(row as Map)).toList();
     } catch (_) {
       final all = await fetchSpots();
@@ -82,32 +85,36 @@ class SpotService {
   }
 
   /// 后端 JSON 行 → 模型（含 Phase F 新字段）
+  /// 仅测试用：把后端原始行解析成模型，供接口契约测试直接调用
+  @visibleForTesting
+  static FishingSpot mapApiRow(Map r) => _fromApi(r);
+
   static FishingSpot _fromApi(Map r) {
     return FishingSpot(
-      id: r['id'] as String,
-      name: (r['name'] ?? '未命名钓点') as String,
-      type: (r['type'] ?? '野钓') as String,
+      id: (r['id'] ?? '').toString(),
+      name: (r['name'] ?? '未命名钓点').toString(),
+      type: (r['type'] ?? '野钓').toString(),
       kind: (r['kind'] as String?)?.isNotEmpty == true
           ? r['kind'] as String
           : 'wild',
-      status: (r['status'] as num?)?.toInt() ?? 1,
-      lat: (r['lat'] as num?)?.toDouble() ?? 0,
-      lng: (r['lng'] as num?)?.toDouble() ?? 0,
-      rating: (r['rating'] as num?)?.toDouble() ?? 0,
-      description: (r['description'] ?? '') as String,
+      status: jsonInt(r['status']) ?? 1,
+      lat: jsonDouble(r['lat']) ?? 0,
+      lng: jsonDouble(r['lng']) ?? 0,
+      rating: jsonDouble(r['rating']) ?? 0,
+      description: (r['description'] ?? '').toString(),
       coverUrl: ApiConfig.mediaUrl((r['cover'] as String?)?.isNotEmpty == true
           ? r['cover'] as String
           : null),
       imageUrls: ApiConfig.mediaList(r['images']),
-      address: (r['address'] ?? '') as String,
-      fee: (r['fee'] ?? '') as String,
-      fish: (r['fish'] ?? '') as String,
-      tags: (r['tags'] ?? '') as String,
-      phone: (r['phone'] ?? '') as String,
-      delivery: (r['delivery'] as num?)?.toInt() == 1,
-      reportCount: (r['report_count'] as num?)?.toInt() ?? 0,
-      verified: (r['verified'] as num?)?.toInt() == 1,
-      commentCount: (r['comment_count'] as num?)?.toInt() ?? 0,
+      address: (r['address'] ?? '').toString(),
+      fee: (r['fee'] ?? '').toString(),
+      fish: (r['fish'] ?? '').toString(),
+      tags: (r['tags'] ?? '').toString(),
+      phone: (r['phone'] ?? '').toString(),
+      delivery: jsonInt(r['delivery']) == 1,
+      reportCount: jsonInt(r['report_count']) ?? 0,
+      verified: jsonInt(r['verified']) == 1,
+      commentCount: jsonInt(r['comment_count']) ?? 0,
     );
   }
 
