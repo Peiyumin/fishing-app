@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../utils/json_num.dart';
 
 /// 会员等级样式（对应后端 lib/member.php 的等级配置）
 ///
@@ -41,7 +42,7 @@ class MemberStyle {
   }
 
   factory MemberStyle.fromJson(Map<String, dynamic> json) {
-    final lv = (json['vipLevel'] as num?)?.toInt() ?? 0;
+    final lv = jsonInt(json['vipLevel']) ?? 0;
     if (lv <= 0) {
       return MemberStyle(expire: (json['vipExpire'] ?? '').toString());
     }
