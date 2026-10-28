@@ -9,6 +9,7 @@ import 'app_theme.dart';
 import 'models/app_bootstrap.dart';
 import 'models/message.dart';
 import 'screens/chat_screen.dart';
+import 'screens/auth_screen.dart';
 import 'screens/fish_guide_screen.dart';
 import 'screens/pond_screen.dart';
 import 'screens/member_center_screen.dart';
@@ -19,6 +20,7 @@ import 'screens/permission_check_screen.dart';
 import 'screens/post_detail_screen.dart';
 import 'screens/signin_screen.dart';
 import 'screens/startup/preview_pager_screen.dart';
+import 'screens/startup/permission_onboard_screen.dart';
 import 'screens/startup/splash_screen.dart';
 import 'screens/startup/startup_ad_screen.dart';
 import 'screens/wallet_screen.dart';
@@ -162,29 +164,6 @@ Future<void> openFromNotification(Map<String, dynamic> p) async {
     }
   }
   nav.pushNamed('/message-center');
-}
-
-/// 长按图标快捷项的跳转（我的图鉴 / 赛博鱼缸 / 记渔获）
-///
-/// 和通知跳转一样，冷启动时 Navigator 可能还没挂稳，最多等 2 秒。
-Future<void> _openShortcut(String type) async {
-  NavigatorState? nav = navigatorKey.currentState;
-  for (var i = 0; i < 10 && nav == null; i++) {
-    await Future.delayed(const Duration(milliseconds: 200));
-    nav = navigatorKey.currentState;
-  }
-  if (nav == null) return;
-  switch (type) {
-    case AppShortcuts.guide:
-      nav.pushNamed('/fish-guide');
-      break;
-    case AppShortcuts.tank:
-      nav.pushNamed('/fish-tank');
-      break;
-    case AppShortcuts.catchFish:
-      nav.push(MaterialPageRoute(builder: (_) => const PublishCatchScreen()));
-      break;
-  }
 }
 
 /// 新消息顶部横幅：带具体内容的卡片，点击直达对应页面
@@ -498,6 +477,96 @@ class _StartupGateState extends State<StartupGate> {
   /// 冷启动是被「点击通知」拉起来的：等主界面挂稳再跳，只处理一次
   bool _pendingNavHandled = false;
 
+  /// 长按图标快捷项的跳转（我的鱼种图鉴 / 赛博池塘 / 拍一张渔获）
+  ///
+  /// ★ v2.1.46：三个入口都是「个人数据」，**未登录一律拦下**。
+  ///   之前不拦，未登录点进去会看到空白的图鉴（还带着默认头像和 Lv.0 称号），
+  ///   用户以为「没登录也能用」或「登录了却没数据」。现在改成先弹登录提示，
+  ///   登录成功后自动继续进入原目标页（不用用户再点一次图标）。
+  ///
+  /// 冷启动时 Navigator 可能还没挂稳，最多等 2 秒。
+  Future<void> _openShortcut(String type) async {
+    NavigatorState? nav = navigatorKey.currentState;
+    for (var i = 0; i < 10 && nav == null; i++) {
+      await Future.delayed(const Duration(milliseconds: 200));
+      nav = navigatorKey.currentState;
+    }
+    if (nav == null) return;
+
+    // 上面等 navigator 时可能已经过了几帧，回读 context 前必须确认还挂着
+    if (!mounted) return;
+    // 登录态还没恢复完（冷启动极早期）时，等一小会儿再判断，
+    // 避免「明明登录过却被要求登录」
+    var session = context.read<SessionProvider>();
+    for (var i = 0; i < 10 && !session.isLoggedIn; i++) {
+      if (!mounted) return;
+      // 已经恢复过一轮（restore 里有 key 但这次空）就不再等
+      if (!_loading) break;
+      await Future.delayed(const Duration(milliseconds: 150));
+      if (!mounted) return;
+      session = context.read<SessionProvider>();
+    }
+
+    if (!session.isLoggedIn) {
+      await _askLoginThen(type);
+      return;
+    }
+    _gotoShortcut(nav, type);
+  }
+
+  /// 弹「请先登录」，确认后去登录页；登录成功回来直接进目标页
+  ///
+  /// 注意：showDialog 用的是 **本 State 的 context**（它在 Navigator 之下），
+  /// 不能传 navigatorKey.currentState!.context —— 那是 Navigator 自己的
+  /// context，`Navigator.of()` 从它往上找不到 Navigator，会直接抛异常。
+  Future<void> _askLoginThen(String type) async {
+    if (!mounted) return;
+    final label = AppShortcuts.label(type);
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('请先登录'),
+        content: Text('「$label」是你的私人记录，登录后才会同步到账号。\n现在去登录？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('暂不'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('去登录'),
+          ),
+        ],
+      ),
+    );
+    if (go != true || !mounted) return;
+    final nav = navigatorKey.currentState;
+    if (nav == null) return;
+
+    await nav.push(MaterialPageRoute(builder: (_) => const AuthScreen()));
+    if (!mounted) return;
+    // 登录页返回后如果已经登录，直接把他送进刚才想去的页面
+    if (context.read<SessionProvider>().isLoggedIn) {
+      _gotoShortcut(nav, type);
+    }
+  }
+
+  /// 真正跳转（登录校验通过后）
+  void _gotoShortcut(NavigatorState nav, String type) {
+    switch (type) {
+      case AppShortcuts.guide:
+        nav.pushNamed('/fish-guide');
+        break;
+      case AppShortcuts.tank:
+        nav.pushNamed('/fish-tank');
+        break;
+      case AppShortcuts.catchFish:
+        nav.push(MaterialPageRoute(builder: (_) => const PublishCatchScreen()));
+        break;
+    }
+  }
+
   void _handlePendingNav() {
     if (_pendingNavHandled) return;
     _pendingNavHandled = true;
@@ -532,7 +601,8 @@ class _StartupGateState extends State<StartupGate> {
     if (boot == null || !boot.hasStartupContent) {
       // 主界面挂完再处理「点通知冷启动」的跳转
       WidgetsBinding.instance.addPostFrameCallback((_) => _handlePendingNav());
-      return const MainShell();
+      // 本机第一次装好打开时，先过一遍「所有权限都问一遍」的引导
+      return const FirstRunPermissionGate(child: MainShell());
     }
     if (boot.ads.isNotEmpty) {
       return StartupAdScreen(
