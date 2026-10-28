@@ -1,4 +1,5 @@
 import 'package:latlong2/latlong.dart';
+import '../utils/json_num.dart';
 
 /// 禁钓区类型
 enum ZoneKind {
@@ -90,7 +91,9 @@ class NoFishingZone {
     List<int>? md;
     final rawMd = j['mdWindow'];
     if (rawMd is List && rawMd.length == 4) {
-      md = rawMd.map((e) => (e as num).toInt()).toList();
+      // 元素可能是 "12" / null（后台改过字段类型），不能用 ! 断言：
+      // 一个空元素就会让整份禁钓区数据解析失败，地图上一条禁钓区都不显示。
+      md = rawMd.map((e) => jsonNum(e)?.toInt() ?? 0).toList();
     }
     DateTime? dt(dynamic v) =>
         v == null ? null : DateTime.tryParse(v.toString());
@@ -111,13 +114,15 @@ class NoFishingZone {
       source: j['source'] as String? ?? '',
       onMap: (j['onMap'] is bool)
           ? (j['onMap'] as bool)
-          : (j['onMap'] as num?)?.toInt() == 1,
+          : jsonInt(j['onMap']) == 1,
       rings: ringsRaw
           .whereType<List>()
           .map((ring) => ring
               .whereType<List>()
+              // 坐标点必须是 [lng, lat] 两个数；少一个就跳过，别让整条环废掉
+              .where((p) => p.length >= 2)
               .map((p) => LatLng(
-                  (p[0] as num).toDouble(), (p[1] as num).toDouble()))
+                  jsonNum(p[0])?.toDouble() ?? 0, jsonNum(p[1])?.toDouble() ?? 0))
               .toList())
           .toList(),
     );
@@ -200,7 +205,9 @@ class SeasonRule {
     List<int>? md;
     final rawMd = j['mdWindow'];
     if (rawMd is List && rawMd.length == 4) {
-      md = rawMd.map((e) => (e as num).toInt()).toList();
+      // 元素可能是 "12" / null（后台改过字段类型），不能用 ! 断言：
+      // 一个空元素就会让整份禁钓区数据解析失败，地图上一条禁钓区都不显示。
+      md = rawMd.map((e) => jsonNum(e)?.toInt() ?? 0).toList();
     }
     return SeasonRule(
       id: j['id'] as String? ?? '',
