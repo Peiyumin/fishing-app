@@ -8,6 +8,7 @@ import '../services/member_service.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/app_refresh.dart';
+import '../utils/json_num.dart';
 
 /// 会员中心（v27，参考图三 / 图四）
 /// 配色沿用 App 青绿主题：深湖绿渐变头部 + 暖金强调，权益网格 + 套餐选择
@@ -737,14 +738,14 @@ class _MemberOrdersScreenState extends State<MemberOrdersScreen> {
                     itemCount: _orders.length,
                     itemBuilder: (_, i) {
                       final o = _orders[i];
-                      final st = (o['status'] as num?)?.toInt() ?? 0;
+                      final st = jsonInt(o['status']) ?? 0;
                       final label =
                           st == 1 ? '已生效' : (st == 2 ? '已取消' : '待确认');
                       final color = st == 1
                           ? AppTheme.primary
                           : (st == 2 ? AppTheme.danger : AppTheme.warning);
-                      final amount = (o['amount'] as num?)?.toDouble() ?? 0;
-                      final pointsCost = (o['pointsCost'] as num?)?.toInt() ?? 0;
+                      final amount = jsonDouble(o['amount']) ?? 0;
+                      final pointsCost = jsonInt(o['pointsCost']) ?? 0;
                       return Container(
                         margin: const EdgeInsets.only(bottom: 8),
                         padding: const EdgeInsets.all(13),
