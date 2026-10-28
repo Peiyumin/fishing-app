@@ -25,8 +25,8 @@ class MyOrdersScreen extends StatefulWidget {
 
 class _MyOrdersScreenState extends State<MyOrdersScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tab =
-      TabController(length: _filters.length, vsync: this);
+  // 惰性初始化 + dispose 时首次访问 = 退出页面必崩（见 article_list_screen 注释）
+  late final TabController _tab;
 
   static const _filters = <({String label, int? status})>[
     (label: '全部', status: null),
@@ -42,6 +42,7 @@ class _MyOrdersScreenState extends State<MyOrdersScreen>
   @override
   void initState() {
     super.initState();
+    _tab = TabController(length: _filters.length, vsync: this);
     _tab.addListener(() {
       if (!_tab.indexIsChanging && mounted) setState(() {});
     });
