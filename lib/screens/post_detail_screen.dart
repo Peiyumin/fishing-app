@@ -69,6 +69,17 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   /// 作者关注状态（详情页作者行右侧「关注」，交给 FollowButton 维护）
   bool _following = false;
 
+  /// 这条渔获能不能关注作者
+  ///
+  /// ★ v2.1.49：必须再判 `userId` 非空。以前只判 `isMe`，一旦 userId 是空串
+  ///   （详情页由外部传入的 Post 可能来自本地缓存/旧列表，作者 id 没落地），
+  ///   请求会发到 `/users//follow` —— 后端匹配不到任何路由，直接走 users 块
+  ///   兜底的 `api_fail(404,'接口不存在')`，客户端又把「接口不存在」理解成
+  ///   「关注功能没部署」，于是弹一句「关注/粉丝功能需升级后端后启用」。
+  ///   功能其实一直在用，问题只是这条内容的作者 id 是空的。
+  bool get _canFollow =>
+      ApiConfig.enabled && !_post.isMe && _post.userId.trim().isNotEmpty;
+
   // ── 天气 / 水质 / 指数（和天气页、首页同一个引擎，分数保证一致）
   HourPoint? _hour;
   WaterMetrics? _wm;
@@ -787,7 +798,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   ],
                 ),
               ),
-              if (!_post.isMe && ApiConfig.enabled) ...[
+              if (_canFollow) ...[
                 const SizedBox(width: 8),
                 FollowButton(
                   userId: _post.userId,
@@ -1844,7 +1855,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                         color: AppTheme.textPrimary),
                   ),
                 ),
-                if (!_post.isMe && ApiConfig.enabled) ...[
+                if (_canFollow) ...[
                   FollowButton(
                     userId: _post.userId,
                     tiny: true,
