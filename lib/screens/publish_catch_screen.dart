@@ -58,6 +58,9 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
   double? _lat;
   double? _lng;
   bool _locating = true;
+
+  /// 当前钓点来自「系统缓存的最后一次定位」而不是当场实测
+  bool _locCached = false;
   // 钓点位置是否公开：默认值取自「设置 - 鱼获隐私」（用户可在这里单条改）
   bool _locPublic = AppSettings.instance.catchPrivacy;
 
@@ -123,10 +126,19 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
         _lng = pos.longitude;
         _placeLabel = short;
         _placeDetail = (rev?['display'] as String?)?.trim();
+        _locCached = LocationService.lastFixWasCached;
         _locating = false;
       });
       if (!silent) {
-        CenterToast.show(context, '已获取当前位置', icon: Icons.location_on);
+        // 走的是「系统缓存的最后一次定位」时要说清楚，别让用户以为
+        // 钓点是他现在站的位置
+        CenterToast.show(
+          context,
+          LocationService.lastFixWasCached
+              ? '已使用上次的定位记录，信号弱时可到室外点右侧重试'
+              : '已获取当前位置',
+          icon: Icons.location_on,
+        );
       }
     } on LocationException catch (e) {
       if (mounted) setState(() => _locating = false);
@@ -779,8 +791,12 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
                     const SizedBox(height: 3),
                     Text(
                       _locating
-                          ? '正在获取当前位置…'
-                          : (hasPlace ? _placeLabel! : '未获取到定位，点右侧重试'),
+                          ? '正在获取当前位置…（信号弱会自动降级多试几档）'
+                          : (hasPlace
+                              ? (_locCached
+                                  ? '${_placeLabel!} · 上次定位记录'
+                                  : _placeLabel!)
+                              : '未获取到定位，点右侧重试'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
