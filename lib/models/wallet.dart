@@ -1,4 +1,5 @@
 import '../services/api_config.dart';
+import '../utils/json_num.dart';
 
 /// 钱包总览（余额 + 积分 + 汇总）
 class WalletInfo {
@@ -21,12 +22,12 @@ class WalletInfo {
   factory WalletInfo.fromJson(Map<String, dynamic> j) {
     final s = (j['summary'] as Map?)?.cast<String, dynamic>() ?? const {};
     return WalletInfo(
-      balance: (j['balance'] as num?)?.toDouble() ?? 0,
-      points: (j['points'] as num?)?.toInt() ?? 0,
+      balance: jsonDouble(j['balance']) ?? 0,
+      points: jsonInt(j['points']) ?? 0,
       pointsName: (j['pointsName'] as String?) ?? '积分',
-      totalIn: (s['totalIn'] as num?)?.toDouble() ?? 0,
-      totalOut: (s['totalOut'] as num?)?.toDouble() ?? 0,
-      totalPoints: (s['totalPoints'] as num?)?.toInt() ?? 0,
+      totalIn: jsonDouble(s['totalIn']) ?? 0,
+      totalOut: jsonDouble(s['totalOut']) ?? 0,
+      totalPoints: jsonInt(s['totalPoints']) ?? 0,
     );
   }
 }
@@ -58,9 +59,9 @@ class WalletLog {
   factory WalletLog.fromJson(Map<String, dynamic> j) => WalletLog(
         id: (j['id'] ?? '').toString(),
         type: (j['type'] ?? '').toString(),
-        amount: (j['amount'] as num?)?.toDouble() ?? 0,
-        balanceAfter: (j['balanceAfter'] as num?)?.toDouble() ?? 0,
-        pointsDelta: (j['pointsDelta'] as num?)?.toInt() ?? 0,
+        amount: jsonDouble(j['amount']) ?? 0,
+        balanceAfter: jsonDouble(j['balanceAfter']) ?? 0,
+        pointsDelta: jsonInt(j['pointsDelta']) ?? 0,
         title: (j['title'] ?? '').toString(),
         remark: (j['remark'] ?? '').toString(),
         createdAt: (j['createdAt'] ?? '').toString(),
@@ -95,9 +96,9 @@ class ChargePlan {
   factory ChargePlan.fromJson(Map<String, dynamic> j) => ChargePlan(
         id: (j['id'] ?? '').toString(),
         title: (j['title'] ?? '').toString(),
-        amount: (j['amount'] as num?)?.toDouble() ?? 0,
-        bonus: (j['bonus'] as num?)?.toDouble() ?? 0,
-        pointsBonus: (j['pointsBonus'] as num?)?.toInt() ?? 0,
+        amount: jsonDouble(j['amount']) ?? 0,
+        bonus: jsonDouble(j['bonus']) ?? 0,
+        pointsBonus: jsonInt(j['pointsBonus']) ?? 0,
       );
 }
 
@@ -125,9 +126,9 @@ class ChargeOrder {
   factory ChargeOrder.fromJson(Map<String, dynamic> j) => ChargeOrder(
         id: (j['id'] ?? '').toString(),
         title: (j['title'] ?? '').toString(),
-        amount: (j['amount'] as num?)?.toDouble() ?? 0,
-        bonus: (j['bonus'] as num?)?.toDouble() ?? 0,
-        status: (j['status'] as num?)?.toInt() ?? 0,
+        amount: jsonDouble(j['amount']) ?? 0,
+        bonus: jsonDouble(j['bonus']) ?? 0,
+        status: jsonInt(j['status']) ?? 0,
         createdAt: (j['createdAt'] ?? '').toString(),
       );
 }
