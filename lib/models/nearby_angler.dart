@@ -1,4 +1,6 @@
 /// 附近钓友
+import '../utils/json_num.dart';
+
 class NearbyAngler {
   final String userId;
   final String nickname;
@@ -40,12 +42,12 @@ class NearbyAngler {
         nickname: (j['nickname'] ?? '').toString(),
         avatar: (j['avatar'] ?? '').toString(),
         bio: (j['bio'] ?? '').toString(),
-        vipLevel: (j['vipLevel'] as num?)?.toInt() ?? 0,
-        level: (j['level'] as num?)?.toInt() ?? 1,
-        distance: (j['distance'] as num?)?.toInt() ?? 0,
-        distanceKm: (j['distanceKm'] as num?)?.toDouble() ?? 0,
+        vipLevel: jsonInt(j['vipLevel']) ?? 0,
+        level: jsonInt(j['level']) ?? 1,
+        distance: jsonInt(j['distance']) ?? 0,
+        distanceKm: jsonDouble(j['distanceKm']) ?? 0,
         geoAt: (j['geoAt'] ?? '').toString(),
-        followed: (j['followed'] as bool?) ?? false,
-        member: (j['member'] as bool?) ?? false,
+        followed: jsonBool(j['followed'], fallback: false),
+        member: jsonBool(j['member'], fallback: false),
       );
 }
