@@ -87,20 +87,15 @@ class FollowService {
   ///   用户看到的就是「关注/粉丝功能需升级后端后启用」——
   ///   而关注功能其实早就上线了，这句提示纯属冤枉。
   ///
-  ///   现在只认两种「真的没有」：
-  ///     ① 后端明说「接口不存在」（路由没挂上，块尾兜底那条）
-  ///     ② 整段返回是 HTML 错误页，且**没带任何业务文案**（老后端 404 被
-  ///        nginx 换成静态页）：这种情况连错误原因都读不到，只能按不可用处理。
-  ///   其余一律原样抛出，让用户看到服务器给的真实原因。
+  ///   现在只认一种「真的没有」：后端**明说**「接口不存在」（users 块尾那条
+  ///   兜底路由没挂上才会说的话）。
+  ///
+  ///   至于「整段返回 HTML 错误页」——那只能说明「出错了」，不能说「没升级」
+  ///   （老后端把 404 换成 nginx 静态页时，用户不存在也是这个表现）。
+  ///   这种情况原样抛出，界面显示 [ApiException] 给的「服务器开小差了，请稍后再试」。
   static bool _isNotAvailable(Object e) {
-    if (e is ApiException) {
-      if (e.message.contains('接口不存在')) return true;
-      // 老后端 + nginx：404 被换成 HTML 静态页，读不到任何业务文案
-      return e.html && e.message.contains('服务器开小差');
-    }
-    // 兜底：万一还有别处抛来的裸异常
-    final s = e.toString();
-    return s.contains('接口不存在') || s.contains('at character 1) <html');
+    if (e is ApiException) return e.message.contains('接口不存在');
+    return e.toString().contains('接口不存在');
   }
 
   /// 仅测试用：把私有判据暴露出来，锁住「用户不存在 ≠ 后端未升级」这条
