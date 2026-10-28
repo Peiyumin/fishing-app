@@ -1,4 +1,5 @@
 import 'member.dart';
+import '../utils/json_num.dart';
 
 /// 会员套餐
 class MemberPlan {
@@ -36,10 +37,10 @@ class MemberPlan {
   factory MemberPlan.fromJson(Map<String, dynamic> j) => MemberPlan(
         id: (j['id'] ?? '').toString(),
         name: (j['name'] ?? '').toString(),
-        days: (j['days'] as num?)?.toInt() ?? 30,
-        price: (j['price'] as num?)?.toDouble() ?? 0,
-        originalPrice: (j['originalPrice'] as num?)?.toDouble() ?? 0,
-        pointsPrice: (j['pointsPrice'] as num?)?.toInt() ?? 0,
+        days: jsonInt(j['days']) ?? 30,
+        price: jsonDouble(j['price']) ?? 0,
+        originalPrice: jsonDouble(j['originalPrice']) ?? 0,
+        pointsPrice: jsonInt(j['pointsPrice']) ?? 0,
         badge: (j['badge'] ?? '').toString(),
       );
 }
@@ -116,12 +117,12 @@ class MemberInfo {
   factory MemberInfo.fromJson(Map<String, dynamic> j) {
     final perks = (j['perks'] as List?) ?? const [];
     return MemberInfo(
-      active: (j['active'] as bool?) ?? false,
-      level: (j['level'] as num?)?.toInt() ?? 0,
+      active: jsonBool(j['active'], fallback: false),
+      level: jsonInt(j['level']) ?? 0,
       expire: (j['expire'] ?? '').toString(),
-      daysLeft: (j['daysLeft'] as num?)?.toInt() ?? 0,
-      points: (j['points'] as num?)?.toInt() ?? 0,
-      balance: (j['balance'] as num?)?.toDouble() ?? 0,
+      daysLeft: jsonInt(j['daysLeft']) ?? 0,
+      points: jsonInt(j['points']) ?? 0,
+      balance: jsonDouble(j['balance']) ?? 0,
       perks: perks
           .map((p) => MemberPerk.fromJson((p as Map).cast<String, dynamic>()))
           .toList(),
