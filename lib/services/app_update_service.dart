@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'api_client.dart';
 import 'api_config.dart';
+import '../utils/json_num.dart';
 
 /// 当前 App 版本（发新版时与 pubspec.yaml 的 `version: x.y.z+n` 同步修改）
 class AppVersion {
@@ -33,7 +34,7 @@ class UpdateInfo {
   factory UpdateInfo.fromJson(Map<String, dynamic> j) => UpdateInfo(
         needUpdate: j['needUpdate'] == true,
         version: (j['version'] ?? '').toString(),
-        buildNo: (j['build_no'] as num?)?.toInt() ?? 0,
+        buildNo: jsonInt(j['build_no']) ?? 0,
         force: j['force'] == true,
         downloadUrl: (j['download_url'] ?? '').toString(),
         releaseNotes: (j['release_notes'] ?? '').toString(),
@@ -47,11 +48,11 @@ class AppUpdateService {
     if (!ApiConfig.enabled) return null;
     try {
       final platform = Platform.isAndroid ? 'android' : 'ios';
-      final data = await ApiClient.get('/app/version/check', {
+      final data = jsonMap(await ApiClient.get('/app/version/check', {
         'platform': platform,
         'current': AppVersion.version,
         'build': AppVersion.build.toString(),
-      }) as Map;
+      }));
       final info = UpdateInfo.fromJson(Map<String, dynamic>.from(data));
       return info.needUpdate ? info : null;
     } catch (_) {
