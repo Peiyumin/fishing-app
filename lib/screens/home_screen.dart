@@ -16,6 +16,7 @@ import '../services/spot_service.dart';
 import '../services/weather_service.dart';
 import '../utils/coord_transform.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/login_gate.dart';
 import '../widgets/grid_nav.dart';
 import '../widgets/location_prompt.dart';
 import '../widgets/msg_bell.dart';
@@ -505,6 +506,13 @@ class _HomeScreenState extends State<HomeScreen>
     if (mounted) setState(() => _lastUpdated = DateTime.now());
   }
 
+  /// 游客点任何内容都先弹登录页（v2.1.48），登录成功后接着做原动作
+  Future<void> _guard(VoidCallback action, {String? hint}) async {
+    final ok = await ensureLogin(context, hint: hint);
+    if (!ok || !mounted) return;
+    action();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -599,9 +607,8 @@ class _HomeScreenState extends State<HomeScreen>
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             child: InkWell(
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const SearchScreen()),
-              ),
+              onTap: () => _guard(() => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SearchScreen()))),
                 child: Container(
                   height: 42,
                   decoration: BoxDecoration(
@@ -650,16 +657,14 @@ class _HomeScreenState extends State<HomeScreen>
                                 ? '实时天气'
                                 : '${_place!.label} · 实时天气',
                             actionLabel: '7天预报',
-                            onAction: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                  builder: (_) => const WeatherScreen()),
-                            ),
+                            onAction: () => _guard(() =>
+                                Navigator.of(context).push(MaterialPageRoute(
+                                    builder: (_) => const WeatherScreen()))),
                           ),
                           InkWell(
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                  builder: (_) => const WeatherScreen()),
-                            ),
+                            onTap: () => _guard(() =>
+                                Navigator.of(context).push(MaterialPageRoute(
+                                    builder: (_) => const WeatherScreen()))),
                             borderRadius: BorderRadius.circular(14),
                             child: WeatherCard(
                               weather: _weather!,
@@ -674,9 +679,8 @@ class _HomeScreenState extends State<HomeScreen>
               // 由近到远是小字说明，不跟标题一样大（原来拼在 title 里，字号一样大很突兀）
               subtitle: _myLat == null ? null : '由近到远',
               actionLabel: '更多',
-              onAction: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const SpotsScreen()),
-              ),
+              onAction: () => _guard(() => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SpotsScreen()))),
             ),
             SizedBox(
               // 卡片自身 96 高（见 SpotCard.cardHeight），这里只留一点呼吸空间，
@@ -689,10 +693,9 @@ class _HomeScreenState extends State<HomeScreen>
                     .map((s) => SpotCard(
                           spot: s,
                           distanceMeters: _distanceOf(s),
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (_) => SpotDetailScreen(spot: s)),
-                          ),
+                          onTap: () => _guard(() =>
+                              Navigator.of(context).push(MaterialPageRoute(
+                                  builder: (_) => SpotDetailScreen(spot: s)))),
                         ))
                     .toList(),
               ),
@@ -727,10 +730,9 @@ class _HomeScreenState extends State<HomeScreen>
                             posts: _posts,
                             shrinkWrap: true,
                             padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-                            onTap: (p) => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                  builder: (_) => PostDetailScreen(post: p)),
-                            ),
+                            onTap: (p) => _guard(() =>
+                                Navigator.of(context).push(MaterialPageRoute(
+                                    builder: (_) => PostDetailScreen(post: p)))),
                           ),
                           _feedFooter(),
                         ],
