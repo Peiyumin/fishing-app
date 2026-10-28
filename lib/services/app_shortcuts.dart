@@ -27,9 +27,9 @@ class AppShortcuts {
 
   /// 中文名（跳转失败或埋点时用）
   static String label(String type) => switch (type) {
-        guide => '我的图鉴',
-        tank => '赛博鱼缸',
-        catchFish => '记渔获',
+        guide => '我的鱼种图鉴',
+        tank => '赛博池塘',
+        catchFish => '拍一张渔获',
         _ => '',
       };
 
