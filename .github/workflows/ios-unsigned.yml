@@ -5,12 +5,19 @@ name: iOS-Unsigned-IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: '构建机（macos-14 默认 / macos-13 / macos-15）'
+        required: false
+        default: 'macos-14'
   push:
     tags: ['v*']
 
 jobs:
   build:
-    runs-on: macos-14
+    # 默认 macos-14；免费账户高峰时段这台容易被「排队 15 分钟后取消」，
+    # 手动触发时可以换 macos-13 再试一次（两个镜像不总是同时受限）。
+    runs-on: ${{ inputs.runner || 'macos-14' }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
