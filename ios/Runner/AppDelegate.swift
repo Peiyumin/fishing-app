@@ -14,6 +14,17 @@ import Flutter
   private static let channelName = "fishing/shortcuts"
   private static let pendingKey = "pending_shortcut"
 
+  /// 微信登录桥（v2.1.46）
+  ///
+  /// 当前版本**还没有集成微信 SDK**（缺开放平台的 AppID / AppSecret）。
+  /// 这里先把 channel 注册上，明确回 `not_integrated`：
+  ///   · 不注册的话 Dart 侧抛 `MissingPluginException`，会被误判成
+  ///     「手机没装微信」，用户怎么修都修不好；
+  ///   · 注册后提示准确（「当前版本未内置微信登录，请用手机号」），
+  ///     而且 AppID 到位时**只改这个文件 + Info.plist**，Dart 侧一行不用动。
+  private static let wechatChannelName = "fishing/wechat"
+  private var wechatChannel: FlutterMethodChannel?
+
   private var shortcutChannel: FlutterMethodChannel?
 
   override func application(
@@ -33,6 +44,24 @@ import Flutter
         }
       }
       shortcutChannel = channel
+
+      // 微信登录：现在只回状态，等 SDK 接上再把 login 换成正真的 WXApi.send
+      let wch = FlutterMethodChannel(name: AppDelegate.wechatChannelName,
+                                     binaryMessenger: controller.binaryMessenger)
+      wch.setMethodCallHandler { call, result in
+        switch call.method {
+        case "available":
+          // 集成 SDK 后改成 WXApi.isWXAppInstalled()
+          result(false)
+        case "login":
+          result(FlutterError(code: "not_integrated",
+                              message: "当前版本未内置微信登录",
+                              details: nil))
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
+      wechatChannel = wch
     }
 
     // 冷启动：用户是长按图标点快捷项把 App 拉起来的
