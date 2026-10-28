@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/member_plan.dart';
 import 'api_client.dart';
 import 'api_config.dart';
+import '../utils/json_num.dart';
 
 /// 会员中心
 class MemberService {
@@ -10,7 +11,7 @@ class MemberService {
 
   /// 会员中心文案 + 套餐列表
   static Future<({MemberCenter center, List<MemberPlan> plans})> plans() async {
-    final data = await ApiClient.get('/member/plans') as Map;
+    final data = jsonMap(await ApiClient.get('/member/plans'));
     final map = data.cast<String, dynamic>();
     final center = MemberCenter.fromJson(
         (map['center'] as Map?)?.cast<String, dynamic>() ?? const {});
@@ -25,21 +26,21 @@ class MemberService {
   static MemberCenter get fallbackCenter => _center ?? const MemberCenter();
 
   static Future<MemberInfo> info() async {
-    final data = await ApiClient.get('/member/info') as Map;
+    final data = jsonMap(await ApiClient.get('/member/info'));
     return MemberInfo.fromJson(data.cast<String, dynamic>());
   }
 
   /// 购买：payType = points 积分 / balance 余额 / cash 现金（待后台确认）
   static Future<({bool ok, String msg, MemberInfo? info})> buy(
       String planId, String payType) async {
-    final data = await ApiClient.post('/member/buy', {
+    final data = jsonMap(await ApiClient.post('/member/buy', {
       'planId': planId,
       'payType': payType,
-    }) as Map;
+    }));
     final map = data.cast<String, dynamic>();
     final rawInfo = map['info'];
     return (
-      ok: (map['ok'] as bool?) ?? true,
+      ok: jsonBool(map['ok'], fallback: true),
       msg: (map['msg'] ?? '').toString(),
       info: rawInfo is Map
           ? MemberInfo.fromJson(rawInfo.cast<String, dynamic>())
@@ -49,7 +50,7 @@ class MemberService {
 
   /// 会员订单列表（返回原始 map，页面按需取值）
   static Future<List<Map<String, dynamic>>> orders() async {
-    final data = await ApiClient.get('/member/orders') as List;
+    final data = jsonList(await ApiClient.get('/member/orders'));
     return data.map((e) => (e as Map).cast<String, dynamic>()).toList();
   }
 
