@@ -22,15 +22,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 缓存 pub 依赖与 Flutter 构建缓存
+      - name: 缓存 pub 依赖
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.pub-cache
-            build
-          key: ios-build-${{ hashFiles('**/pubspec.lock') }}
+          # ★ 不要缓存 build/ 目录。
+          #   曾经因为缓存了 build/ios，Xcode 拿恢复出来的旧 .o 判定「无需重编」，
+          #   结果 Swift 侧（AppDelegate 的微信桥）根本没进包，Dart 侧却是新的 ——
+          #   表现就是「代码明明改了，用户装的包里没有」。宁可多编 2 分钟。
+          path: ~/.pub-cache
+          key: ios-pub-${{ hashFiles('**/pubspec.lock') }}
           restore-keys: |
-            ios-build-
+            ios-pub-
 
       - name: 安装 Flutter（固定 3.24.5，与本地开发版本一致）
         uses: subosito/flutter-action@v2
@@ -48,8 +50,54 @@ jobs:
       - name: 拉取依赖
         run: flutter pub get
 
+      - name: 清掉可能残留的 iOS 构建产物
+        run: |
+          rm -rf build/ios ios/Pods ios/.symlinks
+          # permission_handler 的权限是编译期宏，Podfile 一变就必须重新 pod install
+          echo "Podfile 权限宏："
+          grep -n "PERMISSION_" ios/Podfile | head
+
       - name: 编译 iOS（跳过签名）
         run: flutter build ios --release --no-codesign
+
+      - name: 校验产物里真的有这次的改动（防止缓存/增量编译静默用旧代码）
+        run: |
+          python3 - <<'PY'
+          import os, plistlib, sys
+
+          app_path = 'build/ios/iphoneos/Runner.app/Frameworks/App.framework/App'
+          run_path = 'build/ios/iphoneos/Runner.app/Runner'
+          pl_path  = 'build/ios/iphoneos/Runner.app/Info.plist'
+          for p in (app_path, run_path, pl_path):
+              if not os.path.exists(p):
+                  print('MISS 产物不存在:', p); sys.exit(1)
+
+          app = open(app_path, 'rb').read()
+          runner = open(run_path, 'rb').read()
+          pl = plistlib.load(open(pl_path, 'rb'))
+
+          u16 = lambda s: s.encode('utf-16-le')
+          checks = [
+              ('Dart 快照：当前版本未内置微信登录', u16('当前版本未内置微信登录') in app),
+              ('Dart 快照：一键开启全部权限',       u16('一键开启全部权限') in app),
+              ('Dart 快照：接口 /auth/sms/login',   b'/auth/sms/login' in app),
+              ('Dart 快照：通道 fishing/wechat',    b'fishing/wechat' in app),
+              ('Swift 桥：fishing/wechat',          b'fishing/wechat' in runner),
+              ('Swift 桥：not_integrated',          b'not_integrated' in runner),
+              ('Swift 快捷入口：fishing/shortcuts',  b'fishing/shortcuts' in runner),
+              ('Info.plist：weixin 查询 scheme',
+               'weixin' in (pl.get('LSApplicationQueriesSchemes') or [])),
+              ('Info.plist：ATS 放行明文',
+               (pl.get('NSAppTransportSecurity') or {}).get('NSAllowsArbitraryLoads') is True),
+          ]
+          bad = []
+          for name, ok in checks:
+              print(('OK   ' if ok else 'MISS ') + name)
+              if not ok: bad.append(name)
+          print('版本:', pl.get('CFBundleShortVersionString'), pl.get('CFBundleVersion'))
+          if bad:
+              print('!! 产物缺东西，别发布:', bad); sys.exit(1)
+          PY
 
       - name: 打包未签名 ipa
         run: |
