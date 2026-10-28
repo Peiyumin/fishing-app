@@ -1,11 +1,12 @@
 import '../models/message.dart';
 import 'api_client.dart';
+import '../utils/json_num.dart';
 
 /// 消息中心：私信 + 通知
 class MessageService {
   /// 未读汇总
   static Future<MsgSummary> summary() async {
-    final data = await ApiClient.get('/messages/summary') as Map;
+    final data = jsonMap(await ApiClient.get('/messages/summary'));
     return MsgSummary.fromJson(data.cast<String, dynamic>());
   }
 
@@ -19,10 +20,10 @@ class MessageService {
         MsgSummary summary,
         List<FeedItem> items,
       })> feed({String since = '', int limit = 20}) async {
-    final data = await ApiClient.get('/messages/feed', {
+    final data = jsonMap(await ApiClient.get('/messages/feed', {
       if (since.isNotEmpty) 'since': since,
       'limit': '$limit',
-    }) as Map;
+    }));
     final m = data.cast<String, dynamic>();
     final raw = (m['items'] as List?) ?? const [];
     return (
@@ -39,10 +40,10 @@ class MessageService {
 
   /// 通知列表（type 空 = 全部）
   static Future<List<NoticeItem>> notices({String type = '', int page = 1}) async {
-    final data = await ApiClient.get('/messages/notices', {
+    final data = jsonList(await ApiClient.get('/messages/notices', {
       'page': '$page',
       if (type.isNotEmpty) 'type': type,
-    }) as List;
+    }));
     return data
         .map((e) => NoticeItem.fromJson((e as Map).cast<String, dynamic>()))
         .toList();
@@ -55,7 +56,7 @@ class MessageService {
 
   /// 会话列表
   static Future<List<Conversation>> conversations() async {
-    final data = await ApiClient.get('/messages/conversations') as List;
+    final data = jsonList(await ApiClient.get('/messages/conversations'));
     return data
         .map((e) => Conversation.fromJson((e as Map).cast<String, dynamic>()))
         .toList();
@@ -64,7 +65,7 @@ class MessageService {
   /// 聊天记录（含会员截断标记 + 私信资格）
   static Future<({List<ChatMessage> messages, bool truncated, ChatCan can})> chat(
       String peerId) async {
-    final data = await ApiClient.get('/messages/chat/$peerId') as Map;
+    final data = jsonMap(await ApiClient.get('/messages/chat/$peerId'));
     final map = data.cast<String, dynamic>();
     final list = (map['messages'] as List?) ?? const [];
     final canMap = (map['can'] as Map?) ?? const {};
@@ -72,7 +73,7 @@ class MessageService {
       messages: list
           .map((e) => ChatMessage.fromJson((e as Map).cast<String, dynamic>()))
           .toList(),
-      truncated: (map['truncated'] as bool?) ?? false,
+      truncated: jsonBool(map['truncated'], fallback: false),
       can: ChatCan.fromJson(canMap.cast<String, dynamic>()),
     );
   }
@@ -95,7 +96,7 @@ class MessageService {
   /// 查询与某人的私信资格（会员/关注/单向上限）
   static Future<ChatCan> canChat(String peerId) async {
     final data =
-        await ApiClient.get('/messages/can-chat', {'peerId': peerId}) as Map;
+        jsonMap(await ApiClient.get('/messages/can-chat', {'peerId': peerId}));
     return ChatCan.fromJson(data.cast<String, dynamic>());
   }
 }
