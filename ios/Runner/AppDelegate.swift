@@ -25,6 +25,10 @@ import Flutter
   private static let wechatChannelName = "fishing/wechat"
   private var wechatChannel: FlutterMethodChannel?
 
+  /// 本机号码一键登录桥（v2.1.48）
+  private static let oneKeyChannelName = "fishing/onekey"
+  private var oneKeyChannel: FlutterMethodChannel?
+
   private var shortcutChannel: FlutterMethodChannel?
 
   override func application(
@@ -62,6 +66,31 @@ import Flutter
         }
       }
       wechatChannel = wch
+
+      // ── 本机号码一键登录桥（v2.1.48）───────────────
+      //
+      // iOS **根本读不到本机号码**（没有 SIM 号读取接口），一键登录只能靠
+      // 运营商取号 SDK（阿里云号码认证 / 极光 / Mob，iOS 侧是蜂窝网络取号）。
+      // 没集成就明确回 not_supported，Dart 端自动降级到短信验证码 ——
+      // 注册这个 channel 是为了让提示准确，而不是让用户点点看才知道。
+      let och = FlutterMethodChannel(name: AppDelegate.oneKeyChannelName,
+                                     binaryMessenger: controller.binaryMessenger)
+      och.setMethodCallHandler { call, result in
+        switch call.method {
+        case "probe":
+          result(["available": false,
+                  "phone": "",
+                  "masked": "",
+                  "reason": "not_supported"])
+        case "token":
+          result(FlutterError(code: "not_supported",
+                              message: "iOS 需要运营商取号服务，当前版本未内置",
+                              details: nil))
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
+      oneKeyChannel = och
     }
 
     // 冷启动：用户是长按图标点快捷项把 App 拉起来的
