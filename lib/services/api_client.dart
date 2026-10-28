@@ -157,6 +157,14 @@ class ApiClient {
   ///   覆盖全站，比在每个 model 的 fromJson 里各写一遍可靠得多。
   static dynamic _decode(String body) {
     if (body.isEmpty) throw Exception('服务器无响应');
+    // ★ 服务端返回了 HTML（nginx 的 404/502 错误页、PHP 致命错误页）。
+    //   直接把 "<html>" 丢给 jsonDecode 会抛 `FormatException: Unexpected
+    //   character (at character 1) <html>`，用户完全看不懂这是什么意思。
+    //   宁可给一句人话，也不要暴露内部细节。
+    final head = body.trimLeft();
+    if (head.startsWith('<')) {
+      throw Exception('服务器开小差了，请稍后再试');
+    }
     final json = jsonDecode(body);
     if (json is! Map || json['ok'] != true) {
       throw Exception(
