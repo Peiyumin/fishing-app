@@ -3,6 +3,8 @@
 /// 名称、图标、颜色、达成条件全部由后台「运营配置 → 徽章管理」配置：
 ///   icon 可以是上传的图片地址（/uploads/badges/x.png），也可以是 emoji（🎣）
 ///   condition: posts 发布总数 / catches 渔获次数 / points 积分余额 / likes 累计获赞
+import '../utils/json_num.dart';
+
 class BadgeItem {
   final String id;
   final String name;
@@ -27,7 +29,7 @@ class BadgeItem {
       icon: (json['icon'] ?? '').toString(),
       color: (json['color'] ?? '').toString(),
       condition: (json['condition'] ?? 'posts').toString(),
-      threshold: (json['threshold'] as num?)?.toInt() ?? 0,
+      threshold: jsonInt(json['threshold']) ?? 0,
     );
   }
 
