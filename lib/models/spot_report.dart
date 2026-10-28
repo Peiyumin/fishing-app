@@ -1,3 +1,5 @@
+import '../utils/json_num.dart';
+
 /// 钓点报错 数据模型（V2）
 /// 用户发现某钓点坐标错误 / 已关闭 / 信息有误等时提交
 class SpotReport {
@@ -25,14 +27,14 @@ class SpotReport {
   factory SpotReport.fromJson(Map<String, dynamic> json) {
     final spot = json['spots'] as Map<String, dynamic>?;
     return SpotReport(
-      id: json['id'] as String,
-      spotId: json['spot_id'] as String,
+      id: (json['id'] ?? '').toString(),
+      spotId: (json['spot_id'] ?? '').toString(),
       spotName: spot?['name'] as String?,
       reason: json['reason'] as String? ?? '其他',
       note: json['note'] as String?,
       userId: json['user_id'] as String?,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      resolved: (json['resolved'] as bool?) ?? false,
+      createdAt: jsonDateOrNow(json['created_at']),
+      resolved: jsonBool(json['resolved'], fallback: false),
     );
   }
 }
