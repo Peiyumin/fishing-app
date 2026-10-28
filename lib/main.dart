@@ -515,42 +515,21 @@ class _StartupGateState extends State<StartupGate> {
     _gotoShortcut(nav, type);
   }
 
-  /// 弹「请先登录」，确认后去登录页；登录成功回来直接进目标页
+  /// 未登录 → 直接出登录页；登录成功回来直接进目标页
   ///
-  /// 注意：showDialog 用的是 **本 State 的 context**（它在 Navigator 之下），
-  /// 不能传 navigatorKey.currentState!.context —— 那是 Navigator 自己的
-  /// context，`Navigator.of()` 从它往上找不到 Navigator，会直接抛异常。
+  /// ★ v2.1.49：删掉原来的白色 AlertDialog「请先登录 / 现在去登录？」。
+  ///   用户明确要求不要这个二次弹窗 —— App 本身已经用整页登录页做了拦截，
+  ///   再叠一个白框等于一件事问两遍。现在直接弹同一套深色登录页，
+  ///   登录成功后自动接着进原目标页（用户不用再点一次图标）。
   Future<void> _askLoginThen(String type) async {
     if (!mounted) return;
     final label = AppShortcuts.label(type);
-    final go = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('请先登录'),
-        content: Text('「$label」是你的私人记录，登录后才会同步到账号。\n现在去登录？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('暂不'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('去登录'),
-          ),
-        ],
-      ),
-    );
-    if (go != true || !mounted) return;
+    // 注意：用本 State 的 context（它在 Navigator 之下）
+    final ok = await ensureLogin(context, hint: '登录后「$label」会同步到账号');
+    if (!ok || !mounted) return;
     final nav = navigatorKey.currentState;
     if (nav == null) return;
-
-    await nav.push(MaterialPageRoute(builder: (_) => const AuthScreen()));
-    if (!mounted) return;
-    // 登录页返回后如果已经登录，直接把他送进刚才想去的页面
-    if (context.read<SessionProvider>().isLoggedIn) {
-      _gotoShortcut(nav, type);
-    }
+    _gotoShortcut(nav, type);
   }
 
   /// 真正跳转（登录校验通过后）
