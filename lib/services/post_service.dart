@@ -4,6 +4,7 @@ import '../models/catch_weather.dart';
 import '../models/post.dart';
 import 'api_client.dart';
 import 'api_config.dart';
+import '../utils/json_num.dart';
 
 /// 动态（渔获）相关的所有后端操作
 /// 对接自建后端 /api/posts；后端不可用或未配置时自动走「演示模式」
@@ -109,8 +110,8 @@ class PostService {
 
   static Post _fromApi(Map row) {
     return Post(
-      id: row['id'] as String,
-      userId: (row['user_id'] ?? '') as String,
+      id: (row['id'] ?? '').toString(),
+      userId: (row['user_id'] ?? '').toString(),
       username: row['user_nickname'] as String?,
       avatarUrl: ApiConfig.mediaUrl(row['user_avatar'] as String?),
       title: (row['title'] as String?) ?? '无标题',
@@ -125,27 +126,26 @@ class PostService {
           : 'post',
       price: (row['price'] as String?) ?? '',
       locationName: row['location'] as String?,
-      lat: (row['lat'] as num?)?.toDouble(),
-      lng: (row['lng'] as num?)?.toDouble(),
-      createdAt: DateTime.tryParse((row['created_at'] ?? '') as String) ??
-          DateTime.now(),
-      likeCount: (row['like_count'] as num?)?.toInt() ?? 0,
-      commentCount: (row['comment_count'] as num?)?.toInt() ?? 0,
-      viewCount: (row['view_count'] as num?)?.toInt() ?? 0,
+      lat: jsonDouble(row['lat']),
+      lng: jsonDouble(row['lng']),
+      createdAt: jsonDateOrNow(row['created_at']),
+      likeCount: jsonInt(row['like_count']) ?? 0,
+      commentCount: jsonInt(row['comment_count']) ?? 0,
+      viewCount: jsonInt(row['view_count']) ?? 0,
       city: (row['city'] as String?) ?? '',
-      authorVip: (row['user_vip'] as num?)?.toInt() ?? 0,
+      authorVip: jsonInt(row['user_vip']) ?? 0,
       // ★ is_me 后端给的是 1/0（PHP 里赋值 `$r['is_me'] = 1`），JSON 里是数字不是
       //   true/false —— 用 `as bool?` 会拿到 null，「我的作品」兜底里按 isMe 过滤
       //   就会一条都筛不出来。统一走容错解析。
       isMe: Post.truthy(row['is_me']),
       isFollowing: Post.truthy(row['is_following']),
-      userLevel: (row['user_level'] as num?)?.toInt() ?? 1,
+      userLevel: jsonInt(row['user_level']) ?? 1,
       fish: Post.parseFish(row['fish']),
       locPublic: row['loc_public'] == null
           ? true
           : Post.truthy(row['loc_public']),
-      lengthCm: (row['length_cm'] as num?)?.toDouble(),
-      weightG: (row['weight_g'] as num?)?.toDouble(),
+      lengthCm: jsonDouble(row['length_cm']),
+      weightG: jsonDouble(row['weight_g']),
       weather: Post.parseWeather(row['weather'] ?? row['weather_json']),
     );
   }
@@ -199,14 +199,14 @@ class PostService {
       return list;
     }
     try {
-      final data = await ApiClient.get('/posts', {
+      final data = jsonList(await ApiClient.get('/posts', {
         'page': '${offset ~/ limit + 1}',
         'size': '$limit',
         if (tab != null) 'tab': tab,
         if (city != null && city.isNotEmpty) 'city': city,
         // 后端 /posts 支持 keyword：按 标题 / 正文 模糊匹配
         if (keyword != null && keyword.isNotEmpty) 'keyword': keyword,
-      }) as List;
+      }));
       var list = data.map((row) => _fromApi(row as Map)).toList();
       // 本地兜底过滤：老后端（未部署 Phase G）会忽略 tab/city 参数返回全量，
       // 客户端再过滤一次，保证「同城」「关注」语义始终正确
@@ -358,7 +358,10 @@ class PostService {
     if (_demo) return [];
     if (ApiClient.token == null) return [];
     try {
-      final data = await ApiClient.get('/catch/mine');
+      // ★ v2.1.50 修：后端这个路由挂在 posts 块里（`$r1 === 'catch' && $r2 === 'mine'`），
+      //   真实路径是 `/posts/catch/mine`。以前写 `/catch/mine`，顶层没有 catch 块，
+      //   直接落到 404 → 池塘「按渔获投放」永远只能看到内置鱼，用户自己发的渔获进不来。
+      final data = await ApiClient.get('/posts/catch/mine');
       if (data is List) {
         return data
             .whereType<Map>()
@@ -380,8 +383,8 @@ class PostService {
   /// 点赞 / 取消点赞，返回新的点赞状态
   static Future<bool> toggleLike(String postId, bool currentlyLiked) async {
     if (_demo) return !currentlyLiked; // 演示模式：仅本地切换高亮
-    final data = await ApiClient.post('/posts/$postId/like') as Map;
-    return (data['liked'] as bool?) ?? !currentlyLiked;
+    final data = jsonMap(await ApiClient.post('/posts/$postId/like'));
+    return jsonBool(data['liked'], fallback: !currentlyLiked);
   }
 
   /// 评论
@@ -394,7 +397,7 @@ class PostService {
   /// 评论列表（键：user_nickname / content / created_at）
   static Future<List<Map<String, dynamic>>> fetchComments(String postId) async {
     if (_demo) return [];
-    final data = await ApiClient.get('/posts/$postId/comments') as List;
+    final data = jsonList(await ApiClient.get('/posts/$postId/comments'));
     return List<Map<String, dynamic>>.from(data);
   }
 
@@ -411,7 +414,7 @@ class PostService {
     if (_demo) return List<Post>.from(_demoPosts);
     if (ApiClient.token == null) return const [];
     try {
-      final data = await ApiClient.get('/posts/mine') as List;
+      final data = jsonList(await ApiClient.get('/posts/mine'));
       return data.map((row) => _fromApi(row as Map)).toList();
     } catch (_) {
       return _fetchMyPostsByScan();
@@ -424,10 +427,10 @@ class PostService {
     final mine = <Post>[];
     try {
       for (var page = 1; page <= 3; page++) {
-        final data = await ApiClient.get('/posts', {
+        final data = jsonList(await ApiClient.get('/posts', {
           'page': '$page',
           'size': '$pageSize',
-        }) as List;
+        }));
         if (data.isEmpty) break;
         for (final row in data) {
           final p = _fromApi(row as Map);
