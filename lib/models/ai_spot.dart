@@ -2,6 +2,8 @@
 ///
 /// 后端 POST /fish/spot-ai 返回：把附近水域 + 当前逐时天气交给大模型，
 /// 由模型按鱼种习性（适温/气压/水氧）给出「现在最值得去」的水域排序。
+import '../utils/json_num.dart';
+
 class AiSpotRec {
   final bool ok;
   final String summary; // 总体形势一句话
@@ -40,7 +42,7 @@ class AiSpotItem {
   factory AiSpotItem.fromJson(Map<String, dynamic> j) {
     return AiSpotItem(
       name: (j['name'] ?? '').toString(),
-      score: ((j['score'] as num?) ?? 0).toDouble(),
+      score: (jsonNum(j['score']) ?? 0).toDouble(),
       reason: (j['reason'] ?? '').toString(),
       bait: (j['bait'] ?? '').toString(),
     );
