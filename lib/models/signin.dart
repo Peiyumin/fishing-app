@@ -1,4 +1,6 @@
 /// 每日签到状态
+import '../utils/json_num.dart';
+
 class SigninStatus {
   final bool enabled;
   final bool autoPopup;
@@ -34,14 +36,14 @@ class SigninStatus {
     final list = (j['rewards'] as List?) ?? const [];
     final t = (j['tasks'] as List?) ?? const [];
     return SigninStatus(
-      enabled: (j['enabled'] as num?)?.toInt() == 1,
-      autoPopup: (j['autoPopup'] as num?)?.toInt() == 1,
-      signedToday: (j['signedToday'] as bool?) ?? false,
-      streak: (j['streak'] as num?)?.toInt() ?? 0,
-      total: (j['total'] as num?)?.toInt() ?? 0,
-      dayIndex: (j['dayIndex'] as num?)?.toInt() ?? 1,
-      points: (j['points'] as num?)?.toInt() ?? 0,
-      balance: (j['balance'] as num?)?.toDouble() ?? 0,
+      enabled: jsonInt(j['enabled']) == 1,
+      autoPopup: jsonInt(j['autoPopup']) == 1,
+      signedToday: jsonBool(j['signedToday'], fallback: false),
+      streak: jsonInt(j['streak']) ?? 0,
+      total: jsonInt(j['total']) ?? 0,
+      dayIndex: jsonInt(j['dayIndex']) ?? 1,
+      points: jsonInt(j['points']) ?? 0,
+      balance: jsonDouble(j['balance']) ?? 0,
       pointsName: (j['pointsName'] as String?) ?? '积分',
       rules: (j['rules'] as String?) ?? '',
       rewards: list
@@ -105,12 +107,12 @@ class DailyTask {
         key: (j['key'] as String?) ?? '',
         title: (j['title'] as String?) ?? '',
         desc: (j['desc'] as String?) ?? '',
-        points: (j['points'] as num?)?.toInt() ?? 0,
+        points: jsonInt(j['points']) ?? 0,
         icon: (j['icon'] as String?) ?? '',
-        target: (j['target'] as num?)?.toInt() ?? 1,
-        progress: (j['progress'] as num?)?.toInt() ?? 0,
-        done: (j['done'] as bool?) ?? false,
-        claimed: (j['claimed'] as bool?) ?? false,
+        target: jsonInt(j['target']) ?? 1,
+        progress: jsonInt(j['progress']) ?? 0,
+        done: jsonBool(j['done'], fallback: false),
+        claimed: jsonBool(j['claimed'], fallback: false),
       );
 }
 
@@ -136,7 +138,7 @@ class SigninReward {
   }
 
   factory SigninReward.fromJson(Map<String, dynamic> j) => SigninReward(
-        points: (j['points'] as num?)?.toInt() ?? 0,
-        balance: (j['balance'] as num?)?.toDouble() ?? 0,
+        points: jsonInt(j['points']) ?? 0,
+        balance: jsonDouble(j['balance']) ?? 0,
       );
 }
