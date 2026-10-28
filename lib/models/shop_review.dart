@@ -1,4 +1,5 @@
 import '../services/api_config.dart';
+import '../utils/json_num.dart';
 
 /// 商品评价
 /// 对应后端 GET /shop/reviews 返回结构（只返回后台已通过/未隐藏的）
@@ -34,8 +35,8 @@ class ShopReview {
       userId: (json['user_id'] ?? '').toString(),
       nickname: (json['nickname'] ?? '').toString(),
       avatar: ApiConfig.mediaUrl(json['avatar'] as String?) ?? '',
-      vipLevel: (json['user_vip'] as num?)?.toInt() ?? 0,
-      rating: (json['rating'] as num?)?.toInt() ?? 5,
+      vipLevel: jsonInt(json['user_vip']) ?? 0,
+      rating: jsonInt(json['rating']) ?? 5,
       content: (json['content'] ?? '').toString(),
       images: ApiConfig.mediaList(json['images']),
       createdAt: DateTime.tryParse((json['created_at'] ?? '').toString()),
