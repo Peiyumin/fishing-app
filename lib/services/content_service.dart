@@ -2,6 +2,7 @@ import '../models/activity.dart';
 import '../models/article.dart';
 import 'api_client.dart';
 import 'api_config.dart';
+import '../utils/json_num.dart';
 
 /// 活动 / 文章的统一数据入口
 ///
@@ -104,7 +105,7 @@ class ContentService {
       return (
         ok: true,
         msg: (m['message'] ?? '报名成功').toString(),
-        joinCount: (m['join_count'] as num?)?.toInt() ?? 0,
+        joinCount: jsonInt(m['join_count']) ?? 0,
       );
     } catch (e) {
       return (ok: false, msg: _msgOf(e), joinCount: 0);
