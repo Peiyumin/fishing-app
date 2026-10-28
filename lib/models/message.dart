@@ -1,4 +1,6 @@
 /// 私信会话
+import '../utils/json_num.dart';
+
 class Conversation {
   final String convId;
   final String peerId;
@@ -25,10 +27,10 @@ class Conversation {
         peerId: (j['peerId'] ?? '').toString(),
         nickname: (j['nickname'] ?? '').toString(),
         avatar: (j['avatar'] ?? '').toString(),
-        vipLevel: (j['vipLevel'] as num?)?.toInt() ?? 0,
+        vipLevel: jsonInt(j['vipLevel']) ?? 0,
         lastMessage: (j['lastMessage'] ?? '').toString(),
         lastAt: (j['lastAt'] ?? '').toString(),
-        unread: (j['unread'] as num?)?.toInt() ?? 0,
+        unread: jsonInt(j['unread']) ?? 0,
       );
 }
 
@@ -59,7 +61,7 @@ class ChatMessage {
         content: (j['content'] ?? '').toString(),
         type: (j['type'] ?? 'text').toString(),
         createdAt: (j['createdAt'] ?? '').toString(),
-        mine: (j['mine'] as bool?) ?? false,
+        mine: jsonBool(j['mine'], fallback: false),
       );
 }
 
@@ -104,9 +106,9 @@ class ChatCan {
         heMember: j['heMember'] == true,
         canSend: j['canSend'] == true,
         reason: (j['reason'] ?? '').toString(),
-        sentCount: (j['sentCount'] as num?)?.toInt() ?? 0,
-        limit: (j['limit'] as num?)?.toInt() ?? 6,
-        remaining: (j['remaining'] as num?)?.toInt() ?? 0,
+        sentCount: jsonInt(j['sentCount']) ?? 0,
+        limit: jsonInt(j['limit']) ?? 6,
+        remaining: jsonInt(j['remaining']) ?? 0,
         unlimited: j['unlimited'] == true,
       );
 
@@ -154,7 +156,7 @@ class NoticeItem {
         title: (j['title'] ?? '').toString(),
         content: (j['content'] ?? '').toString(),
         refId: (j['refId'] ?? '').toString(),
-        isRead: (j['isRead'] as bool?) ?? false,
+        isRead: jsonBool(j['isRead'], fallback: false),
         createdAt: (j['createdAt'] ?? '').toString(),
       );
 }
@@ -178,12 +180,12 @@ class MsgSummary {
   });
 
   factory MsgSummary.fromJson(Map<String, dynamic> j) => MsgSummary(
-        chat: (j['chat'] as num?)?.toInt() ?? 0,
-        system: (j['system'] as num?)?.toInt() ?? 0,
-        comment: (j['comment'] as num?)?.toInt() ?? 0,
-        reply: (j['reply'] as num?)?.toInt() ?? 0,
-        like: (j['like'] as num?)?.toInt() ?? 0,
-        total: (j['total'] as num?)?.toInt() ?? 0,
+        chat: jsonInt(j['chat']) ?? 0,
+        system: jsonInt(j['system']) ?? 0,
+        comment: jsonInt(j['comment']) ?? 0,
+        reply: jsonInt(j['reply']) ?? 0,
+        like: jsonInt(j['like']) ?? 0,
+        total: jsonInt(j['total']) ?? 0,
       );
 }
 
@@ -241,7 +243,7 @@ class FeedItem {
         fromId: (j['fromId'] ?? '').toString(),
         fromName: (j['fromName'] ?? '').toString(),
         fromAvatar: (j['fromAvatar'] ?? '').toString(),
-        isRead: (j['isRead'] as bool?) ?? false,
+        isRead: jsonBool(j['isRead'], fallback: false),
         createdAt: (j['createdAt'] ?? '').toString(),
       );
 
