@@ -11,6 +11,8 @@ import '../widgets/app_refresh.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/fish_photo.dart';
 
+import 'auth_screen.dart';
+
 /// ★ AI 识鱼入口开关（v2.1.45）
 ///
 /// 用户要求：图鉴页里的「AI 识鱼」入口**先隐藏**，不让用户点，
@@ -47,7 +49,31 @@ class _FishGuideScreenState extends State<FishGuideScreen>
     super.dispose();
   }
 
+  /// 上一次 load 时的登录态：变了就重新拉（登录/退出后不能还显示旧数据）
+  bool? _lastLogged;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final logged = context.watch<SessionProvider>().isLoggedIn;
+    if (_lastLogged != null && _lastLogged != logged) {
+      _lastLogged = logged;
+      _load();
+    } else {
+      _lastLogged ??= logged;
+    }
+  }
+
   Future<void> _load() async {
+    // 未登录：不请求接口（必然 401），直接给「全部未解锁」的空图鉴，
+    // 头部会显示登录引导，不弹任何报错
+    if (!context.read<SessionProvider>().isLoggedIn) {
+      setState(() {
+        _guide = FishService.fallback;
+        _loading = false;
+      });
+      return;
+    }
     setState(() => _loading = true);
     try {
       final g = await FishService.guide();
@@ -412,6 +438,13 @@ class _FishGuideScreenState extends State<FishGuideScreen>
       );
 
   Widget _header(SessionProvider session, FishLevel lv, int need) {
+    // ★ v2.1.46：未登录不再展示「头像 + Lv.0 称号」这张身份卡。
+    //   之前不管有没有登录都画同一张卡，未登录时用的是默认头像 + Lv.0「临渊羡鱼」，
+    //   用户会以为「没登录也有我的图鉴」「登录后名字也没变」。
+    //   现在未登录只给一个登录入口，登录后显示**真实昵称**（session.nickname），
+    //   Profile 页改完昵称后 SessionProvider 会 notifyListeners，
+    //   这里 watch 着同一个 provider，昵称立刻跟着变。
+    final logged = session.isLoggedIn;
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 18),
@@ -429,46 +462,93 @@ class _FishGuideScreenState extends State<FishGuideScreen>
             padding: const EdgeInsets.all(3),
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              border: Border.all(color: AppTheme.star, width: 2),
+              border: Border.all(
+                  color: logged ? AppTheme.star : Colors.white30, width: 2),
             ),
             child: CircleAvatar(
               radius: 34,
               backgroundColor: AppTheme.primaryLight,
-              backgroundImage: (session.avatarUrl != null &&
+              backgroundImage: (logged &&
+                      session.avatarUrl != null &&
                       session.avatarUrl!.isNotEmpty)
                   ? NetworkImage(session.avatarUrl!)
                   : null,
-              child: (session.avatarUrl == null || session.avatarUrl!.isEmpty)
-                  ? const Icon(Icons.person,
-                      size: 34, color: AppTheme.primary)
+              child: (!logged ||
+                      session.avatarUrl == null ||
+                      session.avatarUrl!.isEmpty)
+                  ? const Icon(Icons.person, size: 34, color: AppTheme.primary)
                   : null,
             ),
           ),
           const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text('Lv.${lv.level}',
-                  style: const TextStyle(
-                      color: AppTheme.star,
-                      fontSize: 19,
-                      fontWeight: FontWeight.w800)),
-              const SizedBox(width: 8),
-              Text(lv.name,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 19,
-                      fontWeight: FontWeight.w800)),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            lv.nextName.isEmpty
-                ? '已解锁 ${_guide.unlockedCount} 种，达到最高等级'
-                : '再发现 $need 个新鱼种，即可晋级 Lv.${lv.level + 1}「${lv.nextName}」',
-            style: TextStyle(
-                color: Colors.white.withOpacity(0.88), fontSize: 12),
-          ),
+          if (!logged) ...[
+            const Text('未登录',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800)),
+            const SizedBox(height: 6),
+            Text('登录后开启「我的鱼种图鉴」',
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.88), fontSize: 12)),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 34,
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const AuthScreen()),
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white70),
+                  padding: const EdgeInsets.symmetric(horizontal: 22),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18)),
+                ),
+                child: const Text('立即登录',
+                    style:
+                        TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ] else ...[
+            // 昵称（改完资料这里立刻跟着变）
+            Text(
+              (session.nickname ?? '').trim().isEmpty
+                  ? '钓友'
+                  : session.nickname!.trim(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text('Lv.${lv.level}',
+                    style: const TextStyle(
+                        color: AppTheme.star,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800)),
+                const SizedBox(width: 6),
+                Text(lv.name,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              lv.nextName.isEmpty
+                  ? '已解锁 ${_guide.unlockedCount} 种，达到最高等级'
+                  : '再发现 $need 个新鱼种，即可晋级 Lv.${lv.level + 1}「${lv.nextName}」',
+              style: TextStyle(
+                  color: Colors.white.withOpacity(0.88), fontSize: 12),
+            ),
+          ],
         ],
       ),
     );
