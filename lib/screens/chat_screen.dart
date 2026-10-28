@@ -16,6 +16,7 @@ import '../widgets/emoji_panel.dart';
 import '../widgets/user_avatar.dart';
 import 'user_profile_screen.dart';
 import '../widgets/app_refresh.dart';
+import '../utils/json_num.dart';
 
 /// 私信会话列表
 class ConversationListScreen extends StatefulWidget {
@@ -218,7 +219,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<Map<String, dynamic>> _peerProfile() async {
     try {
-      final data = await ApiClient.get('/users/${widget.peerId}') as Map;
+      final data = jsonMap(await ApiClient.get('/users/${widget.peerId}'));
       return data.cast<String, dynamic>();
     } catch (_) {
       return const {};
