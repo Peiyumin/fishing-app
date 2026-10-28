@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../utils/json_num.dart';
 
 /// ============================================================
 /// 天气预报数据模型（对接 Open-Meteo 免费接口，无需 API Key）
@@ -509,7 +510,7 @@ class WeatherBundle {
       if (m == null) return null;
       final v = m[key];
       if (v is List && i >= 0 && i < v.length && v[i] is num) {
-        return v[i] as num;
+        return jsonNum(v[i]);
       }
       return null;
     }
@@ -662,13 +663,13 @@ class WeatherBundle {
     }
 
     // 当前实况的天气现象也校正一次（云量取时间上最近的一小时）
-    final curPrecipV = (cur?['precipitation'] as num?)?.toDouble() ?? 0;
+    final curPrecipV = jsonDouble(cur?['precipitation']) ?? 0;
     final curPrecipProbV =
-        (cur?['precipitation_probability'] as num?)?.round() ?? 0;
+        jsonNum(cur?['precipitation_probability'])?.round() ?? 0;
     // 当前实况：统一取「逐时集合」里最接近现在的那一小时。
     // 这样首页卡 / 天气页顶部 / AI 弹层三处的气温气压完全一致，
     // 也是用户能对照逐时表核对的同一个数。
-    var curCodeV = (cur?['weather_code'] as num?)?.round() ?? 0;
+    var curCodeV = jsonNum(cur?['weather_code'])?.round() ?? 0;
     HourPoint? nearest;
     if (hours.isNotEmpty) {
       final nowH = DateTime.now();
@@ -690,11 +691,11 @@ class WeatherBundle {
     }
 
     final curTempV = nearest?.temp ??
-        (cur?['temperature_2m'] as num?)?.toDouble() ??
+        jsonDouble(cur?['temperature_2m']) ??
         0;
     final curPresV = nearest?.pressure ??
-        (cur?['pressure_msl'] as num?)?.toDouble() ??
-        (cur?['surface_pressure'] as num?)?.toDouble() ??
+        jsonDouble(cur?['pressure_msl']) ??
+        jsonDouble(cur?['surface_pressure']) ??
         0;
 
     // ★ 时段统一（v2.1.19）：所有「当前」字段一律取自同一个整点 [nearest]。
@@ -710,14 +711,14 @@ class WeatherBundle {
       lng: lng,
       curTemp: curTempV,
       curHumidity: nearest?.humidity ??
-          (cur?['relative_humidity_2m'] as num?)?.round() ??
+          jsonNum(cur?['relative_humidity_2m'])?.round() ??
           0,
       curPressure: curPresV,
       curWindSpeed: nearest?.windSpeed ??
-          (cur?['wind_speed_10m'] as num?)?.toDouble() ??
+          jsonDouble(cur?['wind_speed_10m']) ??
           0,
       curWindDir: nearest?.windDir ??
-          (cur?['wind_direction_10m'] as num?)?.round() ??
+          jsonNum(cur?['wind_direction_10m'])?.round() ??
           0,
       curPrecip: nearest?.precip ?? curPrecipV,
       curCode: curCodeV,
