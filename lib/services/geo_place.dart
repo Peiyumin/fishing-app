@@ -8,6 +8,7 @@ import 'api_client.dart';
 import 'api_config.dart';
 import 'location_service.dart';
 import '../utils/text_safe.dart';
+import '../utils/json_num.dart';
 
 /// 中文地名（由经纬度反查得到）
 ///
@@ -155,7 +156,7 @@ class GeoPlace {
       if (admin is List) {
         for (final a in admin) {
           if (a is! Map) continue;
-          if ((a['adminLevel'] as num?)?.toInt() == 8) {
+          if (jsonInt(a['adminLevel']) == 8) {
             final nm = safeText(a['name']);
             if (nm.isNotEmpty && nm.toLowerCase() != 'none') {
               street = nm;
