@@ -7,6 +7,11 @@ import 'api_config.dart';
 class FishService {
   static FishGuide? _cache;
 
+  /// 登录态变化（登录 / 退出 / 换账号）时必须清掉：
+  /// 图鉴是**按账号统计**的，缓存不清就会出现「换了账号还是上一个号的数据」
+  /// 或「退出登录后还显示之前的解锁进度」。
+  static void clearCache() => _cache = null;
+
   static FishGuide get fallback => const FishGuide(level: FishLevel());
 
   /// 图鉴数据
