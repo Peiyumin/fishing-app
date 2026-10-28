@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/fishing_species.dart';
 import '../models/weather_forecast.dart';
+import '../utils/json_num.dart';
 
 /// 钓鱼天气服务
 /// 数据源：Open-Meteo 免费接口（无需 API Key）
@@ -140,8 +141,8 @@ class WeatherService {
       if (!allowStale && !_isFresh(m)) return null; // 过期缓存不返回，触发重新拉取
       final j = m['json'];
       if (j is! Map) return null;
-      final lat = (m['lat'] as num?)?.toDouble() ?? 0;
-      final lng = (m['lng'] as num?)?.toDouble() ?? 0;
+      final lat = jsonDouble(m['lat']) ?? 0;
+      final lng = jsonDouble(m['lng']) ?? 0;
       final cma = m['cma'];
       final b = WeatherBundle.fromOpenMeteo(
         lat,
@@ -153,7 +154,7 @@ class WeatherService {
       // 从文件读出来的这份也塞进内存：冷启动时首页还没拉过，详情页靠它秒出
       _memory ??= b;
       _memoryAt ??= DateTime.fromMillisecondsSinceEpoch(
-          (m['ts'] as num?)?.toInt() ?? 0);
+          jsonInt(m['ts']) ?? 0);
       return b;
     } catch (_) {
       return null;
@@ -386,16 +387,16 @@ class FishingWeather {
       };
 
   factory FishingWeather.fromJson(Map<String, dynamic> m) => FishingWeather(
-        temperature: (m['t'] as num?)?.toDouble() ?? 0,
-        humidity: (m['h'] as num?)?.round() ?? 0,
-        windSpeed: (m['ws'] as num?)?.toDouble() ?? 0,
-        windDir: (m['wd'] as num?)?.round(),
-        pressure: (m['p'] as num?)?.toDouble() ?? 0,
-        weatherCode: (m['c'] as num?)?.round() ?? 0,
+        temperature: jsonDouble(m['t']) ?? 0,
+        humidity: jsonNum(m['h'])?.round() ?? 0,
+        windSpeed: jsonDouble(m['ws']) ?? 0,
+        windDir: jsonNum(m['wd'])?.round(),
+        pressure: jsonDouble(m['p']) ?? 0,
+        weatherCode: jsonNum(m['c'])?.round() ?? 0,
         description: (m['d'] ?? '').toString(),
         fishIndex: (m['fi'] ?? '').toString(),
         fishAdvice: (m['fa'] ?? '').toString(),
-        score: (m['sc'] as num?)?.round() ?? 50,
+        score: jsonNum(m['sc'])?.round() ?? 50,
         atLabel: (m['al'] ?? '').toString(),
       );
 
