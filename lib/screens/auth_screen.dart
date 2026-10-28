@@ -7,71 +7,127 @@ import 'package:provider/provider.dart';
 import '../app_theme.dart';
 import '../services/auth_config.dart';
 import '../services/builtin_avatars.dart';
+import '../services/onekey_login.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
+import 'legal_doc_screen.dart';
 
-/// 登录 / 注册（v2.1.46 重做）
+/// 登录页（v2.1.48 按设计稿重做：深色 + 荧光绿）
+///
+/// 两种形态，共用一张卡片：
+///   · [AuthMode.sms]    —— 手机号 + 短信验证码（「其他手机号登录」）
+///   · [AuthMode.onekey] —— 本机号码一键登录（大号脱敏号码 + 认证服务文案）
+/// 首屏默认进哪一种，由「原生能不能取号」决定：能取号就直接进一键态，
+/// 取不到就进短信态，且底部保留「本机号码一键登录」入口供用户手动切。
 ///
 /// 显示哪些方式**完全由后台「运营配置 → 注册与登录方式」决定**：
-///   · 仅手机号 → 只出现手机号 + 短信验证码，微信按钮不渲染；
-///   · 仅微信   → 只出现微信登录，手机号输入区不渲染；
-///   · 都开放   → 两个都在，用户自己挑。
-/// 配置每次进页面都拉一次（[AuthConfig.load]），后台改完不用发版。
+///   · 仅手机号 → 微信按钮不渲染；
+///   · 仅微信   → 手机号区块不渲染（但本机走不了微信时会本地放开手机号，
+///                否则用户会被锁死在登录页，连后台都改不回来）；
+///   · 都开放   → 都显示。
 ///
-/// 手机号走「验证码」而不是密码：**没注册过的号码输完验证码就直接建号并登录**，
-/// 不需要用户先点「注册」再来一遍。原「手机号 + 密码」保留为备用入口
-/// （老用户已经有密码，后台也可以整体关掉）。
+/// 手机号走「验证码」而不是密码：**没注册过的号码输完验证码就直接建号并登录**。
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key, this.hint});
+  const AuthScreen({super.key, this.hint, this.onSkip, this.barrier = false});
 
   /// 从长按快捷入口等地方进来时，可以带一句「登录后继续…」
   final String? hint;
+
+  /// 点右上角「随便看看」。
+  ///   · 从别处 push 进来 → 传 null，内部直接 pop；
+  ///   · 作为启动首屏 → 传回调，由外层切换到首页。
+  final VoidCallback? onSkip;
+
+  /// 作为浮层压在内容上时（true）不画「随便看看」，只留关闭
+  final bool barrier;
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }
 
-class _AuthScreenState extends State<AuthScreen> {
+enum AuthMode { sms, onekey }
+
+class _AuthScreenState extends State<AuthScreen>
+    with SingleTickerProviderStateMixin {
+  // ── 设计稿色板（深色）──────────────────────────────────────
+  static const Color _bg = Color(0xFF07080C); // 近黑底
+  static const Color _card = Color(0xFF15181E); // 卡片
+  static const Color _fieldBg = Color(0xFF1C2027); // 输入框
+  static const Color _line = Color(0xFF262A31); // 描边/分隔
+  static const Color _sub = Color(0xFF8A9099); // 次要文字
+  static const Color _hi = Color(0xFFF2F4F7); // 主文字
+
   AuthConfig _cfg = AuthConfig.current;
   bool _cfgLoading = true;
 
-  /// 手机号验证码模式
+  AuthMode _mode = AuthMode.sms;
+  OneKeyProbe _ok = OneKeyProbe.none;
+
   final _phone = TextEditingController();
   final _code = TextEditingController();
-  final _name = TextEditingController(); // 注册时可选昵称
-  bool _registerTab = false;
-
-  /// 密码模式（老用户 / 后台保留时）
-  bool _pwdMode = false;
   final _pwd = TextEditingController();
 
+  /// 老用户密码登录（后台保留时才给入口）
+  bool _pwdMode = false;
+
   bool _busy = false;
+  bool _agree = false;
   int _countdown = 0;
   Timer? _timer;
+
+  /// 协议未勾选时按钮抖一下，比只弹 toast 直观
+  late final AnimationController _shake;
+  late final Animation<double> _shakeX;
 
   @override
   void initState() {
     super.initState();
-    _loadCfg();
+    _shake = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 380),
+    );
+    _shakeX = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 0, end: -7), weight: 1),
+      TweenSequenceItem(tween: Tween(begin: -7, end: 7), weight: 1),
+      TweenSequenceItem(tween: Tween(begin: 7, end: -5), weight: 1),
+      TweenSequenceItem(tween: Tween(begin: -5, end: 0), weight: 1),
+    ]).animate(CurvedAnimation(parent: _shake, curve: Curves.easeOut));
+    _boot();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _shake.dispose();
     _phone.dispose();
     _code.dispose();
-    _name.dispose();
     _pwd.dispose();
     super.dispose();
   }
 
+  // ─────────────────────── 初始化 ───────────────────────
+
+  /// 拉后台配置 + 探本机取号能力，两件事并行，谁也别挡谁
+  Future<void> _boot() async {
+    final cfgF = _loadCfg();
+    final probeF = OneKeyLoginService.probe();
+    final cfg = await cfgF;
+    final probe = await probeF;
+    if (!mounted) return;
+    setState(() {
+      _cfg = cfg;
+      _ok = probe;
+      // 能真取号 → 首屏直接进一键态（设计稿第二张）
+      _mode = (cfg.allowOneKey && probe.available) ? AuthMode.onekey : AuthMode.sms;
+      // 读到 SIM 号就预填，省得用户手打
+      if (probe.hasPhone && _phone.text.isEmpty) _phone.text = probe.phone;
+      _cfgLoading = false;
+    });
+  }
+
   /// 本机能不能真的走微信登录（原生 SDK 是否集成 + 是否装了微信）
   ///
-  /// 原生端（iOS AppDelegate / Android MainActivity）都注册了 `fishing/wechat`，
-  /// 当前版本回 false；SDK 接上后改成 `WXApi.isWXAppInstalled()`。
-  ///
-  /// ★ 必须带超时：这个调用挡在 `_loadCfg` 前面，原生通道要是**既不返回也不
-  ///   报错**（漏注册某些情况下就是静默不回），登录页会一直停在转圈上，
+  /// ★ 必须带超时：原生通道要是**既不返回也不报错**，登录页会一直停在转圈上，
   ///   比微信登录不可用更糟。800ms 收不到就当不可用。
   Future<bool> _wechatAvailable() async {
     try {
@@ -85,23 +141,36 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  Future<void> _loadCfg() async {
+  Future<AuthConfig> _loadCfg() async {
     var c = await AuthConfig.load();
-    // ★ 兜底：后台配成「只开放微信」但本机走不了微信（没集成 SDK / 没装微信）时，
-    //   页面上就只剩一个点了必失败的按钮，用户彻底无路可走 —— 连后台都救不回来
-    //   （他得先能登进来才能改配置）。所以这里本地放开手机号登录。
+    // ★ 兜底：后台配成「只开放微信」但本机走不了微信时，页面上只剩一个
+    //   点了必失败的按钮，用户连后台都救不回来。这里本地放开手机号登录。
     if (c.allowWechat && !c.allowPhone) {
       final ok = await _wechatAvailable();
       if (!ok) c = c.copyWith(allowPhone: true);
     }
-    if (!mounted) return;
-    setState(() {
-      _cfg = c;
-      _cfgLoading = false;
-    });
+    return c;
   }
 
-  // ───────────────────────── 发验证码 ─────────────────────────
+  // ─────────────────────── 协议 ───────────────────────
+
+  /// 登录前必须勾协议（合规硬要求），没勾就抖一下并提示
+  bool _checkAgree() {
+    if (_agree) return true;
+    _shake.forward(from: 0);
+    CenterToast.show(context, '请先阅读并同意《用户协议》和《隐私政策》');
+    return false;
+  }
+
+  void _openDoc(String key, String title) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => LegalDocScreen(docKey: key, title: title),
+      ),
+    );
+  }
+
+  // ─────────────────────── 发码 / 登录 ───────────────────────
 
   void _startCountdown() {
     _timer?.cancel();
@@ -114,6 +183,15 @@ class _AuthScreenState extends State<AuthScreen> {
       setState(() => _countdown--);
       if (_countdown <= 0) t.cancel();
     });
+  }
+
+  String _errText(Object e) {
+    var s = e.toString();
+    s = s.replaceAll('Exception: ', '').replaceAll('ApiException: ', '');
+    if (s.contains('SocketException') || s.contains('Connection')) {
+      return '连不上服务器，请检查网络后重试';
+    }
+    return s.isEmpty ? '操作失败，请稍后重试' : s;
   }
 
   Future<void> _sendCode() async {
@@ -129,8 +207,6 @@ class _AuthScreenState extends State<AuthScreen> {
       final data = await sp.sendSmsCode(phone);
       if (!mounted) return;
       _startCountdown();
-      // 调试模式（后台没接真实短信通道）下后端会把验证码一起返回，
-      // 直接填进输入框，省得测试时到处找。
       final dbg = (data['debugCode'] ?? '').toString();
       if (dbg.isNotEmpty) {
         _code.text = dbg;
@@ -145,19 +221,8 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  // ───────────────────────── 提交 ─────────────────────────
-
-  /// 把后端/网络异常翻成能看懂的中文
-  String _errText(Object e) {
-    var s = e.toString();
-    s = s.replaceAll('Exception: ', '').replaceAll('ApiException: ', '');
-    if (s.contains('SocketException') || s.contains('Connection')) {
-      return '连不上服务器，请检查网络后重试';
-    }
-    return s.isEmpty ? '操作失败，请稍后重试' : s;
-  }
-
   Future<void> _submitSms() async {
+    if (!_checkAgree()) return;
     final phone = _phone.text.trim();
     final code = _code.text.trim();
     if (!RegExp(r'^1[3-9]\d{9}$').hasMatch(phone)) {
@@ -171,21 +236,8 @@ class _AuthScreenState extends State<AuthScreen> {
     setState(() => _busy = true);
     try {
       final sp = Provider.of<SessionProvider>(context, listen: false);
-      final isNew = await sp.signInBySms(
-        phone,
-        code,
-        nickname: _registerTab ? _name.text : null,
-      );
-      // 新用户分配一个内置头像（失败不影响登录）
-      if (isNew) {
-        try {
-          final avatar = await BuiltinAvatars.uploadRandom();
-          if (avatar != null) await sp.updateProfile(avatar: avatar);
-        } catch (_) {}
-      }
-      if (!mounted) return;
-      CenterToast.show(context, isNew ? '注册成功，已登录' : '登录成功');
-      Navigator.of(context).pop(true);
+      final isNew = await sp.signInBySms(phone, code);
+      await _afterLogin(sp, isNew);
     } catch (e) {
       if (mounted) CenterToast.show(context, _errText(e));
     } finally {
@@ -194,6 +246,7 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _submitPassword() async {
+    if (!_checkAgree()) return;
     if (_phone.text.isEmpty || _pwd.text.isEmpty) {
       CenterToast.show(context, '请填写手机号和密码');
       return;
@@ -201,21 +254,8 @@ class _AuthScreenState extends State<AuthScreen> {
     setState(() => _busy = true);
     try {
       final sp = Provider.of<SessionProvider>(context, listen: false);
-      if (_registerTab) {
-        if (_name.text.trim().isEmpty) {
-          CenterToast.show(context, '请填写昵称');
-          return;
-        }
-        await sp.signUp(_phone.text.trim(), _pwd.text, _name.text.trim());
-        try {
-          final avatar = await BuiltinAvatars.uploadRandom();
-          if (avatar != null) await sp.updateProfile(avatar: avatar);
-        } catch (_) {}
-      } else {
-        await sp.signIn(_phone.text.trim(), _pwd.text);
-      }
-      if (!mounted) return;
-      Navigator.of(context).pop(true);
+      await sp.signIn(_phone.text.trim(), _pwd.text);
+      await _afterLogin(sp, false);
     } catch (e) {
       if (mounted) CenterToast.show(context, _errText(e));
     } finally {
@@ -223,25 +263,81 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  /// 一键登录：原生取号 token → 后端换真实号码 → 建号 / 登录
+  Future<void> _submitOneKey() async {
+    if (!_checkAgree()) return;
+
+    // ① 没集成运营商取号：如果读到了 SIM 号，就降级成「用这个号码收验证码」
+    if (!_ok.available) {
+      if (_ok.hasPhone) {
+        setState(() {
+          _phone.text = _ok.phone;
+          _mode = AuthMode.sms;
+        });
+        CenterToast.show(context, '已填入本机号码，请点「获取验证码」完成登录');
+      } else {
+        CenterToast.show(context, OneKeyLoginService.hint(_ok.reason));
+      }
+      return;
+    }
+    if (!_cfg.oneKeyReady) {
+      CenterToast.show(context, '后台还没配置运营商取号服务，请用短信验证码登录');
+      return;
+    }
+
+    setState(() => _busy = true);
+    try {
+      final token = await OneKeyLoginService.fetchToken();
+      if (token.isEmpty) throw const OneKeyException('error', '没拿到取号凭证');
+      if (!mounted) return;
+      final sp = Provider.of<SessionProvider>(context, listen: false);
+      final isNew = await sp.signInByOneKey(token);
+      await _afterLogin(sp, isNew);
+    } on OneKeyException catch (e) {
+      if (mounted) CenterToast.show(context, OneKeyLoginService.hint(e.code));
+    } catch (e) {
+      if (mounted) CenterToast.show(context, _errText(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _afterLogin(SessionProvider sp, bool isNew) async {
+    if (isNew) {
+      // 新用户分配一个内置头像（失败不影响登录）
+      try {
+        final avatar = await BuiltinAvatars.uploadRandom();
+        if (avatar != null) await sp.updateProfile(avatar: avatar);
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    CenterToast.show(context, isNew ? '注册成功，已登录' : '登录成功');
+    _finish(true);
+  }
+
   /// 微信登录：本地通过原生 SDK 拿 code，再交给后端换 openid
-  ///
-  /// iOS / Android 两端原生都注册了 `fishing/wechat` 通道。当前版本还没集成
-  /// 微信 SDK，原生会回 `not_integrated` —— 必须和历史文案区分开：以前一律提示
-  /// 「需要先装微信客户端」，用户明明装了微信，怎么弄都login不进去。
   Future<void> _submitWechat() async {
+    if (!_checkAgree()) return;
+    if (!_cfg.wechatReady) {
+      CenterToast.show(context, _wechatHint('not_configured'));
+      return;
+    }
     setState(() => _busy = true);
     try {
       const ch = MethodChannel('fishing/wechat');
       String? code;
       try {
-        code = await ch.invokeMethod<String>('login');
+        code = await ch
+            .invokeMethod<String>('login')
+            .timeout(const Duration(seconds: 15));
       } on MissingPluginException {
-        // 原生通道都没注册（理论上不会发生）：同样按「未内置」处理
-        code = null;
         if (mounted) CenterToast.show(context, _wechatHint('not_integrated'));
         return;
       } on PlatformException catch (e) {
         if (mounted) CenterToast.show(context, _wechatHint(e.code, e.message));
+        return;
+      } on TimeoutException {
+        if (mounted) CenterToast.show(context, _wechatHint('timeout'));
         return;
       } catch (_) {
         code = null;
@@ -253,9 +349,7 @@ class _AuthScreenState extends State<AuthScreen> {
       if (!mounted) return;
       final sp = Provider.of<SessionProvider>(context, listen: false);
       final isNew = await sp.signInByWechat(code);
-      if (!mounted) return;
-      CenterToast.show(context, isNew ? '注册成功，已登录' : '登录成功');
-      Navigator.of(context).pop(true);
+      await _afterLogin(sp, isNew);
     } catch (e) {
       if (mounted) CenterToast.show(context, _errText(e));
     } finally {
@@ -263,7 +357,6 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  /// 微信登录失败原因 → 用户能看懂、并且知道下一步该干什么的话
   String _wechatHint(String? code, [String? msg]) {
     switch (code) {
       case 'not_integrated':
@@ -274,6 +367,8 @@ class _AuthScreenState extends State<AuthScreen> {
         return '这台手机没装微信，请改用手机号登录';
       case 'cancel':
         return '已取消微信授权';
+      case 'timeout':
+        return '微信授权超时，请重试或改用手机号登录';
       case 'auth_denied':
         return '微信授权被拒绝，请重试或改用手机号登录';
       default:
@@ -281,328 +376,632 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  // ───────────────────────── UI ─────────────────────────
+  void _appleHint() {
+    CenterToast.show(context, 'Apple 登录需要开发者账号审核通过后开启，请先用手机号登录');
+  }
+
+  /// 关闭登录页：pop 或交给外层切换（启动首屏）
+  void _finish(bool ok) {
+    if (widget.onSkip != null) {
+      // 作为首屏时没有可 pop 的路由，交给外层决定去哪
+      if (ok) {
+        widget.onSkip!();
+      } else {
+        widget.onSkip!();
+      }
+      return;
+    }
+    final nav = Navigator.of(context);
+    if (nav.canPop()) nav.pop(ok);
+  }
+
+  // ─────────────────────── UI ───────────────────────
 
   @override
   Widget build(BuildContext context) {
-    final showPhone = _cfg.allowPhone;
-    final showWechat = _cfg.allowWechat;
     return Scaffold(
-      backgroundColor: AppTheme.background,
-      appBar: AppBar(
-        title: Text(_registerTab ? '注册' : '登录',
-            style: const TextStyle(fontWeight: FontWeight.w700)),
-        centerTitle: true,
-      ),
-      body: _cfgLoading
-          ? const Center(
-              child: CircularProgressIndicator(color: AppTheme.primary))
-          : AutofillGroup(child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
-              children: [
-                const SizedBox(height: 10),
-                const Icon(Icons.phishing, size: 58, color: AppTheme.primary),
-                const SizedBox(height: 8),
-                const Center(
-                  child: Text('渔报',
-                      style: TextStyle(
-                          fontSize: 20, fontWeight: FontWeight.w800)),
-                ),
-                const SizedBox(height: 4),
-                Center(
-                  child: Text(
-                    widget.hint ?? '登录后同步你的渔获、图鉴与池塘',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                        fontSize: 12, color: AppTheme.textSecondary),
-                  ),
-                ),
-                const SizedBox(height: 20),
-
-                // 手机号登录 / 注册（后台关了手机号方式就整块不渲染）
-                if (showPhone) ..._phoneBlock(),
-
-                // 微信登录
-                if (showWechat) ..._wechatBlock(),
-
-                // 两种都没开（后台误配）：给个明确说法，别留空白页
-                if (!showPhone && !showWechat)
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: AppTheme.surface,
-                      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-                      border: Border.all(color: AppTheme.border),
-                    ),
-                    child: const Text(
-                      '当前没有开放任何登录方式，请联系客服处理。',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                  ),
-              ],
-            )),
-    );
-  }
-
-  List<Widget> _phoneBlock() {
-    return [
-      // 登录 / 注册 切换（验证码模式两者是同一接口，这里只是文案与昵称字段的差别）
-      Row(
-        children: [
-          _tabBtn('登录', !_registerTab, () {
-            setState(() {
-              _registerTab = false;
-              _pwdMode = false;
-            });
-          }),
-          const SizedBox(width: 8),
-          _tabBtn('注册', _registerTab, () {
-            setState(() {
-              _registerTab = true;
-              _pwdMode = false;
-            });
-          }),
-        ],
-      ),
-      const SizedBox(height: 16),
-
-      TextField(
-        controller: _phone,
-        keyboardType: TextInputType.phone,
-        maxLength: 11,
-        // iOS：让系统把手机号当「电话号」填（短信 App 里点号码能直接跳过来）
-        autofillHints: const [AutofillHints.telephoneNumber],
-        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        decoration: const InputDecoration(
-          labelText: '手机号',
-          counterText: '',
-          prefixIcon: Icon(Icons.phone_iphone, size: 20),
-          border: OutlineInputBorder(),
-        ),
-      ),
-      const SizedBox(height: 12),
-
-      if (!_pwdMode) ...[
-        Row(
+      backgroundColor: _bg,
+      // 键盘顶上来时整页可滚，不遮输入框
+      body: SafeArea(
+        child: Stack(
           children: [
-            Expanded(
-              child: TextField(
-                controller: _code,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                // iOS：短信验证码自动填充（系统键盘上方直接给「从短信填充」）
-                autofillHints: const [AutofillHints.oneTimeCode],
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                  labelText: '短信验证码',
-                  counterText: '',
-                  prefixIcon: Icon(Icons.sms_outlined, size: 20),
-                  border: OutlineInputBorder(),
+            Column(
+              children: [
+                _topBar(),
+                Expanded(
+                  child: _cfgLoading
+                      ? const Center(
+                          child: CircularProgressIndicator(
+                              color: AppTheme.accent, strokeWidth: 2.4),
+                        )
+                      : AutofillGroup(
+                          child: SingleChildScrollView(
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.onDrag,
+                          padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const SizedBox(height: 6),
+                              Center(child: _logo()),
+                              const SizedBox(height: 16),
+                              Center(child: _brand()),
+                              const SizedBox(height: 24),
+                              _cardBlock(),
+                              const SizedBox(height: 16),
+                              _agreeRow(),
+                              const SizedBox(height: 24),
+                              _otherWays(),
+                              const SizedBox(height: 18),
+                            ],
+                          ),
+                        )),
                 ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            SizedBox(
-              height: 46,
-              width: 108,
-              child: OutlinedButton(
-                onPressed: (_busy || _countdown > 0) ? null : _sendCode,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppTheme.primary,
-                  side: const BorderSide(color: AppTheme.primary),
-                  padding: EdgeInsets.zero,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8)),
-                ),
-                child: Text(
-                  _countdown > 0 ? '${_countdown}s' : '获取验证码',
-                  style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w700),
-                ),
-              ),
+              ],
             ),
           ],
         ),
-        if (_registerTab) ...[
-          const SizedBox(height: 12),
-          TextField(
-            controller: _name,
-            maxLength: 16,
-            decoration: const InputDecoration(
-              labelText: '昵称（不填自动生成）',
-              counterText: '',
-              prefixIcon: Icon(Icons.badge_outlined, size: 20),
-              border: OutlineInputBorder(),
+      ),
+    );
+  }
+
+  Widget _topBar() {
+    return SizedBox(
+      height: 46,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => _finish(false),
+            style: TextButton.styleFrom(
+              foregroundColor: _sub,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+            ),
+            child: Text(
+              widget.barrier ? '关闭' : '随便看看',
+              style: const TextStyle(fontSize: 13.5),
             ),
           ),
         ],
-        const SizedBox(height: 18),
-        SizedBox(
-          height: 48,
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: _busy ? null : _submitSms,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppTheme.radiusMd)),
-            ),
-            child: _busy
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                        color: Colors.white, strokeWidth: 2.2))
-                : Text(_registerTab ? '注册并登录' : '登录',
-                    style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w700)),
-          ),
-        ),
-        const SizedBox(height: 6),
-        Center(
-          child: Text(
-            _registerTab
-                ? '手机号没注册过？填完验证码就直接帮你注册'
-                : '新手机号会自动注册并登录',
-            style:
-                const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
-          ),
-        ),
-      ] else ...[
-        TextField(
-          controller: _pwd,
-          obscureText: true,
-          decoration: const InputDecoration(
-            labelText: '密码',
-            prefixIcon: Icon(Icons.lock_outline, size: 20),
-            border: OutlineInputBorder(),
-          ),
-        ),
-        if (_registerTab) ...[
-          const SizedBox(height: 12),
-          TextField(
-            controller: _name,
-            decoration: const InputDecoration(
-              labelText: '昵称',
-              prefixIcon: Icon(Icons.badge_outlined, size: 20),
-              border: OutlineInputBorder(),
-            ),
+      ),
+    );
+  }
+
+  Widget _logo() {
+    return Container(
+      width: 88,
+      height: 88,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(26),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.accent.withOpacity(0.22),
+            blurRadius: 30,
+            spreadRadius: 2,
           ),
         ],
-        const SizedBox(height: 18),
-        SizedBox(
-          height: 48,
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: _busy ? null : _submitPassword,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppTheme.radiusMd)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(26),
+        child: Image.asset(
+          'assets/branding/app_icon.png',
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Container(
+            color: AppTheme.accent,
+            alignment: Alignment.center,
+            child: const Icon(Icons.phishing, size: 44, color: _bg),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _brand() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '渔报',
+          style: TextStyle(
+            fontSize: 32,
+            fontWeight: FontWeight.w800,
+            color: _hi,
+            letterSpacing: 6,
+            height: 1.1,
+          ),
+        ),
+        const SizedBox(width: 2),
+        Container(
+          margin: const EdgeInsets.only(top: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+          decoration: BoxDecoration(
+            color: AppTheme.accent,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: const Text(
+            'APP',
+            style: TextStyle(
+              fontSize: 8,
+              fontWeight: FontWeight.w900,
+              color: _bg,
+              letterSpacing: .3,
             ),
-            child: _busy
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                        color: Colors.white, strokeWidth: 2.2))
-                : Text(_registerTab ? '注册' : '登录',
-                    style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w700)),
           ),
         ),
       ],
+    );
+  }
 
-      // 密码方式切换（后台关了「保留密码登录」就不显示）
+  Widget _cardBlock() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 20, 18, 16),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: _line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            widget.hint ?? '登录后，渔获、图鉴和池塘跟着账号走，换手机也不丢',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+                fontSize: 12.5, color: _sub, height: 1.6),
+          ),
+          const SizedBox(height: 18),
+          if (_mode == AuthMode.onekey)
+            ..._oneKeyBody()
+          else if (_cfg.allowPhone)
+            ..._smsBody()
+          else
+            // 后台只开放微信：这里不留空白卡片，明确告诉用户去哪登录
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 10),
+              child: Text(
+                '请使用下方的微信登录',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13.5, color: _hi),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ── 形态一：手机号 + 验证码 ──
+
+  List<Widget> _smsBody() {
+    return [
+      // 手机号
+      _field(
+        key: const Key('auth-phone-field'),
+        controller: _phone,
+        hint: '请输入手机号',
+        keyboardType: TextInputType.phone,
+        digits: true,
+        maxLength: 11,
+        autofill: const [AutofillHints.telephoneNumber],
+        prefix: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('+86',
+                style: TextStyle(
+                    fontSize: 15, color: _hi, fontWeight: FontWeight.w600)),
+            Container(
+              width: 1,
+              height: 18,
+              margin: const EdgeInsets.symmetric(horizontal: 10),
+              color: _line,
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 12),
+      // 验证码
+      _field(
+        key: const Key('auth-code-field'),
+        controller: _code,
+        hint: '请输入验证码',
+        keyboardType: TextInputType.number,
+        digits: true,
+        maxLength: 6,
+        autofill: const [AutofillHints.oneTimeCode],
+        suffix: TextButton(
+          key: const Key('auth-send-code'),
+          onPressed: (_busy || _countdown > 0) ? null : _sendCode,
+          style: TextButton.styleFrom(
+            foregroundColor: AppTheme.accent,
+            disabledForegroundColor: _sub,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            minimumSize: const Size(0, 34),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: Text(
+            _countdown > 0 ? '${_countdown}s 后重发' : '获取验证码',
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ),
+      if (_pwdMode) ...[
+        const SizedBox(height: 12),
+        _field(
+          controller: _pwd,
+          hint: '请输入密码',
+          obscure: true,
+          maxLength: 32,
+        ),
+      ],
+      const SizedBox(height: 18),
+      _primaryBtn(
+        key: const Key('auth-login-btn'),
+        label: '登录',
+        onTap: _busy ? null : (_pwdMode ? _submitPassword : _submitSms),
+      ),
+      const SizedBox(height: 6),
+      // 一键登录入口（后台关掉就不显示）
+      if (_cfg.allowOneKey)
+        Center(
+          child: TextButton(
+            key: const Key('auth-onekey-switch'),
+            onPressed: _busy ? null : _switchToOneKey,
+            style: TextButton.styleFrom(
+              foregroundColor: _hi,
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              minimumSize: const Size(0, 40),
+            ),
+            child: const Text('本机号码一键登录',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+          ),
+        ),
       if (_cfg.passwordLogin)
         Center(
           child: TextButton(
             onPressed: () => setState(() => _pwdMode = !_pwdMode),
+            style: TextButton.styleFrom(
+              foregroundColor: _sub,
+              minimumSize: const Size(0, 28),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
             child: Text(_pwdMode ? '改用短信验证码登录' : '用密码登录（老用户）',
-                style: const TextStyle(fontSize: 12.5)),
+                style: const TextStyle(fontSize: 11.5)),
           ),
         ),
     ];
   }
 
-  List<Widget> _wechatBlock() {
+  // ── 形态二：本机号码一键登录 ──
+
+  List<Widget> _oneKeyBody() {
+    final masked = _ok.masked.isNotEmpty ? _ok.masked : _maskOf(_phone.text);
+    final carrier = _cfg.oneKeyCarrier.isNotEmpty
+        ? _cfg.oneKeyCarrier
+        : '运营商账号提供认证服务';
+    // 能不能真一键？只有「原生取号可用 + 后台密钥/网关齐全」才算。
+    // 否则按钮不做成「点了报错」，而是直接变成下一步该做的事 ——
+    // 用户永远有一条能走通的路。
+    final canOneKey = _ok.available && _cfg.oneKeyReady;
+    final canPrefill = !canOneKey && _ok.hasPhone;
+    final String btnLabel = canOneKey
+        ? '本机号码一键登录'
+        : (canPrefill ? '用本机号码接收验证码' : '用短信验证码登录');
     return [
-      if (_cfg.allowPhone) ...[
-        const SizedBox(height: 6),
-        Row(
-          children: [
-            const Expanded(child: Divider()),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              child: Text('或',
-                  style: TextStyle(
-                      fontSize: 11.5, color: AppTheme.textSecondary)),
-            ),
-            const Expanded(child: Divider()),
-          ],
-        ),
-        const SizedBox(height: 14),
-      ],
-      SizedBox(
-        height: 48,
-        width: double.infinity,
-        child: OutlinedButton.icon(
-          onPressed: (_busy || !_cfg.wechatReady) ? null : _submitWechat,
-          icon: const Icon(Icons.wechat, color: Color(0xFF07C160), size: 21),
-          label: Text(
-            _cfg.wechatReady ? '微信登录' : '微信登录（未配置）',
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+      const SizedBox(height: 4),
+      if (masked.isNotEmpty)
+        Text(
+          masked,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 30,
+            fontWeight: FontWeight.w800,
+            color: _hi,
+            letterSpacing: 1.2,
+            height: 1.2,
           ),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFF07C160),
-            side: const BorderSide(color: Color(0xFF07C160)),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(AppTheme.radiusMd)),
+        )
+      else
+        const Text(
+          '本机号码',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+              fontSize: 26, fontWeight: FontWeight.w800, color: _hi),
+        ),
+      const SizedBox(height: 8),
+      Text(carrier,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 11.5, color: _sub)),
+      const SizedBox(height: 6),
+      Center(
+        child: TextButton(
+          onPressed: () => _openDoc('terms', '$carrier与隐私协议'),
+          style: TextButton.styleFrom(
+            foregroundColor: AppTheme.accent,
+            minimumSize: const Size(0, 26),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: Text('《${carrier}与隐私协议》',
+              style: const TextStyle(fontSize: 11.5)),
+        ),
+      ),
+      const SizedBox(height: 14),
+      _primaryBtn(
+        key: const Key('auth-onekey-btn'),
+        label: btnLabel,
+        onTap: _busy
+            ? null
+            : (canOneKey || canPrefill
+                ? _submitOneKey
+                : () => setState(() => _mode = AuthMode.sms)),
+      ),
+      const SizedBox(height: 2),
+      // 一键态下「其他手机号登录」＝回短信表单；
+      // 已经是短信表单的降级态时，这行改成说明文案，别给两个一样的入口
+      if (canOneKey || canPrefill)
+        Center(
+          child: TextButton(
+            key: const Key('auth-switch-sms'),
+            onPressed: _busy ? null : () => setState(() => _mode = AuthMode.sms),
+            style: TextButton.styleFrom(
+              foregroundColor: _hi,
+              minimumSize: const Size(0, 40),
+            ),
+            child: const Text('其他手机号登录',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+          ),
+        )
+      else
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            OneKeyLoginService.hint(_ok.reason),
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 11.5, color: _sub, height: 1.5),
+          ),
+        ),
+    ];
+  }
+
+  /// 切到一键态。
+  ///
+  /// 取不到号时**不弹「失败」**：一键态里会直接写清原因，并把主按钮换成
+  /// 「用短信验证码登录」，用户不会走进死路。
+  void _switchToOneKey() {
+    if (!_cfg.allowOneKey) {
+      CenterToast.show(context, '后台还没开放本机号码一键登录');
+      return;
+    }
+    setState(() => _mode = AuthMode.onekey);
+  }
+
+  String _maskOf(String phone) {
+    final p = phone.replaceAll(RegExp(r'\D'), '');
+    if (p.length != 11) return '';
+    return '${p.substring(0, 3)}****${p.substring(7)}';
+  }
+
+  // ── 通用控件 ──
+
+  Widget _field({
+    Key? key,
+    required TextEditingController controller,
+    required String hint,
+    TextInputType? keyboardType,
+    bool digits = false,
+    int? maxLength,
+    bool obscure = false,
+    List<String>? autofill,
+    Widget? prefix,
+    Widget? suffix,
+  }) {
+    return Container(
+      height: 54,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: _fieldBg,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          if (prefix != null) prefix,
+          Expanded(
+            child: TextField(
+              key: key,
+              controller: controller,
+              keyboardType: keyboardType,
+              obscureText: obscure,
+              maxLength: maxLength,
+              autofillHints: autofill,
+              inputFormatters: digits
+                  ? [FilteringTextInputFormatter.digitsOnly]
+                  : null,
+              cursorColor: AppTheme.accent,
+              style: const TextStyle(
+                  fontSize: 15.5, color: _hi, fontWeight: FontWeight.w500),
+              decoration: InputDecoration(
+                hintText: hint,
+                counterText: '',
+                isDense: true,
+                // ★ 必须显式 filled:false —— 全局 InputDecorationTheme 是白底填充，
+                //   深色卡片里会露出两个白框，看着像没做完。
+                filled: false,
+                fillColor: Colors.transparent,
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                hintStyle: const TextStyle(fontSize: 15, color: _sub),
+                contentPadding: const EdgeInsets.symmetric(vertical: 16),
+              ),
+            ),
+          ),
+          if (suffix != null) suffix,
+        ],
+      ),
+    );
+  }
+
+  Widget _primaryBtn({
+    Key? key,
+    required String label,
+    required VoidCallback? onTap,
+  }) {
+    final enabled = onTap != null;
+    return AnimatedBuilder(
+      animation: _shakeX,
+      builder: (context, child) => Transform.translate(
+        offset: Offset(_shakeX.value, 0),
+        child: child,
+      ),
+      child: SizedBox(
+        height: 52,
+        child: Material(
+          color: enabled ? AppTheme.accent : AppTheme.accent.withOpacity(0.45),
+          borderRadius: BorderRadius.circular(26),
+          child: InkWell(
+            key: key,
+            borderRadius: BorderRadius.circular(26),
+            onTap: onTap,
+            child: Center(
+              child: _busy
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                          color: _bg, strokeWidth: 2.2),
+                    )
+                  : Text(
+                      label,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: _bg,
+                        letterSpacing: .5,
+                      ),
+                    ),
+            ),
           ),
         ),
       ),
-      if (_cfg.wechatReady)
-        const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text(
-            '微信首次登录会自动注册，不用另外填资料',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
-          ),
-        ),
-      if (!_cfg.wechatReady)
-        const Padding(
-          padding: EdgeInsets.only(top: 6),
-          child: Text(
-            '管理员还没填微信 AppID / AppSecret，暂时用手机号登录',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
-          ),
-        ),
-    ];
+    );
   }
 
-  Widget _tabBtn(String label, bool active, VoidCallback onTap) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          height: 38,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: active ? AppTheme.primary : AppTheme.surface,
-            borderRadius: BorderRadius.circular(9),
-            border: Border.all(
-                color: active ? AppTheme.primary : AppTheme.border),
+  Widget _agreeRow() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        GestureDetector(
+          key: const Key('auth-agree'),
+          onTap: () => setState(() => _agree = !_agree),
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: const EdgeInsets.only(right: 9, top: 4, bottom: 4),
+            child: Container(
+              width: 20,
+              height: 20,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _agree ? AppTheme.accent : Colors.transparent,
+                border: Border.all(
+                  color: _agree ? AppTheme.accent : const Color(0xFF4A5058),
+                  width: 1.4,
+                ),
+              ),
+              child: _agree
+                  ? const Icon(Icons.check, size: 13, color: _bg)
+                  : null,
+            ),
           ),
-          child: Text(label,
-              style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: active ? Colors.white : AppTheme.textSecondary)),
         ),
+        Expanded(
+          child: Text.rich(
+            TextSpan(
+              children: [
+                const TextSpan(
+                    text: '我已阅读并同意',
+                    style: TextStyle(fontSize: 12, color: _sub)),
+                WidgetSpan(
+                  alignment: PlaceholderAlignment.baseline,
+                  baseline: TextBaseline.alphabetic,
+                  child: GestureDetector(
+                    onTap: () => _openDoc('terms', '用户协议'),
+                    child: const Text('《用户协议》',
+                        style: TextStyle(fontSize: 12, color: _hi)),
+                  ),
+                ),
+                WidgetSpan(
+                  alignment: PlaceholderAlignment.baseline,
+                  baseline: TextBaseline.alphabetic,
+                  child: GestureDetector(
+                    onTap: () => _openDoc('privacy', '隐私政策'),
+                    child: const Text('《隐私政策》',
+                        style: TextStyle(fontSize: 12, color: _hi)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _otherWays() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Expanded(child: Divider(color: _line, height: 1)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text('其他方式',
+                  style: TextStyle(fontSize: 11.5, color: _sub)),
+            ),
+            const Expanded(child: Divider(color: _line, height: 1)),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (_cfg.allowWechat) _circleBtn(
+              key: const Key('auth-wechat-btn'),
+              icon: Icons.wechat,
+              color: const Color(0xFF07C160),
+              onTap: _busy ? null : _submitWechat,
+            ),
+            if (_cfg.allowWechat && _cfg.allowApple)
+              const SizedBox(width: 26),
+            if (_cfg.allowApple) _circleBtn(
+              key: const Key('auth-apple-btn'),
+              icon: Icons.apple,
+              color: _hi,
+              onTap: _appleHint,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _circleBtn({
+    Key? key,
+    required IconData icon,
+    required Color color,
+    required VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      key: key,
+      onTap: onTap,
+      child: Container(
+        width: 54,
+        height: 54,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: _card,
+          border: Border.all(color: _line),
+        ),
+        child: Icon(icon, size: 27, color: color),
       ),
     );
   }
