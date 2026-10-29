@@ -117,6 +117,17 @@ class ApiClient {
     }
   }
 
+  /// 测试入口：直接驱动 [_run] 的重试策略（不发真实请求）。
+  ///
+  /// 为什么值得单独开一个口：重试规则是「POST 只在连接没建立时重发」，
+  /// 这条规则写错了就是「用户点一次发码，服务端收到两条」或者
+  /// 「掉一次包就失败」。用假的 body 把两个分支都跑一遍最省事。
+  static Future<T> runWithRetry<T>(
+    String method,
+    Future<T> Function() body,
+  ) =>
+      _run(method, '', body);
+
   /// 把 dart:io 的各种底层异常翻译成三种人话类别
   static ApiNetException? asNetError(Object e) {
     if (e is ApiNetException) return e;
