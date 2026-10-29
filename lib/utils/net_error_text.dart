@@ -27,12 +27,16 @@ class ErrorText {
 ///      吞成网络问题，用户永远不知道该改什么。
 ///
 /// 现在的规则：
-///   · [ApiNetException] → 按 connect / timeout / broken 分三种说法，标记 isNet
+///   · [ApiNetException] → 按 connect / timeout / broken 分类，且 connect
+///     还要按**系统给的真实错误**再细分（超时 / 无网络 / 被拒绝）——
+///     同样是「连不上」，用户的下一步动作完全不同：
+///       超时   → 换个网络（多半是这个端口被限了）
+///       无网络 → 去开移动数据 / 检查是否禁止本 App 使用无线数据
 ///   · [ApiException]    → 服务器说话了就原样转达，不标 isNet
 ///   · 其它              → 去掉 `Exception:` 前缀，兜底「操作失败」
 ErrorText describeError(Object e) {
   // 先把 SocketException / HttpException / TimeoutException 以及已经被
-  // ApiClient 包好的 ApiNetException 统一归一，再按三种故障给说法。
+  // ApiClient 包好的 ApiNetException 统一归一，再按故障类型给说法。
   // 这样「什么算网络问题」只有一处定义（api_client 的 asNetError），
   // 不会像以前那样在界面层再写一遍 contains('Connection') 各说各话。
   final net = ApiClient.asNetError(e);
@@ -45,7 +49,7 @@ ErrorText describeError(Object e) {
         return ErrorText('网络连接被中断，请再试一次',
             detail: net.detail, isNet: true);
       default:
-        return ErrorText('连不上服务器，请检查网络后重试',
+        return ErrorText(connectText(net.detail),
             detail: net.detail, isNet: true);
     }
   }
@@ -66,10 +70,41 @@ ErrorText describeError(Object e) {
   // SocketException 类型），上面按类型判断抓不到，只能在字符串上再兜一次。
   if (RegExp(
     r'SocketException|Connection refused|Connection timed out|'
-    r'Failed host lookup|Network is unreachable',
+    r'Failed host lookup|Network is unreachable|No route to host',
     caseSensitive: false,
   ).hasMatch(s)) {
-    return ErrorText('连不上服务器，请检查网络后重试', detail: s, isNet: true);
+    return ErrorText(connectText(s), detail: s, isNet: true);
   }
   return ErrorText(s.isEmpty ? '操作失败，请稍后重试' : s);
+}
+
+/// 「根本没连上」再细分一层。
+///
+/// [detail] 是系统给的原始错误（`SocketException: ...` 那一串）。
+/// **必须按真实错误说话**：这三种情况用户要做的事完全不同，全都写成
+/// 「连不上服务器，请检查网络」等于什么都没说 —— 用户只会反复开关 WiFi。
+String connectText(String detail) {
+  final d = detail.toLowerCase();
+  // 连接超时：SYN 发出去没有回应。手机流量/某些 WiFi 会拦非标准端口
+  // （本站 API 在 8801），浏览器能开不代表 App 能连。
+  if (d.contains('timed out') || d.contains('timeout')) {
+    return '连接服务器超时，请换一个网络再试（WiFi 与移动数据互换）';
+  }
+  // 压根没有出口：飞行模式、移动数据关、或系统禁止了本 App 使用无线数据
+  if (d.contains('unreachable') || d.contains('no route')) {
+    return '手机当前没有可用网络，请检查移动数据或 WiFi';
+  }
+  // 域名解析失败（现在直连 IP 不会出现，换域名后要能看懂）
+  if (d.contains('failed host lookup') || d.contains('name or service')) {
+    return '服务器地址解析失败，请稍后重试';
+  }
+  // 端口没人监听 / 被防火墙 RST
+  if (d.contains('refused')) {
+    return '服务器暂时无法连接，请稍后重试';
+  }
+  // 断网瞬间、权限被拒（如 iOS 关闭了本 App 的无线数据）也常走这里
+  if (d.contains('permission denied')) {
+    return '系统禁止了本 App 联网，请到手机设置里允许它使用无线数据';
+  }
+  return '连不上服务器，请检查手机网络后重试';
 }
