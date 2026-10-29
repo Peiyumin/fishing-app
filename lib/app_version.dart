@@ -5,10 +5,10 @@
 ///
 /// ★ 这里的值必须和 pubspec.yaml 的 `version:` 一致，
 ///   由 `test/version_consistency_test.dart` 守着 —— 只改一处会测试失败。
-const String kAppVersion = '2.1.53';
+const String kAppVersion = '2.1.54';
 
 /// 构建号（pubspec 里 `+` 后面的数字）
-const int kAppBuild = 63;
+const int kAppBuild = 64;
 
-/// 展示用：v2.1.53 (63)
+/// 展示用：v2.1.54 (64)
 String get kAppVersionText => 'v$kAppVersion ($kAppBuild)';
