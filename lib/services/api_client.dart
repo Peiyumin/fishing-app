@@ -63,8 +63,14 @@ class ApiClient {
   static void setToken(String? t) => _token = t;
   static String? get token => _token;
 
+  /// 最近一次失败的传输层原因（null = 最近一次请求成功）
+  ///
+  /// 只给排查用：登录页失败时把它带进 toast 的 detail，用户报「连不上」时
+  /// 一句就能定位是超时、没网还是被拒绝，不用再猜。
+  static ApiNetException? lastNetError;
+
   static final HttpClient _http = HttpClient()
-    ..connectionTimeout = const Duration(seconds: 8)
+    ..connectionTimeout = const Duration(seconds: 6)
     // ★ 空闲连接 3 秒就丢。
     //   iOS 把 App 切到后台后，系统会悄悄回收 socket，dart:io 并不知道，
     //   下次复用这条「看起来还在」的连接必然失败 —— 用户切回 App 点
@@ -72,25 +78,38 @@ class ApiClient {
     //   也不要去复用一条可能已经死掉的连接。
     ..idleTimeout = const Duration(seconds: 3);
 
-  /// 统一出口：把传输层异常归一成 [ApiNetException]，并按需重试一次。
+  /// 一次请求最多试几次。
   ///
-  /// [retry] 只给**幂等**请求（GET / DELETE）。POST 不自动重试：
-  /// 像「发送验证码」这种，第一次其实可能已经到达服务器，盲目重发会撞上
-  /// 服务端 60 秒冷却，反而让用户以为「发送太频繁」。
+  /// · GET / DELETE 幂等：连接类失败一律再来一次（掉一次包就失败太脆）。
+  /// · POST 只有「连接根本没建立」（connect）才敢重发 —— 这种失败请求
+  ///   一定没到服务器，重发不会撞上「发送太频繁」的 60 秒冷却；
+  ///   `broken`（回包半路断了）**绝不能重发**：服务端可能已经收下并写库了，
+  ///   重发等于连发两条。
+  static int attemptsFor(String method, String? kind) {
+    if (kind == null) return 1; // 业务错误，重试一百次也是同一个结果
+    if (method == 'GET' || method == 'DELETE') return 2;
+    return kind == 'connect' ? 2 : 1;
+  }
+
+  /// 统一出口：把传输层异常归一成 [ApiNetException]，并按需重试一次。
   static Future<T> _run<T>(
     String method,
     String path,
-    Future<T> Function() body, {
-    bool retry = false,
-  }) async {
+    Future<T> Function() body,
+  ) async {
     for (var attempt = 1;; attempt++) {
       try {
-        return await body();
+        final v = await body();
+        lastNetError = null;
+        return v;
       } catch (e) {
         final net = asNetError(e);
         if (net == null) rethrow; // 业务错误，原样抛给调用方
-        if (retry && attempt < 2) {
-          await Future<void>.delayed(const Duration(milliseconds: 260));
+        lastNetError = net;
+        if (attempt < attemptsFor(method, net.kind)) {
+          // 200ms 后再试一次：网络切换（WiFi↔4G）的瞬间、路由器 ARP 抖动
+          // 都在这段时间里恢复，用户根本没机会看到报错。
+          await Future<void>.delayed(Duration(milliseconds: 200 * attempt));
           continue;
         }
         throw net;
@@ -158,7 +177,7 @@ class ApiClient {
         _setHeaders(req);
         final res = await req.close();
         return _decode(await res.transform(_utf8).join());
-      }, retry: true);
+      });
 
   static Future<dynamic> post(String path, [Map<String, dynamic>? data]) =>
       _run('POST', path, () async {
@@ -186,7 +205,7 @@ class ApiClient {
         _setHeaders(req);
         final res = await req.close();
         return _decode(await res.transform(_utf8).join());
-      }, retry: true);
+      });
 
   /// POST 但返回完整 JSON（不丢弃 ok/code/error），用于需要读取业务 code 的接口
   /// （如私信发送失败要区分 need_follow / need_member）。
