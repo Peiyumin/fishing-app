@@ -451,6 +451,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     final img = _post.imageUrls.isNotEmpty ? _post.imageUrls.first : null;
     final isVideo = _post.isVideo && _post.videoUrl != null;
 
+    // 兜底高度取 1.05 屏宽：竖拍图算出来的「2/3」大多在 0.9~1.2 之间，
+    // 这样图片尺寸解出来的那一刻，页面几乎不跳。
     final photoH = isVideo
         ? (w * .62).clamp(200.0, mq.size.height * .5)
         : (img != null && _imgAspect != null
@@ -459,7 +461,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                 aspect: _imgAspect!,
                 screenHeight: mq.size.height,
               )
-            : w * .92);
+            : w * 1.05);
     final h = barH + photoH;
     _coverH = h;
 
@@ -479,7 +481,13 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
               onAspect: (ar) {
                 if (!mounted || _imgAspect != null) return;
                 if ((ar - (_imgAspect ?? 0)).abs() < .005) return;
-                setState(() => _imgAspect = ar);
+                // ★ 已缓存过的图，监听器会在**本帧 build 期间**同步回调，
+                //   这时直接 setState 会炸「setState() called during build」，
+                //   所以统一推到下一帧再重排。
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted || _imgAspect != null) return;
+                  setState(() => _imgAspect = ar);
+                });
               },
             )
           else if (isVideo)
