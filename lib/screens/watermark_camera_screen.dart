@@ -13,6 +13,7 @@ import '../models/weather_forecast.dart';
 import '../services/location_service.dart';
 import '../services/weather_service.dart';
 import '../utils/geo_names.dart';
+import '../utils/open_gate.dart';
 import '../utils/text_safe.dart';
 import '../utils/watermark_stamp.dart';
 import '../widgets/center_toast.dart';
@@ -53,7 +54,14 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
   int _camIndex = 0;
   CameraController? _cam;
 
-  bool _opening = true; // 相机初始化中
+  // ★ v2.1.51 修复「两端点相机永远停在『正在打开相机…』」：
+  //   原来这里是 `bool _opening = true;`，而 _openCamera() 第一行又是
+  //   `if (_opening) return;` 当重入锁用 —— 初始值就是 true，于是**第一次**
+  //   调用就被自己挡回去，一个控制器都不会创建，界面永远转圈。
+  //   现在拆开：_opening 只表示 UI 加载态（初值 false），
+  //   重入交给 OpenGate（新建即空闲，第一次必然放行）。
+  bool _opening = false; // 相机初始化中（只用于 UI 显示）
+  final _gate = OpenGate(); // 打开相机的重入闸门
   String? _error; // 相机不可用时的提示
   bool _busy = false; // 拍照/合成中
   bool _audioEnabled = true; // 麦克风被拒时降级为无声录像
@@ -65,6 +73,7 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
 
   FishingWeather? _weather;
   String? _place;
+  bool _infoStarted = false; // 天气/定位只取一次（相机开成功后触发）
 
   @override
   void initState() {
@@ -77,8 +86,11 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _openCamera();
     });
-    // 天气/位置单独取，取不到就不显示那一行，不影响拍照
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadInfo());
+    // ★ 天气/定位**不在这里**发起：以前和 _openCamera 一起 postFrame，
+    //   于是「相机权限框 / 麦克风权限框 / 定位权限框」三个系统弹窗同时排队，
+    //   iOS 上后弹的会把先弹的顶掉（定位框一出来，相机那次申请就没了下文），
+    //   表现同样是卡在「正在打开相机…」。现在改成相机开成功后再取，串行弹。
+    //   （位置/天气只影响水印那一行字，晚几百毫秒没有副作用。）
   }
 
   @override
@@ -118,69 +130,79 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
 
   Future<void> _openCamera({int? index}) async {
     if (!mounted) return;
-    // 重入保护：切换前后摄 / 点重试时连点会开出两个控制器互相抢摄像头
-    if (_opening) return;
-    setState(() {
-      _opening = true;
-      _error = null;
-    });
+    // 重入保护：切换前后摄 / 点重试时连点会开出两个控制器互相抢摄像头。
+    // ★ 用独立的闸门，不要拿 _opening（UI 加载态）当锁，那会自锁。
+    if (!_gate.tryEnter()) return;
     try {
-      if (_cameras.isEmpty) _cameras = await availableCameras();
-    } catch (e) {
-      _retryOrFail('无法访问摄像头：${_brief(e)}');
-      return;
-    }
-    if (_cameras.isEmpty) {
-      _fail('这台设备没有找到可用的摄像头');
-      return;
-    }
-
-    final target = (index ?? _camIndex).clamp(0, _cameras.length - 1);
-    final desc = _cameras[target];
-
-    // 先带声音初始化（录像要有声音）；麦克风被拒时降级为无声，照片照常拍
-    CameraController? c;
-    var audio = true;
-    for (final tryAudio in const [true, false]) {
-      audio = tryAudio;
-      final candidate = CameraController(
-        desc,
-        ResolutionPreset.veryHigh,
-        enableAudio: tryAudio,
-        imageFormatGroup: ImageFormatGroup.jpeg,
-      );
+      setState(() {
+        _opening = true;
+        _error = null;
+      });
       try {
-        await candidate.initialize();
-        c = candidate;
-        break;
-      } on CameraException catch (e) {
-        await candidate.dispose();
-        // 只有麦克风权限被拒才值得降级重试，其它错误直接报
-        if (tryAudio && _isAudioDenied(e)) continue;
-        _retryOrFail(_describe(e));
-        return;
+        if (_cameras.isEmpty) _cameras = await availableCameras();
       } catch (e) {
-        await candidate.dispose();
-        _retryOrFail('相机启动失败:${_brief(e)}');
+        _retryOrFail('无法访问摄像头：${_brief(e)}');
         return;
       }
+      if (_cameras.isEmpty) {
+        _fail('这台设备没有找到可用的摄像头');
+        return;
+      }
+
+      final target = (index ?? _camIndex).clamp(0, _cameras.length - 1);
+      final desc = _cameras[target];
+
+      // 先带声音初始化（录像要有声音）；麦克风被拒时降级为无声，照片照常拍
+      CameraController? c;
+      var audio = true;
+      for (final tryAudio in const [true, false]) {
+        audio = tryAudio;
+        final candidate = CameraController(
+          desc,
+          ResolutionPreset.veryHigh,
+          enableAudio: tryAudio,
+          imageFormatGroup: ImageFormatGroup.jpeg,
+        );
+        try {
+          await candidate.initialize();
+          c = candidate;
+          break;
+        } on CameraException catch (e) {
+          await candidate.dispose();
+          // 只有麦克风权限被拒才值得降级重试，其它错误直接报
+          if (tryAudio && _isAudioDenied(e)) continue;
+          _retryOrFail(_describe(e));
+          return;
+        } catch (e) {
+          await candidate.dispose();
+          _retryOrFail('相机启动失败:${_brief(e)}');
+          return;
+        }
+      }
+      if (c == null) {
+        _retryOrFail('相机启动失败，请检查权限后重试');
+        return;
+      }
+      if (!mounted) {
+        await c.dispose();
+        return;
+      }
+      final old = _cam;
+      setState(() {
+        _cam = c;
+        _camIndex = target;
+        _audioEnabled = audio;
+        _opening = false;
+      });
+      await old?.dispose();
+      // 相机已经拿到画面了，再去要定位/天气 —— 串行弹权限框，不抢相机的
+      if (!_infoStarted) {
+        _infoStarted = true;
+        _loadInfo();
+      }
+    } finally {
+      _gate.leave();
     }
-    if (c == null) {
-      _retryOrFail('相机启动失败，请检查权限后重试');
-      return;
-    }
-    if (!mounted) {
-      await c.dispose();
-      return;
-    }
-    final old = _cam;
-    setState(() {
-      _cam = c;
-      _camIndex = target;
-      _audioEnabled = audio;
-      _opening = false;
-    });
-    await old?.dispose();
   }
 
   /// 刚授予权限的那一瞬间，安卓的系统相机服务常还没准备好，
@@ -190,13 +212,20 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
   void _retryOrFail(String msg) {
     if (_autoRetry < 1 && !msg.contains('权限')) {
       _autoRetry++;
-      _opening = false;
+      // 保持「正在打开相机…」的转圈，别在这 600ms 里黑屏闪一下
+      if (mounted) setState(() => _opening = true);
       Future.delayed(const Duration(milliseconds: 600), () {
         if (mounted) _openCamera();
       });
       return;
     }
     _fail(msg);
+  }
+
+  /// 用户点「重试打开相机」：把自动补试的次数清掉，给一次新的自动重试机会
+  void _manualRetry() {
+    _autoRetry = 0;
+    _openCamera();
   }
 
   bool _isAudioDenied(CameraException e) {
@@ -566,7 +595,7 @@ class _WatermarkCameraScreenState extends State<WatermarkCameraScreen>
                 height: 44,
                 width: 190,
                 child: ElevatedButton(
-                  onPressed: _openCamera,
+                  onPressed: _manualRetry,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.primary,
                     foregroundColor: Colors.white,
