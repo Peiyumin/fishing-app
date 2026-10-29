@@ -83,14 +83,27 @@ class AuthConfig {
       );
 
   /// 拉取配置；失败不抛错，返回上一次的值（首次则 fallback）
+  ///
+  /// ★ 失败原因单独记在 [lastNetError] 上：
+  ///   这一层不能抛（否则登录页会卡在转圈上，用户什么都做不了），
+  ///   但「为什么没拉到」必须让界面知道 —— 否则用户只看到默认的
+  ///   手机号登录，点「获取验证码」时才撞上「连不上服务器」。
   static Future<AuthConfig> load() async {
     if (!ApiConfig.enabled) return current;
     try {
       final data = jsonMap(await ApiClient.get('/auth/config'));
       current = AuthConfig.fromJson(data);
+      lastNetError = null;
       return current;
-    } catch (_) {
+    } catch (e) {
+      lastNetError = e is ApiNetException ? e : null;
       return current;
     }
   }
+
+  /// 最近一次拉配置时的网络故障（null = 一切正常）
+  static ApiNetException? lastNetError;
+
+  /// 连一次后端，判断「网络通不通」—— 登录页的「重连」按钮用它
+  static Future<AuthConfig> reload() => load();
 }
