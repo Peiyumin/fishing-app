@@ -26,8 +26,11 @@ import 'publish_catch_screen.dart';
 import 'fish_guide_screen.dart';
 import '../services/refresh_bus.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/cover_photo.dart';
 import '../widgets/follow_button.dart';
 import '../utils/json_num.dart';
+import '../utils/size_text.dart';
+import 'photo_viewer_screen.dart';
 
 // ─────────────────────────────────────────────────────────────
 // 渔获详情页（v2.1.34 按参考稿重做）
@@ -55,7 +58,15 @@ const _hiDim = AppTheme.accentMid;
 /// 动态详情：渔获详情页
 class PostDetailScreen extends StatefulWidget {
   final Post post;
-  const PostDetailScreen({super.key, required this.post});
+
+  /// 仅供测试 / 截图注入封面图（默认 null → 走网络图）
+  final ImageProvider Function(String url)? imageProvider;
+
+  const PostDetailScreen({
+    super.key,
+    required this.post,
+    this.imageProvider,
+  });
 
   @override
   State<PostDetailScreen> createState() => _PostDetailScreenState();
@@ -95,6 +106,10 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   final _scroll = ScrollController();
   final _offVN = ValueNotifier<double>(0);
   double _coverH = 360;
+
+  /// 封面原图宽高比（高/宽）。拿到才能算「顶对齐只露上面 2/3」要留多高；
+  /// null = 还没解出来，先用兜底高度，解出来后 setState 重排一次。
+  double? _imgAspect;
 
   @override
   void initState() {
@@ -413,53 +428,91 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
   // ══════════════════════ 封面 ══════════════════════
 
+  /// 点开全屏看完整图片（详情页封面只露上 2/3，一定会裁掉下半张）
+  void _openPhoto([int index = 0]) {
+    final urls = _post.imageUrls;
+    if (urls.isEmpty) return;
+    PhotoViewerScreen.open(context, urls, index: index);
+  }
+
+  /// 封面：状态栏 + 工具条（模糊底）→ 照片（顶对齐，只露上面 2/3）→ 标题/数量
+  ///
+  /// ★ v2.1.54 用户原话：「图片太小了高度太低造成左上角图片水印看不到，
+  ///   高度增高以图片的顶部为准开始显示显示 3 分之 2」。
+  ///   旧版是 `BoxFit.cover` 居中裁切 —— 竖拍照片上下各切一半，水印在左上角，
+  ///   第一行直接被切没；现在改成**顶边对齐**，裁的只有底部。
   Widget _cover() {
-    final w = MediaQuery.of(context).size.width;
-    final h = (w * .92).clamp(240.0, 480.0);
-    _coverH = h;
-    final top = MediaQuery.of(context).padding.top;
+    final mq = MediaQuery.of(context);
+    final w = mq.size.width;
+    final top = mq.padding.top;
+    // 顶部工具条：状态栏 + 36 的按钮位 + 上下留白。照片从这条下面才开始，
+    // 否则顶对齐后水印会正好压在 iOS 时钟底下（等于换个地方藏起来）。
+    final barH = top + 50;
     final img = _post.imageUrls.isNotEmpty ? _post.imageUrls.first : null;
-    final cover = _post.isVideo && _post.videoUrl != null;
+    final isVideo = _post.isVideo && _post.videoUrl != null;
+
+    final photoH = isVideo
+        ? (w * .62).clamp(200.0, mq.size.height * .5)
+        : (img != null && _imgAspect != null
+            ? CoverPhoto.visibleHeight(
+                width: w,
+                aspect: _imgAspect!,
+                screenHeight: mq.size.height,
+              )
+            : w * .92);
+    final h = barH + photoH;
+    _coverH = h;
 
     return SizedBox(
       height: h,
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (cover)
-            PostVideoPlayer(url: _post.videoUrl!, height: h)
-          else if (img != null)
-            CachedNetworkImage(
-              imageUrl: img,
-              fit: BoxFit.cover,
-              fadeInDuration: const Duration(milliseconds: 200),
-              placeholder: (_, __) =>
-                  const ColoredBox(color: AppTheme.primarySoft),
-              errorWidget: (_, __, ___) => const ColoredBox(
-                color: AppTheme.primarySoft,
-                child: Center(
-                  child: Icon(Icons.broken_image_outlined,
-                      size: 32, color: AppTheme.textSecondary),
-                ),
-              ),
+          if (img != null && !isVideo)
+            CoverPhoto(
+              url: img,
+              width: w,
+              height: h,
+              topBarHeight: barH,
+              onTap: () => _openPhoto(0),
+              providerBuilder: widget.imageProvider,
+              onAspect: (ar) {
+                if (!mounted || _imgAspect != null) return;
+                if ((ar - (_imgAspect ?? 0)).abs() < .005) return;
+                setState(() => _imgAspect = ar);
+              },
+            )
+          else if (isVideo)
+            Positioned(
+              left: 0,
+              right: 0,
+              top: barH,
+              height: photoH,
+              child: PostVideoPlayer(url: _post.videoUrl!, height: photoH),
             )
           else
-            const DecoratedBox(
-              decoration: BoxDecoration(gradient: AppTheme.brandGradient),
+            Positioned(
+              left: 0,
+              right: 0,
+              top: barH,
+              height: photoH,
+              child: const DecoratedBox(
+                decoration: BoxDecoration(gradient: AppTheme.brandGradient),
+              ),
             ),
 
-          // 顶部压暗：白字压在亮照片上也读得清
+          // 顶部压暗：按钮区（有水印的图也不怕白字读不清）
           Positioned(
             left: 0,
             right: 0,
             top: 0,
-            height: top + 70,
+            height: barH,
             child: const DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [Color(0x99000000), Color(0x00000000)],
+                  colors: [Color(0x80000000), Color(0x00000000)],
                 ),
               ),
             ),
@@ -469,7 +522,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             left: 0,
             right: 0,
             bottom: 0,
-            height: h * .46,
+            height: photoH * .46,
             child: const DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -484,7 +537,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           // 返回 / 更多
           Positioned(
             left: 10,
-            top: top + 4,
+            top: top + 7,
             child: Row(
               children: [
                 _circleBtn(Icons.arrow_back_ios_new_rounded, () {
@@ -502,7 +555,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           if (!_post.isMe)
             Positioned(
               right: 12,
-              top: top + 4,
+              top: top + 7,
               child: _circleBtn(Icons.more_horiz_rounded, _showMore),
             ),
 
@@ -686,27 +739,31 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
       child: Column(
         children: [
-          for (final url in rest)
+          for (var i = 0; i < rest.length; i++)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-                child: CachedNetworkImage(
-                  imageUrl: url,
-                  fit: BoxFit.fitWidth,
-                  width: double.infinity,
-                  fadeInDuration: const Duration(milliseconds: 180),
-                  placeholder: (_, __) => const AspectRatio(
-                    aspectRatio: 4 / 3,
-                    child: ColoredBox(color: AppTheme.primarySoft),
-                  ),
-                  errorWidget: (_, __, ___) => const AspectRatio(
-                    aspectRatio: 4 / 3,
-                    child: ColoredBox(
-                      color: AppTheme.primarySoft,
-                      child: Center(
-                        child: Icon(Icons.broken_image_outlined,
-                            size: 28, color: AppTheme.textSecondary),
+                // 图集里的图也支持点开看完整版（下标要 +1：第 0 张是封面）
+                child: GestureDetector(
+                  onTap: () => _openPhoto(i + 1),
+                  child: CachedNetworkImage(
+                    imageUrl: rest[i],
+                    fit: BoxFit.fitWidth,
+                    width: double.infinity,
+                    fadeInDuration: const Duration(milliseconds: 180),
+                    placeholder: (_, __) => const AspectRatio(
+                      aspectRatio: 4 / 3,
+                      child: ColoredBox(color: AppTheme.primarySoft),
+                    ),
+                    errorWidget: (_, __, ___) => const AspectRatio(
+                      aspectRatio: 4 / 3,
+                      child: ColoredBox(
+                        color: AppTheme.primarySoft,
+                        child: Center(
+                          child: Icon(Icons.broken_image_outlined,
+                              size: 28, color: AppTheme.textSecondary),
+                        ),
                       ),
                     ),
                   ),
@@ -815,13 +872,16 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             child: Divider(height: 1, thickness: 1, color: AppTheme.divider),
           ),
           // 三列：这条渔获的三个事实（不编作者累计数据）
+          //
+          // ★ v2.1.54：第三列「浏览」按用户要求换成**鱼获重量**。
+          //   浏览量本来就只在「STATS」卡里看得到，作者卡这一行放渔获本身的事实更合适。
           Row(
             children: [
               _statCol('$_bigNum$_bigUnit', '本贴渔获', AppTheme.primary),
               _vline(),
               _statCol('$_bigNum2$_bigUnit2', '鱼种数', AppTheme.primary),
               _vline(),
-              _statCol('${_post.viewCount}', '浏览', AppTheme.star),
+              _statWeight(),
             ],
           ),
         ],
@@ -846,6 +906,52 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           Text(label,
               style: const TextStyle(
                   fontSize: 11, color: AppTheme.textSecondary)),
+        ],
+      ),
+    );
+  }
+
+  /// 鱼获重量：**数字大、单位小**（用户明确要求「数字显示大于后面的单位」）
+  ///
+  /// 没记录重量时只给一个「—」，不画「0 KG」也不画单位 ——
+  /// 0.0KG 会被当成"称过而且是零"，比空着更容易误导。
+  Widget _statWeight() {
+    final wt = weightText(_post.weightG);
+    return Expanded(
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                wt.number,
+                style: TextStyle(
+                  fontSize: wt.hasValue ? 18 : 17,
+                  height: 1.1,
+                  fontWeight: FontWeight.w800,
+                  color: AppTheme.primary,
+                ),
+              ),
+              if (wt.hasValue) ...[
+                const SizedBox(width: 2),
+                Text(
+                  wt.unit,
+                  style: const TextStyle(
+                    fontSize: 9.5,
+                    height: 1.6,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: .3,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 3),
+          const Text('鱼获重量',
+              style: TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
         ],
       ),
     );
