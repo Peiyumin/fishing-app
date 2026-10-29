@@ -24,6 +24,7 @@ import '../services/session_provider.dart';
 import '../services/weather_service.dart';
 import '../utils/geo_names.dart';
 import '../utils/image_data_uri.dart';
+import '../utils/size_text.dart';
 import '../utils/watermark_stamp.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/location_prompt.dart';
@@ -68,7 +69,10 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
   final List<_CatchItem> _catches = [];
   bool _submitting = false;
 
-  /// 渔获尺寸：体长(cm) / 重量(g)。AI 视觉估算预填，用户可改。
+  /// 渔获尺寸：体长(cm) / 重量(KG)。AI 视觉估算预填，用户可改。
+  ///
+  /// ★ v2.1.54：重量输入框改成 **KG**（原来写 g，用户按 kg 填会被当成 1/1000），
+  ///   提交时再 ×1000 落成后端的 `weight_g`。库里的口径没变，不改后端。
   final TextEditingController _lengthCtrl = TextEditingController();
   final TextEditingController _weightCtrl = TextEditingController();
 
@@ -97,6 +101,12 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
       _lng = ex.lng;
       _placeLabel = ex.locationName;
       _locating = false;
+      // 编辑模式要把已有的尺寸/重量填回来（原来是空的，一保存就被清掉了）
+      if (ex.lengthCm != null && ex.lengthCm! > 0) {
+        _lengthCtrl.text = ex.lengthCm!.toStringAsFixed(1);
+      }
+      final wk = kgInputText(ex.weightG);
+      if (wk.isNotEmpty) _weightCtrl.text = wk;
     } else {
       // 首帧后再拿定位：iOS 在首帧前弹权限框会被系统丢掉
       WidgetsBinding.instance.addPostFrameCallback((_) => _locate());
@@ -484,8 +494,10 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
       if (!passed) return; // 核验未通过（已提示），不发布
     }
 
+    // 输入框是 KG，落库统一成克（posts.weight_g）
     final lengthCm = double.tryParse(_lengthCtrl.text.trim());
-    final weightG = double.tryParse(_weightCtrl.text.trim());
+    final weightKg = double.tryParse(_weightCtrl.text.trim());
+    final weightG = (weightKg == null || weightKg <= 0) ? null : weightKg * 1000;
 
     // 天气快照 + 图片水印都用「发布这一刻」的这一份，保证成片、详情页、池塘三处口径一致
     //
@@ -610,19 +622,46 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
         final sure = await _confirmRealCatch();
         if (!sure) return false;
       }
-      // 通过：用 AI 结果预填鱼种与尺寸（用户仍可改）
+      // 通过：用 AI 结果预填鱼种 / 体长 / 重量（用户仍可改）
+      //
+      // ★ v2.1.54：AI 只回了体长、没回重量时，按鱼种肥满度补一个**估算值**，
+      //   并在提示里写明「按体长估算」—— 否则详情页的「鱼获重量」永远是「—」。
       if (mounted) {
+        final name = r.matched.isNotEmpty
+            ? r.matched.first.name
+            : (r.names.isNotEmpty ? r.names.first : '');
+        final lenCm = r.lengthCm;
+        var wG = r.weightG;
+        var estimated = false;
+        if ((wG == null || wG <= 0) && lenCm != null) {
+          wG = estimateWeightG(lenCm, name);
+          estimated = wG != null;
+        }
         setState(() {
-          if (_catches.isEmpty && r.matched.isNotEmpty) {
-            _catches.add(_CatchItem(r.matched.first.name));
+          if (_catches.isEmpty && name.isNotEmpty) {
+            _catches.add(_CatchItem(name));
           }
-          if (_lengthCtrl.text.trim().isEmpty && r.lengthCm != null) {
-            _lengthCtrl.text = r.lengthCm!.toStringAsFixed(1);
+          if (_lengthCtrl.text.trim().isEmpty && lenCm != null && lenCm > 0) {
+            _lengthCtrl.text = lenCm.toStringAsFixed(1);
           }
-          if (_weightCtrl.text.trim().isEmpty && r.weightG != null) {
-            _weightCtrl.text = r.weightG!.toStringAsFixed(0);
+          if (_weightCtrl.text.trim().isEmpty) {
+            final t = kgInputText(wG);
+            if (t.isNotEmpty) _weightCtrl.text = t;
           }
         });
+        final bits = <String>[
+          if (name.isNotEmpty) name,
+          if (lenCm != null && lenCm > 0) '${lenCm.toStringAsFixed(1)}cm',
+          if (wG != null && wG > 0)
+            '${formatKg(wG / 1000)}KG${estimated ? '（按体长估算）' : ''}',
+        ];
+        if (bits.isNotEmpty) {
+          CenterToast.show(
+            context,
+            'AI 识别：${bits.join(' · ')}，可修改',
+            icon: Icons.auto_awesome,
+          );
+        }
       }
       return true;
     } catch (_) {
@@ -1189,14 +1228,14 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
     );
   }
 
-  /// 渔获尺寸：体长(cm) / 重量(g)。AI 核验后自动预填，用户可改。
+  /// 渔获尺寸：体长(cm) / 重量(KG)。AI 核验后自动预填，用户可改。
   Widget _sizeCard() {
     return _card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _cardTitle(Icons.straighten_outlined, '渔获尺寸',
-              trailing: '用于池塘按比例缩放'),
+              trailing: 'AI 自动识别，可修改'),
           const SizedBox(height: 12),
           Row(
             children: [
@@ -1213,7 +1252,10 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
                     hintText: '体长',
                     hintStyle: TextStyle(
                         fontSize: 12.5, color: AppTheme.textSecondary),
-                    suffixText: 'cm',
+                    // ★ suffixText 在「空值 + 无焦点」时是不画的（Material 的
+                    //   _AffixText 会透明），用户会以为没有单位；suffixIcon 恒定显示。
+                    suffixIcon: _unit('cm'),
+                    suffixIconConstraints: const BoxConstraints(),
                     filled: true,
                     fillColor: AppTheme.primarySoft,
                     border: OutlineInputBorder(
@@ -1239,7 +1281,9 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
                     hintText: '重量',
                     hintStyle: TextStyle(
                         fontSize: 12.5, color: AppTheme.textSecondary),
-                    suffixText: 'g',
+                    // 单位统一 KG（用户要求）；详情页也是「数字大 + KG 小」
+                    suffixIcon: _unit('KG'),
+                    suffixIconConstraints: const BoxConstraints(),
                     filled: true,
                     fillColor: AppTheme.primarySoft,
                     border: OutlineInputBorder(
@@ -1254,13 +1298,27 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
             ],
           ),
           const SizedBox(height: 6),
-          const Text('尺寸真实填写后，池塘里的鱼会按真实大小 ×10 显示',
+          const Text('尺寸真实填写后，池塘里的鱼会按真实大小 ×10 显示；重量按 KG 填',
               style:
                   TextStyle(fontSize: 10.5, color: AppTheme.textSecondary)),
         ],
       ),
     );
   }
+
+  /// 输入框右侧固定单位（suffixText 空值时会被 Material 藏起来，所以用 icon 位）
+  Widget _unit(String unit) => Padding(
+        padding: const EdgeInsets.only(right: 10, left: 4),
+        child: Text(
+          unit,
+          style: const TextStyle(
+            fontSize: 12,
+            height: 1.2,
+            fontWeight: FontWeight.w700,
+            color: AppTheme.textSecondary,
+          ),
+        ),
+      );
 
   Widget _stepBtn(IconData icon, VoidCallback onTap) => InkWell(
         onTap: onTap,
