@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../app_theme.dart';
 import '../services/auth_config.dart';
 import '../services/builtin_avatars.dart';
+import '../services/net_diag.dart';
 import '../services/onekey_login.dart';
 import '../services/session_provider.dart';
 import '../utils/net_error_text.dart';
@@ -72,6 +73,9 @@ class _AuthScreenState extends State<AuthScreen>
 
   final _phone = TextEditingController();
   final _code = TextEditingController();
+
+  /// 网络自检进行中（防止连点长按弹出两个框）
+  bool _diagRunning = false;
 
   bool _busy = false;
   bool _agree = false;
@@ -190,14 +194,68 @@ class _AuthScreenState extends State<AuthScreen>
   /// 把异常翻译成用户能看懂、且**不误导**的一句话。
   ///
   /// 归类规则全在 [describeError]（纯函数，有单测），这里只负责把文案
-  /// 交给 toast。★ v2.1.53 起登录页**不再**显示「点此重连」那一行：
-  /// 连不上时本来就没有可点的东西，多一块红色横条只会让页面更慌。
+  /// 交给 toast。★ v2.1.53 起登录页**不再**显示那条红色「重连」横条：
+  /// 连不上时本来就没有可点的东西，多一块横条只会让页面更慌。
   String _errText(Object e) => describeError(e).text;
 
   /// 把 [_errText] 的结果弹出来的统一入口
   void _showErr(Object e) {
     if (!mounted) return;
     CenterToast.show(context, _errText(e));
+  }
+
+  /// 长按图标 → 网络自检。
+  ///
+  /// 分两步跑：先纯 TCP 连服务器端口，再请求一次 /auth/config。
+  /// 两步的结论一起摆出来，就能分清是「网络到不了服务器」还是
+  /// 「到了但接口出错」—— 这两种的处理方式完全不同，界面上一句话分不出来。
+  Future<void> _runNetDiag() async {
+    if (_diagRunning) return;
+    _diagRunning = true;
+    CenterToast.show(context, '正在自检网络…');
+    NetDiagResult r;
+    try {
+      r = await NetDiag.run();
+    } catch (e) {
+      r = NetDiagResult(
+        tcpOk: false,
+        tcpMs: 0,
+        tcpError: '自检本身出错：$e',
+        httpStatus: 0,
+        httpMs: 0,
+        httpError: '',
+      );
+    }
+    _diagRunning = false;
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _card,
+        title: const Text('网络自检',
+            style: TextStyle(fontSize: 16, color: _hi)),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            r.summary,
+            style: const TextStyle(fontSize: 12.5, color: _hi, height: 1.6),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: r.summary));
+              Navigator.of(ctx).pop();
+              CenterToast.show(context, '自检结果已复制');
+            },
+            child: const Text('复制', style: TextStyle(color: AppTheme.accent)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('关闭', style: TextStyle(color: _sub)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _sendCode() async {
@@ -217,7 +275,7 @@ class _AuthScreenState extends State<AuthScreen>
       setState(() => _dbgCode = dbg.isEmpty ? null : dbg);
       if (dbg.isNotEmpty) {
         _code.text = dbg;
-        CenterToast.show(context, '调试模式：验证码 $dbg，已自动填入');
+        CenterToast.show(context, '调试注册 · 验证码 $dbg，已自动填入');
       } else {
         CenterToast.show(context, '验证码已发送，5 分钟内有效');
       }
@@ -412,7 +470,17 @@ class _AuthScreenState extends State<AuthScreen>
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               const SizedBox(height: 6),
-                              Center(child: _logo()),
+                              // ★ 长按图标 = 网络自检（隐藏入口，不占版面）。
+                              //   用户报「连不上服务器」时，隔着屏幕没法看日志，
+                              //   这个能一次说清是端口不通、没网，还是接口出错。
+                              Center(
+                                child: GestureDetector(
+                                  key: const Key('auth-logo-diag'),
+                                  behavior: HitTestBehavior.opaque,
+                                  onLongPress: _runNetDiag,
+                                  child: _logo(),
+                                ),
+                              ),
                               const SizedBox(height: 16),
                               Center(child: _brand()),
                               const SizedBox(height: 24),
