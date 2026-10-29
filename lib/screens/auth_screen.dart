@@ -9,7 +9,9 @@ import '../services/auth_config.dart';
 import '../services/builtin_avatars.dart';
 import '../services/onekey_login.dart';
 import '../services/session_provider.dart';
+import '../utils/net_error_text.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/debug_code_hint.dart';
 import 'legal_doc_screen.dart';
 
 /// 登录页（v2.1.48 按设计稿重做：深色 + 荧光绿）
@@ -59,6 +61,14 @@ class _AuthScreenState extends State<AuthScreen>
 
   AuthConfig _cfg = AuthConfig.current;
   bool _cfgLoading = true;
+
+  /// 调试模式下最近一次拿到的临时验证码（后端未接真实短信通道时才有）。
+  /// 拿它做成页面上常驻的一行 —— 只弹 toast 的话两秒就没了，而且正好
+  /// 压在验证码输入框上，用户既看不清也没处再找（就是被反馈的那个现象）。
+  String? _dbgCode;
+
+  /// 网络层故障原因（null = 正常）。有值时卡片底部出现「网络不通 · 点此重连」
+  String? _netIssue;
 
   AuthMode _mode = AuthMode.sms;
   OneKeyProbe _ok = OneKeyProbe.none;
@@ -117,6 +127,10 @@ class _AuthScreenState extends State<AuthScreen>
     setState(() {
       _cfg = cfg;
       _ok = probe;
+      // 配置没拉到（多半是网络不通）：直接把原因摆到页面上，
+      // 别等用户点「获取验证码」才撞一次错。
+      final e = AuthConfig.lastNetError;
+      _netIssue = e == null ? null : e.detail;
       // 能真取号 → 首屏直接进一键态（设计稿第二张）
       _mode = (cfg.allowOneKey && probe.available) ? AuthMode.onekey : AuthMode.sms;
       // 读到 SIM 号就预填，省得用户手打
@@ -185,13 +199,41 @@ class _AuthScreenState extends State<AuthScreen>
     });
   }
 
+  /// 把异常翻译成用户能看懂、且**不误导**的一句话。
+  ///
+  /// 归类规则全在 [describeError]（纯函数，有单测），这里只负责：
+  ///   · 返回给用户看的文案；
+  ///   · 把「真实原因」记到 [_netIssue] 上，决定要不要显示「点此重连」那一行。
   String _errText(Object e) {
-    var s = e.toString();
-    s = s.replaceAll('Exception: ', '').replaceAll('ApiException: ', '');
-    if (s.contains('SocketException') || s.contains('Connection')) {
-      return '连不上服务器，请检查网络后重试';
+    final info = describeError(e);
+    _netIssue = info.isNet ? info.detail : null;
+    return info.text;
+  }
+
+  /// 把 [_errText] 的结果弹出来的统一入口（顺带刷新「重连」那一行）
+  void _showErr(Object e) {
+    if (!mounted) return;
+    final msg = _errText(e);
+    setState(() {});
+    CenterToast.show(context, msg);
+  }
+
+  /// 重连：重新拉一次后台配置，顺便验证网络到底通不通
+  Future<void> _reconnect() async {
+    setState(() => _netIssue = null);
+    final cfg = await AuthConfig.reload();
+    if (!mounted) return;
+    setState(() {
+      _cfg = cfg;
+      final e = AuthConfig.lastNetError;
+      _netIssue = e == null ? null : e.detail;
+    });
+    if (!mounted) return;
+    if (_netIssue == null) {
+      CenterToast.show(context, '已连上服务器');
+    } else {
+      CenterToast.show(context, _errText(AuthConfig.lastNetError!));
     }
-    return s.isEmpty ? '操作失败，请稍后重试' : s;
   }
 
   Future<void> _sendCode() async {
@@ -201,21 +243,25 @@ class _AuthScreenState extends State<AuthScreen>
       return;
     }
     if (_countdown > 0 || _busy) return;
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _netIssue = null; // 主动重试时先把上次的故障提示清掉
+    });
     try {
       final sp = Provider.of<SessionProvider>(context, listen: false);
       final data = await sp.sendSmsCode(phone);
       if (!mounted) return;
       _startCountdown();
       final dbg = (data['debugCode'] ?? '').toString();
+      setState(() => _dbgCode = dbg.isEmpty ? null : dbg);
       if (dbg.isNotEmpty) {
         _code.text = dbg;
-        CenterToast.show(context, '测试模式验证码：$dbg（已自动填入）');
+        CenterToast.show(context, '调试模式：验证码 $dbg，已自动填入');
       } else {
         CenterToast.show(context, '验证码已发送，5 分钟内有效');
       }
     } catch (e) {
-      if (mounted) CenterToast.show(context, _errText(e));
+      _showErr(e);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -239,7 +285,7 @@ class _AuthScreenState extends State<AuthScreen>
       final isNew = await sp.signInBySms(phone, code);
       await _afterLogin(sp, isNew);
     } catch (e) {
-      if (mounted) CenterToast.show(context, _errText(e));
+      _showErr(e);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -257,7 +303,7 @@ class _AuthScreenState extends State<AuthScreen>
       await sp.signIn(_phone.text.trim(), _pwd.text);
       await _afterLogin(sp, false);
     } catch (e) {
-      if (mounted) CenterToast.show(context, _errText(e));
+      _showErr(e);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -296,7 +342,7 @@ class _AuthScreenState extends State<AuthScreen>
     } on OneKeyException catch (e) {
       if (mounted) CenterToast.show(context, OneKeyLoginService.hint(e.code));
     } catch (e) {
-      if (mounted) CenterToast.show(context, _errText(e));
+      _showErr(e);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -351,7 +397,7 @@ class _AuthScreenState extends State<AuthScreen>
       final isNew = await sp.signInByWechat(code);
       await _afterLogin(sp, isNew);
     } catch (e) {
-      if (mounted) CenterToast.show(context, _errText(e));
+      _showErr(e);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -565,9 +611,47 @@ class _AuthScreenState extends State<AuthScreen>
                 style: TextStyle(fontSize: 13.5, color: _hi),
               ),
             ),
+          // 网络故障条：所有形态共用，平时不占地方
+          ..._netIssueBar(),
         ],
       ),
     );
+  }
+
+  /// 网络故障条：只在真的连不上时出现，点一下重新连一次
+  List<Widget> _netIssueBar() {
+    if (_netIssue == null) return const [];
+    const red = Color(0xFFE58A8A);
+    return [
+      const SizedBox(height: 12),
+      GestureDetector(
+        key: const Key('auth-net-retry'),
+        onTap: _reconnect,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF2A1A1A),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFF5A2A2A)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.wifi_off_rounded, size: 15, color: red),
+              const SizedBox(width: 7),
+              const Expanded(
+                child: Text(
+                  '连不上服务器 · 点此重连',
+                  style: TextStyle(
+                      fontSize: 12, color: red, fontWeight: FontWeight.w600),
+                ),
+              ),
+              const Icon(Icons.refresh_rounded, size: 16, color: red),
+            ],
+          ),
+        ),
+      ),
+    ];
   }
 
   // ── 形态一：手机号 + 验证码 ──
@@ -623,6 +707,12 @@ class _AuthScreenState extends State<AuthScreen>
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
           ),
         ),
+      ),
+      // 调试模式下把临时验证码摆在这里（后台切到正式短信通道后自动消失）
+      DebugCodeHint(
+        visible: _cfg.smsDebug,
+        code: _dbgCode,
+        onCopy: (c) => CenterToast.show(context, '已复制验证码 $c'),
       ),
       if (_pwdMode) ...[
         const SizedBox(height: 12),
