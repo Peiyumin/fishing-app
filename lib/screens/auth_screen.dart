@@ -67,18 +67,11 @@ class _AuthScreenState extends State<AuthScreen>
   /// 压在验证码输入框上，用户既看不清也没处再找（就是被反馈的那个现象）。
   String? _dbgCode;
 
-  /// 网络层故障原因（null = 正常）。有值时卡片底部出现「网络不通 · 点此重连」
-  String? _netIssue;
-
   AuthMode _mode = AuthMode.sms;
   OneKeyProbe _ok = OneKeyProbe.none;
 
   final _phone = TextEditingController();
   final _code = TextEditingController();
-  final _pwd = TextEditingController();
-
-  /// 老用户密码登录（后台保留时才给入口）
-  bool _pwdMode = false;
 
   bool _busy = false;
   bool _agree = false;
@@ -111,7 +104,6 @@ class _AuthScreenState extends State<AuthScreen>
     _shake.dispose();
     _phone.dispose();
     _code.dispose();
-    _pwd.dispose();
     super.dispose();
   }
 
@@ -127,10 +119,6 @@ class _AuthScreenState extends State<AuthScreen>
     setState(() {
       _cfg = cfg;
       _ok = probe;
-      // 配置没拉到（多半是网络不通）：直接把原因摆到页面上，
-      // 别等用户点「获取验证码」才撞一次错。
-      final e = AuthConfig.lastNetError;
-      _netIssue = e == null ? null : e.detail;
       // 能真取号 → 首屏直接进一键态（设计稿第二张）
       _mode = (cfg.allowOneKey && probe.available) ? AuthMode.onekey : AuthMode.sms;
       // 读到 SIM 号就预填，省得用户手打
@@ -201,39 +189,15 @@ class _AuthScreenState extends State<AuthScreen>
 
   /// 把异常翻译成用户能看懂、且**不误导**的一句话。
   ///
-  /// 归类规则全在 [describeError]（纯函数，有单测），这里只负责：
-  ///   · 返回给用户看的文案；
-  ///   · 把「真实原因」记到 [_netIssue] 上，决定要不要显示「点此重连」那一行。
-  String _errText(Object e) {
-    final info = describeError(e);
-    _netIssue = info.isNet ? info.detail : null;
-    return info.text;
-  }
+  /// 归类规则全在 [describeError]（纯函数，有单测），这里只负责把文案
+  /// 交给 toast。★ v2.1.53 起登录页**不再**显示「点此重连」那一行：
+  /// 连不上时本来就没有可点的东西，多一块红色横条只会让页面更慌。
+  String _errText(Object e) => describeError(e).text;
 
-  /// 把 [_errText] 的结果弹出来的统一入口（顺带刷新「重连」那一行）
+  /// 把 [_errText] 的结果弹出来的统一入口
   void _showErr(Object e) {
     if (!mounted) return;
-    final msg = _errText(e);
-    setState(() {});
-    CenterToast.show(context, msg);
-  }
-
-  /// 重连：重新拉一次后台配置，顺便验证网络到底通不通
-  Future<void> _reconnect() async {
-    setState(() => _netIssue = null);
-    final cfg = await AuthConfig.reload();
-    if (!mounted) return;
-    setState(() {
-      _cfg = cfg;
-      final e = AuthConfig.lastNetError;
-      _netIssue = e == null ? null : e.detail;
-    });
-    if (!mounted) return;
-    if (_netIssue == null) {
-      CenterToast.show(context, '已连上服务器');
-    } else {
-      CenterToast.show(context, _errText(AuthConfig.lastNetError!));
-    }
+    CenterToast.show(context, _errText(e));
   }
 
   Future<void> _sendCode() async {
@@ -243,10 +207,7 @@ class _AuthScreenState extends State<AuthScreen>
       return;
     }
     if (_countdown > 0 || _busy) return;
-    setState(() {
-      _busy = true;
-      _netIssue = null; // 主动重试时先把上次的故障提示清掉
-    });
+    setState(() => _busy = true);
     try {
       final sp = Provider.of<SessionProvider>(context, listen: false);
       final data = await sp.sendSmsCode(phone);
@@ -284,24 +245,6 @@ class _AuthScreenState extends State<AuthScreen>
       final sp = Provider.of<SessionProvider>(context, listen: false);
       final isNew = await sp.signInBySms(phone, code);
       await _afterLogin(sp, isNew);
-    } catch (e) {
-      _showErr(e);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _submitPassword() async {
-    if (!_checkAgree()) return;
-    if (_phone.text.isEmpty || _pwd.text.isEmpty) {
-      CenterToast.show(context, '请填写手机号和密码');
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      final sp = Provider.of<SessionProvider>(context, listen: false);
-      await sp.signIn(_phone.text.trim(), _pwd.text);
-      await _afterLogin(sp, false);
     } catch (e) {
       _showErr(e);
     } finally {
@@ -611,47 +554,9 @@ class _AuthScreenState extends State<AuthScreen>
                 style: TextStyle(fontSize: 13.5, color: _hi),
               ),
             ),
-          // 网络故障条：所有形态共用，平时不占地方
-          ..._netIssueBar(),
         ],
       ),
     );
-  }
-
-  /// 网络故障条：只在真的连不上时出现，点一下重新连一次
-  List<Widget> _netIssueBar() {
-    if (_netIssue == null) return const [];
-    const red = Color(0xFFE58A8A);
-    return [
-      const SizedBox(height: 12),
-      GestureDetector(
-        key: const Key('auth-net-retry'),
-        onTap: _reconnect,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: const Color(0xFF2A1A1A),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFF5A2A2A)),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.wifi_off_rounded, size: 15, color: red),
-              const SizedBox(width: 7),
-              const Expanded(
-                child: Text(
-                  '连不上服务器 · 点此重连',
-                  style: TextStyle(
-                      fontSize: 12, color: red, fontWeight: FontWeight.w600),
-                ),
-              ),
-              const Icon(Icons.refresh_rounded, size: 16, color: red),
-            ],
-          ),
-        ),
-      ),
-    ];
   }
 
   // ── 形态一：手机号 + 验证码 ──
@@ -714,20 +619,11 @@ class _AuthScreenState extends State<AuthScreen>
         code: _dbgCode,
         onCopy: (c) => CenterToast.show(context, '已复制验证码 $c'),
       ),
-      if (_pwdMode) ...[
-        const SizedBox(height: 12),
-        _field(
-          controller: _pwd,
-          hint: '请输入密码',
-          obscure: true,
-          maxLength: 32,
-        ),
-      ],
       const SizedBox(height: 18),
       _primaryBtn(
         key: const Key('auth-login-btn'),
         label: '登录',
-        onTap: _busy ? null : (_pwdMode ? _submitPassword : _submitSms),
+        onTap: _busy ? null : _submitSms,
       ),
       const SizedBox(height: 6),
       // 一键登录入口（后台关掉就不显示）
@@ -743,19 +639,6 @@ class _AuthScreenState extends State<AuthScreen>
             ),
             child: const Text('本机号码一键登录',
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-          ),
-        ),
-      if (_cfg.passwordLogin)
-        Center(
-          child: TextButton(
-            onPressed: () => setState(() => _pwdMode = !_pwdMode),
-            style: TextButton.styleFrom(
-              foregroundColor: _sub,
-              minimumSize: const Size(0, 28),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            child: Text(_pwdMode ? '改用短信验证码登录' : '用密码登录（老用户）',
-                style: const TextStyle(fontSize: 11.5)),
           ),
         ),
     ];
