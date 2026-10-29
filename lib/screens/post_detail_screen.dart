@@ -451,17 +451,23 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     final img = _post.imageUrls.isNotEmpty ? _post.imageUrls.first : null;
     final isVideo = _post.isVideo && _post.videoUrl != null;
 
-    // 兜底高度取 1.05 屏宽：竖拍图算出来的「2/3」大多在 0.9~1.2 之间，
-    // 这样图片尺寸解出来的那一刻，页面几乎不跳。
-    final photoH = isVideo
-        ? (w * .62).clamp(200.0, mq.size.height * .5)
-        : (img != null && _imgAspect != null
-            ? CoverPhoto.visibleHeight(
-                width: w,
-                aspect: _imgAspect!,
-                screenHeight: mq.size.height,
-              )
-            : w * 1.05);
+    double photoH;
+    if (isVideo) {
+      photoH = (w * .62).clamp(200.0, mq.size.height * .5);
+    } else if (img == null) {
+      // 没图的动态（问答/说说）：下面还有作者卡和正文，封面别占一屏
+      photoH = (w * .72).clamp(220.0, 420.0);
+    } else if (_imgAspect != null) {
+      photoH = CoverPhoto.visibleHeight(
+        width: w,
+        aspect: _imgAspect!,
+        screenHeight: mq.size.height,
+      );
+    } else {
+      // 图还没解码出宽高比：先用 1.05 屏宽兜底（竖拍图算出来的「2/3」
+      // 大多在 0.9~1.2 之间），等回调来了再重排，页面几乎不跳
+      photoH = w * 1.05;
+    }
     final h = barH + photoH;
     _coverH = h;
 
