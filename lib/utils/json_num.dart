@@ -87,7 +87,7 @@ DateTime? jsonDate(dynamic v, {DateTime? fallback}) {
 
   // 时间戳（秒 / 毫秒）—— 后端偶尔直接给 int
   final n = v is num ? v : (v is String ? num.tryParse(v.trim()) : null);
-  if (n != null && n is num) {
+  if (n != null) {
     final i = n.toInt();
     if (i > 1000000000000) {
       return DateTime.fromMillisecondsSinceEpoch(i); // 13 位，毫秒
