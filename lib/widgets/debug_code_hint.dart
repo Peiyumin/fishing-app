@@ -13,7 +13,7 @@ import '../app_theme.dart';
 ///   · [code] 为 null（还没点「获取验证码」）→ 先说清这里不发真短信；
 ///   · [code] 有值 → 把 6 位码大字显示，点一下复制。
 ///
-/// [visible] 由后台 `smsDebug` 决定（后台切到正式短信通道后整块消失）。
+/// [visible] 由后台 `smsDebug` 决定（后台切到「正式注册」后整块消失）。
 class DebugCodeHint extends StatelessWidget {
   const DebugCodeHint({
     super.key,
@@ -61,7 +61,7 @@ class DebugCodeHint extends StatelessWidget {
           const SizedBox(width: 7),
           Expanded(
             child: Text(
-              '调试模式：不会发真实短信，点「获取验证码」后直接给出临时验证码',
+              '当前是调试注册：不发真实短信，点「获取验证码」后直接给出临时验证码',
               style: TextStyle(fontSize: 11.5, color: AppTheme.inkMuted, height: 1.45),
             ),
           ),
@@ -94,7 +94,7 @@ class DebugCodeHint extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('调试模式 · 临时验证码（已自动填入）',
+                  Text('调试注册 · 临时验证码（已自动填入）',
                       style: TextStyle(fontSize: 11, color: AppTheme.inkMuted)),
                   const SizedBox(height: 2),
                   Text(
