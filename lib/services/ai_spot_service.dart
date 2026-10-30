@@ -6,6 +6,9 @@ import '../models/fishing_spot.dart';
 import '../models/fishing_species.dart';
 import '../models/water_body.dart';
 import '../models/weather_forecast.dart';
+import 'api_client.dart';
+import 'api_config.dart';
+import 'spot_service.dart';
 import 'weather_service.dart';
 
 /// 一个 AI 推荐钓点
@@ -51,6 +54,33 @@ class AiSpot {
     if (score >= 25) return '口弱';
     return '无口';
   }
+}
+
+/// 分数构成：天气基础分 + 三处微环境修正（合计 = 雷达列表上的分数）
+class AiScoreParts {
+  /// 天气基础分（与天气页同一个 `Bite.score` 引擎，同一小时）
+  final int base;
+
+  /// 水体类型加减分（河流 +3 / 水库 +2 / 钓友钓点 +2 / 湖泊 0）
+  final int water;
+
+  /// 迎风岸 / 背风岸（迎风 +3、大风迎风 +1、背风 -2、大风背风 -1）
+  final int wind;
+
+  /// 距离（>25km -1、>40km -3）
+  final int distance;
+
+  const AiScoreParts({
+    required this.base,
+    required this.water,
+    required this.wind,
+    required this.distance,
+  });
+
+  int get total => (base + water + wind + distance).clamp(0, 100);
+
+  /// 带符号的展示文案（0 分也写 0，避免用户猜「为什么没这一项」）
+  static String signed(int v) => v > 0 ? '＋$v' : '$v';
 }
 
 /// AI 推荐钓点
@@ -233,22 +263,44 @@ class AiSpotService {
     required double windMs,
     required double bearingFromMe,
     required int windFrom,
-  }) {
-    var s = base;
+  }) =>
+      scoreParts(
+        base: base,
+        kind: kind,
+        km: km,
+        windMs: windMs,
+        bearingFromMe: bearingFromMe,
+        windFrom: windFrom,
+      ).total;
 
+  /// 分数构成（v2.1.56）
+  ///
+  /// 抽出来是为了让「AI 分析报告 · 评分」页能把每一项**加减了几分**如实列出来。
+  /// 原来只有 [_tune] 一个总分，报告页只能重新实现一遍公式 —— 两处一旦
+  /// 走偏，雷达列表显示 84、详情页显示 82，用户立刻发现「AI 自相矛盾」。
+  /// 现在两边共用这一个函数，改权重只有一处。
+  static AiScoreParts scoreParts({
+    required int base,
+    required String kind,
+    required double km,
+    required double windMs,
+    required double bearingFromMe,
+    required int windFrom,
+  }) {
     // ① 水体类型
+    var water = 0;
     switch (kind) {
       case '河流':
-        s += 3; // 活水持续增氧，闷热天比死水抗打
+        water = 3; // 活水持续增氧，闷热天比死水抗打
         break;
       case '水库':
-        s += 2; // 水深大，温差缓冲好
+        water = 2; // 水深大，温差缓冲好
         break;
       case '钓友钓点':
-        s += 2; // 有人验证过能出鱼
+        water = 2; // 有人验证过能出鱼
         break;
       default:
-        break; // 湖泊不加不减
+        water = 0; // 湖泊不加不减
     }
 
     // ② 迎风岸 / 背风岸
@@ -256,20 +308,27 @@ class AiSpotService {
     //    我们这一岸，鱼跟着过来。但 5 级以上的风迎风岸浪太大，反而难钓。
     final diff = ((bearingFromMe - windFrom + 540) % 360 - 180).abs();
     final windy = windMs >= 8.0; // 8 m/s ≈ 5 级
+    var wind = 0;
     if (diff < 60) {
-      s += windy ? 1 : 3;
+      wind = windy ? 1 : 3;
     } else if (diff > 120) {
-      s -= windy ? 1 : 2;
+      wind = windy ? -1 : -2;
     }
 
     // ③ 距离：太远性价比低（只轻微扣分，排序仍以距离为主）
+    var distance = 0;
     if (km > 40) {
-      s -= 3;
+      distance = -3;
     } else if (km > 25) {
-      s -= 1;
+      distance = -1;
     }
 
-    return s.clamp(0, 100);
+    return AiScoreParts(
+      base: base,
+      water: water,
+      wind: wind,
+      distance: distance,
+    );
   }
 
   /// 推荐理由：把当下真正起作用的几个量说出来
@@ -334,5 +393,49 @@ class AiSpotService {
   static String kmText(double km) {
     if (km < 1) return '${(km * 1000).round()}m';
     return '${km.toStringAsFixed(1)}km';
+  }
+
+  /// 某个坐标的天气（AI 详情页用）
+  ///
+  /// ★ 必须是**钓点坐标**的天气，不是我的位置：5 公里外的水库风向就可能变了，
+  ///   用我的位置算「迎风岸」会把结论说反。
+  static Future<WeatherBundle?> weatherAt(double lat, double lng) async {
+    try {
+      return await WeatherService.fetchForecast(lat, lng)
+          .timeout(const Duration(seconds: 10));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 反馈 / 报错（AI 详情页底部「反馈」）
+  ///
+  /// 有对应钓点 id → 走原来的钓点报错（后台能在钓点报错列表里看到）；
+  /// AI 从水域数据里挑出来的点没有 id → 走 `/ai/spot-report`，
+  /// 落到独立表里，不会污染钓点库。
+  static Future<void> report({
+    required AiSpot spot,
+    required String reason,
+    String note = '',
+  }) async {
+    final id = spot.spotId;
+    if (id != null && id.isNotEmpty) {
+      await SpotService.reportSpot(
+        spotId: id,
+        spotName: spot.name,
+        reason: reason,
+        note: note.isEmpty ? null : note,
+      );
+      return;
+    }
+    if (!ApiConfig.enabled) return;
+    await ApiClient.post('/ai/spot-report', {
+      'name': spot.name,
+      'lat': spot.lat,
+      'lng': spot.lng,
+      'kind': spot.kind,
+      'reason': reason,
+      'note': note,
+    });
   }
 }
