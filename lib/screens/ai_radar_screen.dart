@@ -7,6 +7,7 @@ import '../app_theme.dart';
 import '../models/fishing_spot.dart';
 import '../models/water_body.dart';
 import '../services/ai_spot_service.dart';
+import 'ai_spot_detail_screen.dart';
 
 /// AI 找钓点 · 雷达扫描页（v2.1.49）
 ///
@@ -193,6 +194,21 @@ class _AiRadarScreenState extends State<AiRadarScreen>
 
   void _close([AiSpot? picked]) {
     Navigator.of(context).pop(AiRadarResult(list: _list, picked: picked));
+  }
+
+  /// 打开某个点的 AI 分析详情（图四/图五版式）
+  Future<void> _openReport(AiSpot s, int i) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AiSpotDetailScreen(
+          spot: s,
+          myLat: widget.lat,
+          myLng: widget.lng,
+          rank: i + 1,
+          total: _list.length,
+        ),
+      ),
+    );
   }
 
   @override
@@ -530,7 +546,9 @@ class _AiRadarScreenState extends State<AiRadarScreen>
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        onTap: () => _close(s),
+        // v2.1.56：点一条不再只是「飞过去」——进 AI 分析详情页，
+        // 里面有分数构成、定位地址、导航和反馈（用户给的图四/图五版式）
+        onTap: () => _openReport(s, i),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
           child: Row(
