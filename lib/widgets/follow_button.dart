@@ -19,6 +19,13 @@ class FollowButton extends StatefulWidget {
   /// 描边样式：未关注时白底 + 主色描边 + 主色文字（信息流作者行大按钮用）
   final bool outline;
 
+  /// 指定高度（v2.1.56）
+  ///
+  /// 「关注」和旁边的「私信」要并排时，两个按钮必须同一个高度 —— 原来
+  /// 关注是 32、私信是 OutlinedButton 的默认高（36 上下），截图里一眼看出
+  /// 一高一矮。给了 [height] 时圆角跟着取半高（药丸形），两边才严丝合缝。
+  final double? height;
+
   const FollowButton({
     super.key,
     required this.userId,
@@ -28,6 +35,7 @@ class FollowButton extends StatefulWidget {
     this.compact = false,
     this.tiny = false,
     this.outline = false,
+    this.height,
   });
 
   @override
@@ -82,11 +90,15 @@ class _FollowButtonState extends State<FollowButton> {
     final following = _following;
     // 描边样式（信息流作者行）：比 tiny 大一圈，且未关注时也是白底绿字
     final bool line = widget.outline;
-    final double h = line ? 30 : (widget.tiny ? 24 : (widget.compact ? 26 : 32));
-    final double fs = line ? 13 : (widget.tiny ? 11 : (widget.compact ? 12 : 13));
-    final double hPad = line ? 14 : (widget.tiny ? 10 : (widget.compact ? 12 : 16));
-    final double radius =
-        line ? 8 : (widget.tiny ? 13 : (widget.compact ? 14 : 16));
+    final double h = widget.height ??
+        (line ? 30 : (widget.tiny ? 24 : (widget.compact ? 26 : 32)));
+    final double fs =
+        line ? 13 : (widget.tiny ? 11 : (widget.compact ? 12 : 13));
+    final double hPad =
+        line ? 14 : (widget.tiny ? 10 : (widget.compact ? 12 : 16));
+    final double radius = widget.height != null
+        ? h / 2
+        : (line ? 8 : (widget.tiny ? 13 : (widget.compact ? 14 : 16)));
     return SizedBox(
       height: h,
       child: OutlinedButton(
