@@ -455,8 +455,21 @@ class PostService {
     await ApiClient.post('/posts/$postId/delete', {});
   }
 
-  /// 编辑自己发布的动态（仅作者，后端二次校验）
-  /// [images] 为「最终要保留的图片 URL 列表」（已存在的网络图 + 本次新上传的图）
+  /// 保存渔获的「饵料及鱼竿说明」（v2.1.57，仅作者可写，后端二次校验）
+  ///
+  /// 传空串表示清空。返回服务端存的最终文本（后端会裁到 200 字）。
+  static Future<String> saveGear(String postId, String gear) async {
+    if (_demo) return gear;
+    if (ApiClient.token == null) throw Exception('请先登录');
+    final r = await ApiClient.post('/posts/$postId/gear', {'gear': gear});
+    final m = r is Map ? Map<String, dynamic>.from(r) : const <String, dynamic>{};
+    final data = (m['data'] is Map)
+        ? Map<String, dynamic>.from(m['data'] as Map)
+        : m;
+    return (data['gear'] ?? gear).toString();
+  }
+
+  /// 编辑自己发布的动态（仅作者，后端二次校验）  /// [images] 为「最终要保留的图片 URL 列表」（已存在的网络图 + 本次新上传的图）
   /// 视频字段由后端保留原值，不在此更新
   static Future<void> updatePost(
     String postId, {
