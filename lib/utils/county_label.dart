@@ -10,11 +10,29 @@
 ///   只有区县没有地级市         → 「南山区」
 ///   只有地级市                → 「深圳市」
 /// 直辖市（city == district）不重复输出。
-String countyLabel({String city = '', String district = '', String province = ''}) {
+///
+/// v2.1.57：加 [withProvince] —— 用户要求「河南省·禹州市」这种带省的写法。
+/// 只在需要「一眼看出在哪个省」的地方打开（个人主页注册地、文章作者定位、
+/// AI 报告地址），列表里的短标签仍然用不带省的形式，免得一行挤爆。
+String countyLabel({
+  String city = '',
+  String district = '',
+  String province = '',
+  bool withProvince = false,
+}) {
   final c = city.trim();
   final d = district.trim();
   final p = province.trim();
 
+  final base = _countyCore(c: c, d: d, p: p);
+  if (!withProvince || p.isEmpty) return base;
+  // 已经是「北京市朝阳区」这种自带省的写法，别再拼一遍
+  if (base.startsWith(p)) return base;
+  if (base.isEmpty) return p;
+  return '$p·$base';
+}
+
+String _countyCore({required String c, required String d, required String p}) {
   if (d.isEmpty && c.isEmpty) return p;
   if (d.isEmpty) return c;
   if (c.isEmpty) return d;
