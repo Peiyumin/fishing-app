@@ -12,6 +12,7 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart' as ll;
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
 import '../models/fishing_spot.dart';
@@ -21,6 +22,9 @@ import 'ai_radar_screen.dart';
 import '../services/location_service.dart';
 import '../services/map_config_service.dart';
 import '../services/ai_spot_service.dart';
+import '../services/ai_quota_service.dart';
+import '../services/session_provider.dart';
+import '../widgets/ai_quota_gate.dart';
 
 import '../services/map_data_service.dart';
 import '../services/map_tile_source.dart';
@@ -1805,6 +1809,11 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   ///   推上来；用户点某一条就飞过去。整个过程用户能看见 AI 在算。
   Future<void> _findAiSpots() async {
     if (_aiBusy) return;
+    // ★ v2.1.56：AI 分析改成会员功能（非会员免费 3 次，用完要开会员）。
+    //   闸门放在**打开雷达之前**，别等扫完了才说「次数不够」——那样用户
+    //   等 15 秒动画白等一场。
+    if (!await ensureAiQuota(context)) return;
+    if (!mounted) return;
     setState(() => _aiBusy = true);
     try {
       var lat = _myLat;
@@ -1845,6 +1854,13 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         ),
       );
       if (!mounted || result == null) return;
+
+      // 扫出结果才算一次（网络失败/无结果是我们的问题，不该扣用户次数）
+      if (result.list.isNotEmpty) {
+        final sp = Provider.of<SessionProvider>(context, listen: false);
+        await AiQuotaService.consume(userId: sp.userId);
+      }
+      if (!mounted) return;
 
       setState(() => _aiSpots = result.list);
       await _renderAiSpots();
