@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -367,13 +368,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-      padding: const EdgeInsets.fromLTRB(14, 16, 14, 16),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: AppTheme.surface,
         borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         boxShadow: AppTheme.lightShadow,
       ),
-      child: Row(
+      child: Column(
+        children: [
+          _coverBand(sp),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+            child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           GestureDetector(
@@ -469,7 +475,80 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
         ],
+            ),
+          ),
+        ],
       ),
+    );
+  }
+
+  /// 主页背景图（v2.1.56）
+  ///
+  /// 没设置过就保持原来的纯色卡面（不硬塞一张渐变图，避免所有用户长得一样）；
+  /// 设置过就把图铺满这一条，底部渐隐到卡片白底，头像压在图的下沿。
+  Widget _coverBand(SessionProvider sp) {
+    final cover = sp.coverUrl ?? _me?.cover;
+    final has = cover != null && cover.isNotEmpty;
+    return SizedBox(
+      height: has ? 116 : 0,
+      width: double.infinity,
+      child: !has
+          ? const SizedBox.shrink()
+          : Stack(
+              fit: StackFit.expand,
+              children: [
+                CachedNetworkImage(
+                  imageUrl: cover,
+                  fit: BoxFit.cover,
+                  placeholder: (_, __) => const ColoredBox(
+                      color: AppTheme.primaryLight, child: SizedBox.expand()),
+                  errorWidget: (_, __, ___) => const ColoredBox(
+                      color: AppTheme.primaryLight, child: SizedBox.expand()),
+                ),
+                // 底部渐隐到卡片底色：头像和昵称压在图上也读得清
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        AppTheme.surface.withOpacity(0.15),
+                        AppTheme.surface,
+                      ],
+                      stops: const [0.45, 0.85, 1.0],
+                    ),
+                  ),
+                ),
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Material(
+                    color: Colors.black.withOpacity(0.32),
+                    borderRadius: BorderRadius.circular(999),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(999),
+                      onTap: _openEdit,
+                      child: const Padding(
+                        padding:
+                            EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                        child: Row(
+                          children: [
+                            Icon(Icons.wallpaper, size: 12, color: Colors.white),
+                            SizedBox(width: 4),
+                            Text('换背景',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
     );
   }
 
