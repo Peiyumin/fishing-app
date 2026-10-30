@@ -56,6 +56,9 @@ class Post {
   /// 渔获时天气快照（发布那一刻抓的，之后永不变；老帖子为 null）
   final CatchWeather? weather;
 
+  /// 饵料及鱼竿说明（v2.1.57）：作者在渔获详情页填的一段话，可为空
+  final String gear;
+
   static const Map<String, String> categoryLabels = {
     'post': '渔获',
     'ask': '问答',
@@ -93,6 +96,7 @@ class Post {
     this.lengthCm,
     this.weightG,
     this.weather,
+    this.gear = '',
     this.badges = const [],
   });
 
@@ -154,6 +158,8 @@ class Post {
       weightG: jsonDouble(json['weight_g']),
       // 列表/详情走 posts.*（weather_json 是字符串），/catch/mine 给的是 weather 对象
       weather: parseWeather(json['weather'] ?? json['weather_json']),
+      // 列表/详情是 posts.gear_note（p.* 直出）；/catch/mine 不带这个字段
+      gear: (json['gear_note'] ?? json['gear'] ?? '').toString(),
       badges: parseBadges(json['badges']),
     );
   }
