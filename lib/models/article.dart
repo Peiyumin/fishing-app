@@ -12,6 +12,9 @@ class Article {
   final String category;
   final String categoryLabel;
   final String summary;
+
+  /// 发布城市（投稿时按定位自动带上；空 = 不显示）
+  final String city;
   final String content;
   final String authorId;
   final String authorName;
@@ -21,6 +24,9 @@ class Article {
   final int status;
   final int views;
   final int likeCount;
+
+  /// 当前用户是否已点赞（游客恒 false）
+  final bool liked;
   final bool featured;
 
   const Article({
@@ -30,6 +36,7 @@ class Article {
     required this.category,
     required this.categoryLabel,
     required this.summary,
+    this.city = '',
     required this.content,
     required this.authorId,
     required this.authorName,
@@ -39,6 +46,7 @@ class Article {
     required this.status,
     required this.views,
     required this.likeCount,
+    this.liked = false,
     required this.featured,
   });
 
@@ -72,6 +80,7 @@ class Article {
       category: asStr(j['category']),
       categoryLabel: asStr(j['category_label']),
       summary: asStr(j['summary']),
+      city: asStr(j['city']),
       content: asStr(j['content']),
       authorId: asStr(j['author_id']),
       authorName: asStr(j['author_name']),
@@ -81,6 +90,7 @@ class Article {
       status: asInt(j['status']),
       views: asInt(j['views']),
       likeCount: asInt(j['like_count']),
+      liked: asBool(j['liked']),
       featured: asBool(j['is_featured']),
     );
   }
