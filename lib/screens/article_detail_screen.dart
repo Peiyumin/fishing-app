@@ -9,6 +9,7 @@ import '../services/api_config.dart';
 import '../services/content_service.dart';
 import '../services/follow_service.dart';
 import '../services/geo_place.dart';
+import '../services/location_service.dart';
 import '../utils/county_label.dart';
 import '../services/session_provider.dart';
 import '../widgets/ad_slot.dart';
@@ -69,8 +70,13 @@ class _ArticleDetailScreenState extends State<ArticleDetailScreen> {
   }
 
   /// 解析「县级市」定位
+  ///
+  /// ★ 只在**已经有定位权限**时才反查：开一篇文章就弹系统授权框太打扰，
+  ///   没权限就不显示这一行（比显示错的东西好）。
   Future<void> _resolveCounty() async {
     if (_county.isNotEmpty) return;
+    if (!await LocationService.hasPermission()) return;
+    if (!mounted) return;
     final p = await GeoPlace.current();
     if (p == null || p.isEmpty) return;
     final c = countyLabel(
