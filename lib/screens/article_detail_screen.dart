@@ -8,6 +8,8 @@ import '../models/user_profile.dart';
 import '../services/api_config.dart';
 import '../services/content_service.dart';
 import '../services/follow_service.dart';
+import '../services/geo_place.dart';
+import '../utils/county_label.dart';
 import '../services/session_provider.dart';
 import '../widgets/ad_slot.dart';
 import '../widgets/center_toast.dart';
@@ -48,12 +50,35 @@ class _ArticleDetailScreenState extends State<ArticleDetailScreen> {
   /// 相关阅读（同分类优先，凑满 10 篇）
   List<Article> _related = const [];
 
+  /// 作者名下面的定位（v2.1.56）
+  ///
+  /// 口径：**真实定位，只到县级市**。优先用投稿时带上的 `city`；
+  /// 老文章没有这个字段（后端加列之前投的），用当前定位的区县兜底。
+  /// ★ 绝对不能再回退成「分类名」——原来显示「垂钓技巧」，用户以为
+  ///   那是个地名，其实那是栏目。
+  String _county = '';
+
   @override
   void initState() {
     super.initState();
     _liked = _a.liked;
     _likeCount = _a.likeCount;
+    _county = _a.city.trim();
     _load();
+    _resolveCounty();
+  }
+
+  /// 解析「县级市」定位
+  Future<void> _resolveCounty() async {
+    if (_county.isNotEmpty) return;
+    final p = await GeoPlace.current();
+    if (p == null || p.isEmpty) return;
+    final c = countyLabel(
+      city: p.city,
+      district: p.district,
+      province: p.province,
+    );
+    if (mounted && c.isNotEmpty) setState(() => _county = c);
   }
 
   Future<void> _load() async {
@@ -64,6 +89,7 @@ class _ArticleDetailScreenState extends State<ArticleDetailScreen> {
         _a = full;
         _liked = full.liked;
         _likeCount = full.likeCount;
+        if (full.city.trim().isNotEmpty) _county = full.city.trim();
       }
       _loading = false;
     });
@@ -199,23 +225,24 @@ class _ArticleDetailScreenState extends State<ArticleDetailScreen> {
                               color: AppTheme.textPrimary),
                         ),
                         const SizedBox(height: 3),
-                        Row(
-                          children: [
-                            const Icon(Icons.place_outlined,
-                                size: 12, color: AppTheme.textSecondary),
-                            const SizedBox(width: 2),
-                            Flexible(
-                              child: Text(
-                                _a.city.isNotEmpty ? _a.city : _a.categoryLabel,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    fontSize: 11.5,
-                                    color: AppTheme.textSecondary),
+                        if (_county.isNotEmpty)
+                          Row(
+                            children: [
+                              const Icon(Icons.place_outlined,
+                                  size: 12, color: AppTheme.textSecondary),
+                              const SizedBox(width: 2),
+                              Flexible(
+                                child: Text(
+                                  _county,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontSize: 11.5,
+                                      color: AppTheme.textSecondary),
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
+                            ],
+                          ),
                       ],
                     ),
                   ),
@@ -228,7 +255,7 @@ class _ArticleDetailScreenState extends State<ArticleDetailScreen> {
                     key: ValueKey('art-follow-${_author?.isFollowing}'),
                     userId: _a.authorId,
                     initialFollowing: _author?.isFollowing ?? false,
-                    compact: true,
+                    height: 30,
                   ),
                 ],
               ],
