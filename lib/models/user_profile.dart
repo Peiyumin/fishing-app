@@ -23,6 +23,9 @@ class UserProfile {
   final String pointsName; // 积分在 App 内的名称（如：积分 / 鱼币）
   final int likeCount; // 累计获赞（我的页「喜欢」）
   final int level; // 等级（exp 换算的 LV1~LV30）
+
+  /// 注册地（v2.1.57）：后端存的「河南省·禹州市」，空串 = 未记录
+  final String regPlace;
   final int catchCount; // 发布渔获次数
   final MemberStyle vip; // 会员等级（等级 0 = 普通用户）
   final List<BadgeItem> badges; // 已获得的徽章
@@ -43,6 +46,7 @@ class UserProfile {
     this.pointsName = '积分',
     this.likeCount = 0,
     this.level = 1,
+    this.regPlace = '',
     this.catchCount = 0,
     this.vip = MemberStyle.normal,
     this.badges = const [],
@@ -67,6 +71,7 @@ class UserProfile {
           : '积分',
       likeCount: jsonInt(json['likeCount']) ?? 0,
       level: jsonInt(json['level']) ?? 1,
+      regPlace: (json['regPlace'] ?? '').toString(),
       catchCount: jsonInt(json['catchCount']) ?? 0,
       vip: MemberStyle.fromJson(json),
       badges: (json['badges'] is List)
@@ -94,6 +99,7 @@ class UserProfile {
     String? pointsName,
     int? likeCount,
     int? level,
+    String? regPlace,
     int? catchCount,
     MemberStyle? vip,
     List<BadgeItem>? badges,
@@ -114,6 +120,7 @@ class UserProfile {
       pointsName: pointsName ?? this.pointsName,
       likeCount: likeCount ?? this.likeCount,
       level: level ?? this.level,
+      regPlace: regPlace ?? this.regPlace,
       catchCount: catchCount ?? this.catchCount,
       vip: vip ?? this.vip,
       badges: badges ?? this.badges,
