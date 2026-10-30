@@ -13,6 +13,7 @@ import '../widgets/center_toast.dart';
 import '../widgets/location_prompt.dart';
 import 'auth_screen.dart';
 import 'publish_spot_screen.dart';
+import 'publish_shop_screen.dart';
 import 'publish_venue_screen.dart';
 import 'shop_detail_screen.dart';
 import 'spot_detail_screen.dart';
@@ -193,10 +194,14 @@ class _SpotsScreenState extends State<SpotsScreen>
           ),
         ),
         actions: [
+          // 右上角「+」按当前 Tab 分流（v2.1.55）：
+          //   本地钓场 → 添加钓场表单
+          //   野钓钓点 → 标记野钓点（地图选点，免审核）
+          //   渔具店   → 添加渔具店表单（店名/门店·流动/饵料·鱼竿·鱼线/可配送）
           IconButton(
-            icon: const Icon(Icons.add_business_outlined),
-            tooltip: '添加钓场/渔具店',
-            onPressed: () => _openVenueForm(),
+            icon: Icon(_addIcon),
+            tooltip: _addLabel,
+            onPressed: _openAddForm,
           ),
         ],
       ),
@@ -291,7 +296,7 @@ class _SpotsScreenState extends State<SpotsScreen>
                         Center(child: Text('暂无相关内容')),
                         SizedBox(height: 8),
                         Center(
-                          child: Text('点右上角「+」提交钓场/渔具店，审核通过后展示',
+                          child: Text('点右上角「+」提交钓场，审核通过后展示',
                               style: TextStyle(
                                   fontSize: 12, color: Colors.grey)),
                         ),
@@ -849,12 +854,48 @@ class _SpotsScreenState extends State<SpotsScreen>
 
   /// 添加钓场/渔具店（图4 表单，后台审核后展示）
   Future<void> _openVenueForm() async {
-    if (!await _requireLogin()) return;
-    if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const PublishVenueScreen()),
     );
     _load();
+  }
+
+  /// 右上角「+」的图标 / 提示随 Tab 变，避免用户以为永远是「加钓场」
+  int get _tabIndex => _tabController.index;
+
+  IconData get _addIcon {
+    if (_tabIndex == 1) return Icons.add_location_alt_outlined;
+    if (_tabIndex == 2) return Icons.storefront_outlined;
+    return Icons.add_business_outlined;
+  }
+
+  String get _addLabel {
+    if (_tabIndex == 1) return '标记野钓点';
+    if (_tabIndex == 2) return '添加渔具店';
+    return '添加钓场';
+  }
+
+  /// 按当前 Tab 打开对应的「添加」页面
+  Future<void> _openAddForm() async {
+    if (!await _requireLogin()) return;
+    if (!mounted) return;
+    switch (_tabController.index) {
+      case 1:
+        // 野钓钓点：地图选点 → 保存即全员可见
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const PublishSpotScreen()),
+        );
+        await _load();
+        break;
+      case 2:
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const PublishShopScreen()),
+        );
+        await _load();
+        break;
+      default:
+        await _openVenueForm();
+    }
   }
 
   /// 发布类操作统一前置校验：未登录提示并跳登录页
