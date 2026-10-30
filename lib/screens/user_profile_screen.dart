@@ -11,6 +11,7 @@ import '../widgets/follow_button.dart';
 import '../widgets/post_card.dart';
 import '../widgets/user_avatar.dart';
 import 'chat_screen.dart';
+import 'edit_profile_screen.dart';
 import 'follow_list_screen.dart';
 import '../widgets/app_refresh.dart';
 
@@ -43,6 +44,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       builder: (_) =>
           ChatScreen(peerId: widget.userId, nickname: _profile?.nickname ?? '钓友'),
     ));
+  }
+
+  /// 看自己的主页时点「编辑资料」：改完回来重新拉一次资料
+  Future<void> _openEdit() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const EditProfileScreen()),
+    );
+    if (mounted) _load();
   }
 
   Future<void> _load() async {
@@ -186,13 +195,75 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                   color: Colors.white,
                                   fontSize: 18,
                                   fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 5),
+                          // ★ v2.1.57：等级 + 注册地（河南省·禹州市）
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.18),
+                                  borderRadius: BorderRadius.circular(5),
+                                ),
+                                child: Text('LV${p?.level ?? 1}',
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        height: 1.5,
+                                        fontWeight: FontWeight.w800)),
+                              ),
+                              if ((p?.regPlace ?? '').isNotEmpty) ...[
+                                const SizedBox(width: 8),
+                                const Icon(Icons.place_outlined,
+                                    size: 12, color: Colors.white70),
+                                const SizedBox(width: 2),
+                                Flexible(
+                                  child: Text(
+                                    p!.regPlace,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        color: Colors.white70, fontSize: 11.5),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                           const SizedBox(height: 4),
                           if (p != null && p.bio.trim().isNotEmpty)
                             Text(p.bio.trim(),
                                 style: const TextStyle(
                                     color: Colors.white70, fontSize: 13)),
                           const SizedBox(height: 8),
-                          if (!(p?.isMe ?? false))
+                          // ★ v2.1.57：看自己的主页时这里原来整块不渲染，
+                          //   截图里就是「名字下面一片空白」，用户以为关注按钮丢了。
+                          //   现在本人显示「编辑资料」，别人的主页才显示关注/私信。
+                          if (p?.isMe == true)
+                            SizedBox(
+                              height: 36,
+                              child: OutlinedButton.icon(
+                                onPressed: _openEdit,
+                                icon: const Icon(Icons.edit_outlined, size: 15),
+                                label: const Text('编辑资料',
+                                    style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600)),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.white,
+                                  side: const BorderSide(color: Colors.white70),
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 14),
+                                  minimumSize: Size.zero,
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                ),
+                              ),
+                            )
+                          else
                             Row(
                               children: [
                                 // ★ 两个按钮统一 36 高、药丸圆角（v2.1.56）
