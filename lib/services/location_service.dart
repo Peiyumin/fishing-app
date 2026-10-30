@@ -128,6 +128,19 @@ class LocationService {
   static Future<LocationPermission> currentPermission() =>
       Geolocator.checkPermission();
 
+  /// 是否**已经**拿到定位权限（只查，不弹系统授权框）
+  ///
+  /// 用于「顺手补一个地名」这种非必要场景：用户打开一篇文章就弹定位授权
+  /// 太打扰，没授权就直接不显示地名。
+  static Future<bool> hasPermission() async {
+    try {
+      final p = await Geolocator.checkPermission();
+      return p == LocationPermission.always || p == LocationPermission.whileInUse;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// 取位置阶梯。Android 与 iOS 走的路径不同：
   /// - Android 先试融合定位，再退回系统 LocationManager（国产机没 GMS 的救命档）
   /// - iOS 只有 CoreLocation 一套，直接按高→中降级
