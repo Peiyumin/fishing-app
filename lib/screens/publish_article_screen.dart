@@ -5,6 +5,7 @@ import '../app_theme.dart';
 import '../services/api_config.dart';
 import '../services/content_service.dart';
 import '../services/session_provider.dart';
+import '../utils/geo_names.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/emoji_panel.dart';
 import 'auth_screen.dart';
@@ -64,11 +65,21 @@ class _PublishArticleScreenState extends State<PublishArticleScreen> {
       return;
     }
     setState(() => _busy = true);
+    // 城市：详情页要显示「城市定位」。拿不到（没授权 / 接口超时）就空着，
+    // 绝不因为定位失败挡住投稿。
+    var city = '';
+    try {
+      city = await GeoNames.currentCity()
+          .timeout(const Duration(seconds: 4)) ??
+          '';
+    } catch (_) {}
+    if (!mounted) return;
     final r = await ContentService.submitArticle(
       title: title,
       content: body,
       category: _cat,
       summary: _summary.text.trim(),
+      city: city,
     );
     if (!mounted) return;
     setState(() => _busy = false);
