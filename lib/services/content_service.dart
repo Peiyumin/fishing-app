@@ -166,6 +166,19 @@ class ContentService {
     }
   }
 
+  /// 点赞 / 取消点赞（需登录，服务端一进一出，重复点不会刷数）
+  static Future<({bool liked, int likeCount})> toggleArticleLike(
+      String id) async {
+    if (ApiClient.token == null) throw Exception('请先登录后再点赞');
+    final data = await ApiClient.post('/articles/$id/like', const {});
+    final m =
+        data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+    return (
+      liked: m['liked'] == true,
+      likeCount: m['likeCount'] is num ? (m['likeCount'] as num).toInt() : 0,
+    );
+  }
+
   /// 投稿文章（进待审核）
   static Future<({bool ok, String msg})> submitArticle({
     required String title,
@@ -173,6 +186,7 @@ class ContentService {
     String category = 'skill',
     String cover = '',
     String summary = '',
+    String city = '',
   }) async {
     if (ApiClient.token == null) {
       return (ok: false, msg: '请先登录后再投稿');
@@ -184,6 +198,7 @@ class ContentService {
         'category': category,
         'cover': cover,
         'summary': summary,
+        'city': city,
       });
       final m = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
       return (ok: true, msg: (m['message'] ?? '已提交审核').toString());
