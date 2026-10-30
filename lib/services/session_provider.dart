@@ -1,12 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/member.dart';
 import '../models/user_profile.dart';
+import '../utils/county_label.dart';
 import 'account_history.dart';
 import 'api_client.dart';
 import 'api_config.dart';
 import 'fish_service.dart';
+import 'geo_place.dart';
+import 'location_service.dart';
 import '../utils/json_num.dart';
 
 /// 全局登录态管理（Provider）
@@ -109,6 +114,7 @@ class SessionProvider extends ChangeNotifier {
       {'phone': phone, 'password': password},
     ));
     await _apply(data);
+    unawaited(_syncRegPlace());
   }
 
   /// 注册（手机号 + 密码 + 昵称），成功后自动登录
@@ -119,6 +125,33 @@ class SessionProvider extends ChangeNotifier {
       'password': password,
     }));
     await _apply(data);
+    unawaited(_syncRegPlace());
+  }
+
+  /// 补录「注册地」（v2.1.57）
+  ///
+  /// 个人主页要显示「河南省·禹州市」这一级定位。注册接口本来就能带 place，
+  /// 但**短信验证码登录会自动注册**、老账号更是升级前就注册好了 —— 这两类
+  /// 都没有值。所以登录成功后补一次：
+  ///   · 没给定位权限就直接跳过（不弹授权框，不打扰）；
+  ///   · 服务端只在 reg_place 为空时写入，换城市不会把「注册地」改成新城市；
+  ///   · 全程失败静默（这是装饰性信息，不能因为它让登录报错）。
+  Future<void> _syncRegPlace() async {
+    try {
+      if (!await LocationService.hasPermission()) return;
+      final p = await GeoPlace.current();
+      if (p == null || p.isEmpty) return;
+      final place = countyLabel(
+        city: p.city,
+        district: p.district,
+        province: p.province,
+        withProvince: true,
+      );
+      if (place.isEmpty) return;
+      await ApiClient.post('/users/me/reg-place', {'place': place});
+    } catch (_) {
+      // 忽略：后端没升级 / 断网 / 定位超时都不影响登录
+    }
   }
 
   /// 发短信验证码（返回体里可能带 debugCode，调试模式下直接给到前端）
@@ -138,6 +171,7 @@ class SessionProvider extends ChangeNotifier {
     }));
     final isNew = data['isNew'] == true;
     await _apply(data);
+    unawaited(_syncRegPlace());
     return isNew;
   }
 
@@ -146,6 +180,7 @@ class SessionProvider extends ChangeNotifier {
     final data = jsonMap(await ApiClient.post('/auth/wechat/login', {'code': code}));
     final isNew = data['isNew'] == true;
     await _apply(data);
+    unawaited(_syncRegPlace());
     return isNew;
   }
 
@@ -158,6 +193,7 @@ class SessionProvider extends ChangeNotifier {
         jsonMap(await ApiClient.post('/auth/onekey/login', {'token': token}));
     final isNew = data['isNew'] == true;
     await _apply(data);
+    unawaited(_syncRegPlace());
     return isNew;
   }
 
