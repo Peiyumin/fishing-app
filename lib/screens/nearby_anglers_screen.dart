@@ -8,6 +8,7 @@ import '../services/nearby_service.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/user_avatar.dart';
 import 'chat_screen.dart';
+import 'user_profile_screen.dart';
 import '../widgets/app_refresh.dart';
 
 /// 附近钓友：所有登录用户可用；按定位由近到远，列表含头像/名字/签名/关注/私信/距离
@@ -92,6 +93,17 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
       });
       CenterToast.show(context, e.toString().replaceAll('Exception: ', ''));
     }
+  }
+
+  /// 打开对方个人主页（头像 / 昵称 / 距离处点击都走这里）
+  Future<void> _openProfile(NearbyAngler a) async {
+    if (a.userId.trim().isEmpty) {
+      CenterToast.show(context, '这位钓友的资料暂时打不开');
+      return;
+    }
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => UserProfileScreen(userId: a.userId),
+    ));
   }
 
   Future<void> _chat(NearbyAngler a) async {
@@ -197,69 +209,92 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
       ),
       child: Row(
         children: [
-          UserAvatar(
-            url: a.avatar,
-            userId: a.userId,
-            vipLevel: a.vipLevel,
-            radius: 24,
-          ),
-          const SizedBox(width: 11),
+          // 头像 / 昵称 / 距离整块都可点 → 进对方主页
+          // ★ 必须包一层透明 Material：卡片有白色底色，水波纹画在祖先 Material
+          //   上会被这层底色盖住，按下去像没反应。
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: Text(a.nickname.isEmpty ? '钓友' : a.nickname,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 14, fontWeight: FontWeight.w700)),
-                    ),
-                    if (a.member)
-                      Container(
-                        margin: const EdgeInsets.only(left: 6),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: AppTheme.primaryLight,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Text('会员',
-                            style: TextStyle(
-                                fontSize: 9.5,
-                                fontWeight: FontWeight.w800,
-                                color: AppTheme.primaryDark)),
+            child: Material(
+              type: MaterialType.transparency,
+              child: InkWell(
+                onTap: () => _openProfile(a),
+                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    children: [
+                      UserAvatar(
+                        url: a.avatar,
+                        userId: a.userId,
+                        vipLevel: a.vipLevel,
+                        radius: 24,
                       ),
-                  ],
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                      a.nickname.isEmpty ? '钓友' : a.nickname,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w700)),
+                                ),
+                                if (a.member)
+                                  Container(
+                                    margin: const EdgeInsets.only(left: 6),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.primaryLight,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: const Text('会员',
+                                        style: TextStyle(
+                                            fontSize: 9.5,
+                                            fontWeight: FontWeight.w800,
+                                            color: AppTheme.primaryDark)),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            if (a.bio.isNotEmpty)
+                              Text(a.bio,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontSize: 11.5,
+                                      color: AppTheme.textSecondary)),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                const Icon(Icons.place_outlined,
+                                    size: 12, color: AppTheme.primary),
+                                const SizedBox(width: 2),
+                                Text('距离 ${a.distanceText}',
+                                    style: const TextStyle(
+                                        fontSize: 11.5,
+                                        color: AppTheme.primary,
+                                        fontWeight: FontWeight.w600)),
+                                const SizedBox(width: 8),
+                                Text('Lv.${a.level}',
+                                    style: const TextStyle(
+                                        fontSize: 10.5,
+                                        color: AppTheme.textSecondary)),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 2),
-                if (a.bio.isNotEmpty)
-                  Text(a.bio,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 11.5, color: AppTheme.textSecondary)),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    const Icon(Icons.place_outlined,
-                        size: 12, color: AppTheme.primary),
-                    const SizedBox(width: 2),
-                    Text('距离 ${a.distanceText}',
-                        style: const TextStyle(
-                            fontSize: 11.5,
-                            color: AppTheme.primary,
-                            fontWeight: FontWeight.w600)),
-                    const SizedBox(width: 8),
-                    Text('Lv.${a.level}',
-                        style: const TextStyle(
-                            fontSize: 10.5, color: AppTheme.textSecondary)),
-                  ],
-                ),
-              ],
+              ),
             ),
           ),
           _miniBtn('私信', Icons.chat_bubble_outline, () => _chat(a)),
