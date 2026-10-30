@@ -23,12 +23,22 @@ double stickyShellOpacity({
 /// 顶栏作者信息的不透明度
 ///
 /// [nameTop] 作者卡里名字在屏幕上的 y 坐标（全局）；
-/// [barHeight] 顶栏总高度（含状态栏）。
-/// 名字顶部滑到「顶栏下沿 + 12」时开始出现，再往上 36px 完全显示。
+/// [barHeight] 顶栏总高度（含状态栏）；
+/// [shell] 白栏本体的不透明度（[stickyShellOpacity] 的结果）。
+///
+/// 两条门槛同时满足才显示：
+///  ① 名字已经被顶栏盖住（位置条件）；
+///  ② 白栏本身**基本不透明**了 —— 否则白栏还是半透明的，卡片上那个名字
+///     会从底下透出来，和顶栏的名字叠成一团（还是重叠，只是淡一点）。
 double stickyInfoOpacity({
   required double nameTop,
   required double barHeight,
+  double shell = 1,
 }) {
-  final t = (barHeight + 12 - nameTop) / 36;
-  return t.clamp(0.0, 1.0).toDouble();
+  // 0.92→1 这一段把名字提上来；shell 已经满时直接给 1，
+  // 免得 (1-0.92)/0.08 算出 0.9999999999999994 这种尾巴。
+  final gate = shell >= 0.999 ? 1.0 : ((shell - 0.92) / 0.08).clamp(0.0, 1.0);
+  final t = ((barHeight + 12 - nameTop) / 36).clamp(0.0, 1.0);
+  final v = t * gate;
+  return v >= 0.999 ? 1.0 : v;
 }
