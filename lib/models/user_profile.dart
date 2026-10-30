@@ -10,6 +10,9 @@ class UserProfile {
   final int userNo; // 数字用户 ID（后台按号查人，替代 UUID 英文串）
   final String nickname;
   final String? avatar;
+
+  /// 个人主页背景图（v2.1.56，所有人可见；空 = 用默认渐变）
+  final String? cover;
   final String bio; // 个人签名
   final int followerCount;
   final int followingCount;
@@ -29,6 +32,7 @@ class UserProfile {
     this.userNo = 0,
     required this.nickname,
     this.avatar,
+    this.cover,
     this.bio = '',
     this.followerCount = 0,
     this.followingCount = 0,
@@ -50,6 +54,7 @@ class UserProfile {
       userNo: jsonInt(json['userNo']) ?? 0,
       nickname: (json['nickname'] as String?) ?? '钓友',
       avatar: ApiConfig.mediaUrl(json['avatar'] as String?),
+      cover: ApiConfig.mediaUrl((json['cover'] ?? '').toString()),
       bio: (json['bio'] ?? '').toString(),
       followerCount: jsonInt(json['followerCount']) ?? 0,
       followingCount: jsonInt(json['followingCount']) ?? 0,
@@ -78,6 +83,7 @@ class UserProfile {
     int? userNo,
     String? nickname,
     String? avatar,
+    String? cover,
     String? bio,
     int? followerCount,
     int? followingCount,
@@ -97,6 +103,7 @@ class UserProfile {
       userNo: userNo ?? this.userNo,
       nickname: nickname ?? this.nickname,
       avatar: avatar ?? this.avatar,
+      cover: cover ?? this.cover,
       bio: bio ?? this.bio,
       followerCount: followerCount ?? this.followerCount,
       followingCount: followingCount ?? this.followingCount,
