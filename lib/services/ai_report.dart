@@ -183,7 +183,9 @@ class AiReport {
     //   四项相加恰好等于列表那个数，评分页依然能如实展示每一项加减了几分。
     final rest = parts.water + parts.wind + parts.distance;
     parts = AiScoreParts(
-      base: (spot.score - rest).clamp(0, 100),
+      // 不 clamp：极端分（0 分或 100 分）下 clamp 会让四项相加 ≠ 列表分数，
+      // 评分页就会自己打自己。负数按「-3 分」显示，本来就是扣分，看得懂。
+      base: spot.score - rest,
       water: parts.water,
       wind: parts.wind,
       distance: parts.distance,
