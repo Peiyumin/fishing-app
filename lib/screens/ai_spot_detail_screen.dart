@@ -239,7 +239,12 @@ class _AiSpotDetailScreenState extends State<AiSpotDetailScreen> {
                       runSpacing: 6,
                       children: [
                         _chip(r.grade, _green),
-                        _chip('适合 ${r.species}', _blue),
+                        _chip(
+                          r.picks.length > 1
+                              ? '适合 ${r.picks.map((e) => e.name).join(' · ')}'
+                              : '适合 ${r.species}',
+                          _blue,
+                        ),
                         _chip(widget.spot.kind, _dim),
                       ],
                     ),
@@ -316,6 +321,8 @@ class _AiSpotDetailScreenState extends State<AiSpotDetailScreen> {
             city: _place!.city,
             district: _place!.district,
             province: _place!.province,
+            // ★ v2.1.57：地址卡标题要带省（河南省·禹州市），用户明确要求
+            withProvince: true,
           );
     return Material(
       color: Colors.white.withOpacity(0.045),
@@ -782,7 +789,105 @@ class _AiSpotDetailScreenState extends State<AiSpotDetailScreen> {
   // ── 怎么钓 ─────────────────────────────────────────────────
   List<Widget> _howToTab() {
     final r = _report;
+    final picks = r.picks;
     return [
+      // ★ v2.1.57：鱼种不再只写死「鲫鱼」一条，按习性给出主攻 + 备选
+      if (picks.isNotEmpty)
+        _sectionCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _sectionHeader(Icons.set_meal_outlined, '适合的鱼种',
+                  trailing: '按习性推荐'),
+              const SizedBox(height: 4),
+              for (var i = 0; i < picks.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 22,
+                        height: 22,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: (i == 0 ? _green : _blue).withOpacity(0.16),
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: Text(
+                          '${i + 1}',
+                          style: TextStyle(
+                              color: i == 0 ? _green : _blue,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Text(picks[i].name,
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w800)),
+                                const SizedBox(width: 6),
+                                Text('匹配 ${picks[i].match}',
+                                    style: TextStyle(
+                                        color: i == 0 ? _green : _dim,
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w700)),
+                                if (i == 0) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: _green.withOpacity(0.18),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text('主攻',
+                                        style: TextStyle(
+                                            color: _green,
+                                            fontSize: 9.5,
+                                            fontWeight: FontWeight.w800)),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            const SizedBox(height: 3),
+                            Text(picks[i].habit,
+                                style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 11.5,
+                                    height: 1.5)),
+                            if (picks[i].why.isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Text(picks[i].why,
+                                  style: TextStyle(
+                                      color: _dim.withOpacity(0.9),
+                                      fontSize: 10.5,
+                                      height: 1.5)),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 10),
+              Text(
+                '排序依据：当前水温是否落在该鱼舒适区（70%）、现在是否在它的开口时段（20%）、'
+                '今天的风浪是否合它性子（10%）。',
+                style: TextStyle(
+                    color: _dim.withOpacity(0.85), fontSize: 10.5, height: 1.5),
+              ),
+            ],
+          ),
+        ),
       _sectionCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
