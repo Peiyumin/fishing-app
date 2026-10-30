@@ -83,6 +83,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   /// 作者关注状态（详情页作者行右侧「关注」，交给 FollowButton 维护）
   bool _following = false;
 
+  /// 饵料及鱼竿说明（v2.1.57）：作者可填，别人只读
+  String _gear = '';
+
   /// 这条渔获能不能关注作者
   ///
   /// ★ v2.1.49：必须再判 `userId` 非空。以前只判 `isMe`，一旦 userId 是空串
@@ -126,6 +129,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     super.initState();
     _post = widget.post;
     _following = widget.post.isFollowing;
+    _gear = widget.post.gear;
     _loadComments();
     _trackView();
     _loadWeather();
@@ -422,10 +426,31 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
   /// 封面副行大字：没有长度/重量字段，就用「条数 + 鱼种数」——
   /// 结构和大字+小单位一致，但不编造 cm/kg。
-  String get _bigNum => '${_post.catchTotal <= 0 ? 1 : _post.catchTotal}';
-  String get _bigUnit => '尾';
+  String get _bigNum => '${_post.catchTotal <= 0 ? 1 : _post.catchTotal}';  String get _bigUnit => '尾';
   String get _bigNum2 => '${_post.fish.isEmpty ? 1 : _post.fish.length}';
   String get _bigUnit2 => '种';
+
+  /// 识别最多的鱼种（v2.1.57）
+  ///
+  /// 用户要求：「以图片识别最多的鱼种显示，然后在鱼种下面写明为最多」。
+  /// `posts.fish` 里的每条是 `{'name':'鲫鱼','count':2}`，按 count 取最大；
+  /// 并列时保留**先出现**的那条（AI 识别结果本身按置信度排序，先出现的更可信），
+  /// 不能靠 Map 遍历顺序碰运气。
+  String get _topSpecies {
+    var best = '';
+    var bestN = -1;
+    for (final f in _post.fish) {
+      final n = (f['name'] ?? '').toString().trim();
+      if (n.isEmpty) continue;
+      final raw = f['count'];
+      final c = raw is num ? raw.toInt() : (int.tryParse('$raw') ?? 1);
+      if (c > bestN) {
+        bestN = c;
+        best = n;
+      }
+    }
+    return best;
+  }
 
   /// 时段文案（上午 / 下午 / 傍晚 / 夜里）
   String get _dayPart {
@@ -928,7 +953,15 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             children: [
               _statCol('$_bigNum$_bigUnit', '本贴渔获', AppTheme.primary),
               _vline(),
-              _statCol('$_bigNum2$_bigUnit2', '鱼种数', AppTheme.primary),
+              // ★ v2.1.57：中间那列从「1种 / 鱼种数」改成「鲫鱼 / 2 种·最多」，
+              //   让一眼看到这条渔获主要是什么鱼
+              _statCol(
+                _topSpecies.isEmpty ? '$_bigNum2$_bigUnit2' : _topSpecies,
+                _topSpecies.isEmpty
+                    ? '鱼种数'
+                    : '$_bigNum2$_bigUnit2 · 最多',
+                AppTheme.primary,
+              ),
               _vline(),
               _statWeight(),
             ],
@@ -938,8 +971,119 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     );
   }
 
-  Widget _vline() => Container(width: 1, height: 26, color: AppTheme.divider);
+  // ══════════════════════ 饵料 & 鱼竿（v2.1.57） ══════════════════════
 
+  /// 饵料及鱼竿说明卡
+  ///
+  /// 位置按用户要求放在「头像名字主卡」正下方。作者本人可以填写/修改，
+  /// 其他人只读；作者没填时本人看到的是引导文案，别人看到「还没有填写」。
+  Widget _gearCard() {
+    final text = _gear.trim();
+    final has = text.isNotEmpty;
+    final canEdit = _post.isMe && ApiConfig.enabled;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.fromLTRB(14, 10, 8, 13),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.set_meal_outlined,
+                  size: 15, color: AppTheme.primary),
+              const SizedBox(width: 6),
+              const Text('饵料 & 鱼竿',
+                  style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.textPrimary)),
+              const Spacer(),
+              if (canEdit)
+                SizedBox(
+                  height: 26,
+                  child: TextButton(
+                    onPressed: _editGear,
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      foregroundColor: AppTheme.primary,
+                    ),
+                    child: Text(has ? '修改' : '填写',
+                        style: const TextStyle(
+                            fontSize: 12, fontWeight: FontWeight.w700)),
+                  ),
+                )
+              else
+                const SizedBox(width: 6),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: Text(
+              has
+                  ? text
+                  : (canEdit
+                      ? '写下这次用的饵料和鱼竿，别人看渔获时也能参考。'
+                      : '作者还没有填写饵料和鱼竿'),
+              style: TextStyle(
+                fontSize: 12.5,
+                height: 1.6,
+                color: has ? AppTheme.textPrimary : AppTheme.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 填写 / 修改饵料鱼竿（作者本人）
+  Future<void> _editGear() async {
+    final ctrl = TextEditingController(text: _gear);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('饵料 & 鱼竿'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLines: 4,
+          maxLength: 200,
+          decoration: const InputDecoration(
+            hintText: '例：腥香拉饵 + 3.9 米 28 调手竿，1.2 主线 / 0.6 子线',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('保存')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      final saved = await PostService.saveGear(_post.id, ctrl.text.trim());
+      if (!mounted) return;
+      setState(() => _gear = saved);
+      CenterToast.show(context, '已保存');
+    } catch (e) {
+      if (!mounted) return;
+      CenterToast.show(context, '保存失败，请稍后再试');
+    }
+  }
+
+  Widget _vline() => Container(width: 1, height: 26, color: AppTheme.divider);
   Widget _statCol(String value, String label, Color color) {
     return Expanded(
       child: Column(
@@ -2114,6 +2258,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                       const SizedBox(height: 4),
                       _gallery(),
                       _authorCard(),
+                      if (_post.isCatch) _gearCard(),
                       _waterCard(),
                       _statsCard(),
                       // _praiseBar() 已按用户要求下线：点赞不占评论区的位置
