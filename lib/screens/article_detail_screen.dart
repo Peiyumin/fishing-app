@@ -83,6 +83,8 @@ class _ArticleDetailScreenState extends State<ArticleDetailScreen> {
       city: p.city,
       district: p.district,
       province: p.province,
+      // ★ v2.1.57：作者名下面要「河南省·禹州市」这种带省的写法
+      withProvince: true,
     );
     if (mounted && c.isNotEmpty) setState(() => _county = c);
   }
