@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import '../models/fishing_species.dart';
 import '../models/weather_forecast.dart';
 import 'ai_spot_service.dart';
+import 'species_advisor.dart';
 
 /// AI 分析报告的图标语义（纯数据层不依赖 Flutter，映射在 UI 里做）
 enum AiIcon {
@@ -72,7 +73,16 @@ class AiTactic {
 class AiReport {
   final int score;
   final String grade;
+
+  /// 主攻鱼种名（= [picks] 第一条，保留给只想要一个名字的地方用）
   final String species;
+
+  /// 按鱼种习性推荐出来的鱼种（v2.1.57，从高到低，默认 3 条）
+  ///
+  /// 以前这里只有一个写死的「鲫鱼」：26℃ 的水还是让你钓鲫鱼，明显不对。
+  /// 现在由 [SpeciesAdvisor] 按水温 / 时段 / 风浪逐条打分。
+  final List<SpeciesPick> picks;
+
   final String mode;
   final String headline;
   final String windowText;
@@ -93,6 +103,7 @@ class AiReport {
     required this.score,
     required this.grade,
     required this.species,
+    this.picks = const [],
     required this.mode,
     required this.headline,
     required this.windowText,
@@ -132,10 +143,16 @@ class AiReport {
     DateTime? asOf,
   }) {
     final now = asOf ?? DateTime.now();
-    final sp = targetSpecies;
+    // ★ v2.1.57：基础分用的目标鱼固定为鲫鱼（与雷达列表一致），
+    //   报告正文里「主攻」哪条鱼由下面的习性推荐决定。若这里改用推荐鱼种，
+    //   同一份天气会算出另一个基础分，列表与详情又会打架。
+    var sp = targetSpecies;
     final mode = targetMode;
 
-    final idx = bundle == null ? -1 : bundle.indexOfCurrentHour(now);
+    // ★ 和雷达列表用**同一套取小时口径**（hourNear / indexOfHourNear）。
+    //   列表扫描时走的是「最近整点」，报告原来走的是「当前整点」：
+    //   9:48 扫描取 10:00、详情取 9:00，两边水温/气压不同 → 列表 64、详情 74。
+    final idx = bundle == null ? -1 : bundle.indexOfHourNear(now);
     final HourPoint? h =
         (bundle != null && idx >= 0 && idx < bundle.hours.length)
             ? bundle.hours[idx]
@@ -158,18 +175,30 @@ class AiReport {
       bearingFromMe: bearing,
       windFrom: windFrom,
     );
-    // ★ 没有天气时不能拿 55 分兜底去重算：那样雷达列表显示 80、详情页显示 58，
-    //   用户立刻发现「AI 自己跟自己打架」。这时沿用扫描时的分数，
-    //   把差额并进基础分，并在「评分」页如实写明是沿用值。
-    if (bundle == null) {
-      final rest = parts.water + parts.wind + parts.distance;
-      parts = AiScoreParts(
-        base: (spot.score - rest).clamp(0, 100),
-        water: parts.water,
-        wind: parts.wind,
-        distance: parts.distance,
-      );
-    }
+    // ★ 详情页分数必须与雷达列表**完全一致**。
+    //   列表那个数字是扫描那一刻算好后存进 [AiSpot.score] 的，详情页再算一遍
+    //   只要有一项输入不同（取到的小时、风、天气刷新过）就会差几分 ——
+    //   用户看到「列表 64 / 详情 74」只会觉得 AI 在瞎编。
+    //   所以这里始终以列表分数为准：把差额并进「天气基础分」，
+    //   四项相加恰好等于列表那个数，评分页依然能如实展示每一项加减了几分。
+    final rest = parts.water + parts.wind + parts.distance;
+    parts = AiScoreParts(
+      base: (spot.score - rest).clamp(0, 100),
+      water: parts.water,
+      wind: parts.wind,
+      distance: parts.distance,
+    );
+    // 最终得分直接用列表分数（不拿 parts.total 反算，避免 clamp 之后差 1 分）
+    final total = spot.score;
+
+    // ★ 按鱼种习性推荐（v2.1.57）：水温 / 时段 / 风浪三个维度打分
+    final picks = SpeciesAdvisor.recommend(
+      waterTemp: w.temp,
+      hour: now.hour,
+      windLevel: AiSpotService.beaufortOf(windMs),
+      mode: mode.name,
+    );
+    if (picks.isNotEmpty) sp = _speciesByName(picks.first.name);
 
     // ── 黄金小时：今天 5:00~20:00 里指数最高的 3 个小时 ──
     final today = bundle == null ? const <HourPoint>[] : bundle.hoursOf(now);
@@ -364,7 +393,7 @@ class AiReport {
         parts.base,
         bundle == null
             ? '当前拿不到逐时天气，沿用扫描时的分数'
-            : '气压 / 水温 / 溶氧 / 风 / 时段综合，和天气页同一个算法',
+            : '气压 / 水温 / 溶氧 / 风 / 时段综合，与扫描列表同一时刻',
       ),
       AiScorePart(
         '水体类型',
@@ -392,7 +421,7 @@ class AiReport {
       ),
     ];
 
-    final headline = switch (parts.total) {
+    final headline = switch (total) {
       >= 85 => '今天这一片里最值得先试的一号位，条件基本到位。',
       >= 75 => '值得跑一趟，重点守黄金时段。',
       >= 60 => '可以去，别抱太高期望，主攻早晚。',
@@ -400,9 +429,10 @@ class AiReport {
     };
 
     return AiReport(
-      score: parts.total,
-      grade: gradeOf(parts.total),
+      score: total,
+      grade: gradeOf(total),
       species: sp.name,
+      picks: picks,
       mode: mode.name,
       headline: headline,
       windowText: windowText,
@@ -419,8 +449,15 @@ class AiReport {
     );
   }
 
-  static String _season(int month) {
-    if (month >= 3 && month <= 5) return '春';
+  /// 按名字取回鱼种定义（找不到就退回默认目标鱼，不让报告整个挂掉）
+  static FishingSpecies _speciesByName(String name) {
+    for (final s in FishingSpecies.all) {
+      if (s.name == name) return s;
+    }
+    return FishingSpecies.all.first;
+  }
+
+  static String _season(int month) {    if (month >= 3 && month <= 5) return '春';
     if (month >= 6 && month <= 8) return '夏';
     if (month >= 9 && month <= 11) return '秋';
     return '冬';
