@@ -53,6 +53,7 @@ const _inkLine = AppTheme.inkLine;
 
 /// 高亮：荧光黄绿（深底上唯一的彩色，用于大数字/进度）
 const _hi = AppTheme.inkHi;
+
 /// 次高亮：同色系的暗一档（和天气页刻度条的「半满」同一值）
 const _hiDim = AppTheme.accentMid;
 
@@ -232,8 +233,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           final i = hist.indexOfCurrentHour(at);
           // indexOfCurrentHour 找不到会退回「最近的一小时」，那可能就是现在 ——
           // 必须核对差距，否则等于又拿当前天气冒充发布时天气。
-          final hit = i >= 0 &&
-              hist.hours[i].time.difference(at).inHours.abs() <= 1;
+          final hit =
+              i >= 0 && hist.hours[i].time.difference(at).inHours.abs() <= 1;
           if (hit) {
             final metrics = WaterMetrics.derive(hist.hours);
             setState(() {
@@ -253,7 +254,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     if (mem != null) _applyBundle(mem);
     if (_hour == null) {
       try {
-        final cached = await WeatherService.readCachedForecast(allowStale: true);
+        final cached =
+            await WeatherService.readCachedForecast(allowStale: true);
         if (cached != null && _applyBundle(cached) && mounted) setState(() {});
       } catch (_) {
         // 读缓存失败不算错误，继续走网络
@@ -718,7 +720,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             const SizedBox(width: 6),
             Text('$_mainFish图鉴',
                 style: const TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white)),
             const SizedBox(width: 2),
             const Icon(Icons.chevron_right_rounded,
                 size: 15, color: Colors.white),
@@ -934,8 +938,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     );
   }
 
-  Widget _vline() => Container(
-      width: 1, height: 26, color: AppTheme.divider);
+  Widget _vline() => Container(width: 1, height: 26, color: AppTheme.divider);
 
   Widget _statCol(String value, String label, Color color) {
     return Expanded(
@@ -949,8 +952,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   color: color)),
           const SizedBox(height: 3),
           Text(label,
-              style: const TextStyle(
-                  fontSize: 11, color: AppTheme.textSecondary)),
+              style:
+                  const TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
         ],
       ),
     );
@@ -1078,8 +1081,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                 const SizedBox(width: 3),
                 Text(title,
                     style: TextStyle(
-                        fontSize: 10.5,
-                        color: Colors.white.withOpacity(.62))),
+                        fontSize: 10.5, color: Colors.white.withOpacity(.62))),
               ],
             ),
             const SizedBox(height: 8),
@@ -1115,7 +1117,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    fontSize: 10, fontWeight: FontWeight.w600, color: noteColor)),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: noteColor)),
           ],
         ),
       ),
@@ -1131,37 +1135,37 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
         children: [
           Expanded(
             child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: AppTheme.primarySoft,
-                  borderRadius: BorderRadius.circular(4),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primarySoft,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text('STATS',
+                      style: TextStyle(
+                          fontSize: 9,
+                          height: 1.2,
+                          letterSpacing: .8,
+                          fontWeight: FontWeight.w800,
+                          color: AppTheme.primary)),
                 ),
-                child: const Text('STATS',
-                    style: TextStyle(
-                        fontSize: 9,
-                        height: 1.2,
-                        letterSpacing: .8,
-                        fontWeight: FontWeight.w800,
-                        color: AppTheme.primary)),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _post.isCatch ? '这条渔获的互动' : '这条动态的互动',
-                style: const TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.textPrimary),
-              ),
-              const SizedBox(height: 2),
-              const Text('实时更新',
-                  style:
-                      TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
-            ],
-          ),
+                const SizedBox(height: 6),
+                Text(
+                  _post.isCatch ? '这条渔获的互动' : '这条动态的互动',
+                  style: const TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.textPrimary),
+                ),
+                const SizedBox(height: 2),
+                const Text('实时更新',
+                    style:
+                        TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+              ],
+            ),
           ),
           const SizedBox(width: 10),
           _miniStat('${_post.viewCount}', '浏览', AppTheme.primary),
@@ -1285,17 +1289,15 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                       // 第一个标签是主场景：深色实心；其余浅底
                       color: i == 0 ? AppTheme.textPrimary : AppTheme.surface,
                       borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-                      border: i == 0
-                          ? null
-                          : Border.all(color: AppTheme.border),
+                      border:
+                          i == 0 ? null : Border.all(color: AppTheme.border),
                     ),
                     child: Text(
                       tags[i],
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color:
-                            i == 0 ? Colors.white : AppTheme.textSecondary,
+                        color: i == 0 ? Colors.white : AppTheme.textSecondary,
                       ),
                     ),
                   ),
@@ -1335,7 +1337,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
               border: Border.all(color: AppTheme.primaryBorder),
             ),
             child: const Center(
-              child: Icon(Icons.place_rounded, size: 22, color: AppTheme.primary),
+              child:
+                  Icon(Icons.place_rounded, size: 22, color: AppTheme.primary),
             ),
           ),
           const SizedBox(width: 10),
@@ -1378,8 +1381,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
               ),
               const SizedBox(height: 3),
               const Text('导航',
-                  style: TextStyle(
-                      fontSize: 10, color: AppTheme.textSecondary)),
+                  style:
+                      TextStyle(fontSize: 10, color: AppTheme.textSecondary)),
             ],
           ),
         ],
@@ -1447,12 +1450,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                       //   写「实时」，绝不挂着「捕获时」的牌子。
                       _snap != null
                           ? '捕获时指数 · ${_clockLabel(_post.postedAt)}'
-                          : (_hour == null
-                              ? '实时指数'
-                              : '实时 · ${_hour!.hhmm} 前后'),
+                          : (_hour == null ? '实时指数' : '实时 · ${_hour!.hhmm} 前后'),
                       style: TextStyle(
-                          fontSize: 10.5,
-                          color: Colors.white.withOpacity(.55)),
+                          fontSize: 10.5, color: Colors.white.withOpacity(.55)),
                     ),
                   ],
                 ),
@@ -1470,8 +1470,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
               const SizedBox(width: 6),
               Container(
                 margin: const EdgeInsets.only(top: 8),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                 decoration: BoxDecoration(
                   color: _hi,
                   borderRadius: BorderRadius.circular(5),
@@ -1497,18 +1496,22 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                           ? TextAlign.left
                           : (t == '爆护' ? TextAlign.right : TextAlign.center),
                       style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.white.withOpacity(.45))),
+                          fontSize: 10, color: Colors.white.withOpacity(.45))),
                 ),
             ],
           ),
           const SizedBox(height: 12),
           Row(children: [
-            _indexCell(Icons.thermostat_rounded, '气温',
+            _indexCell(
+                Icons.thermostat_rounded,
+                '气温',
                 _hour == null ? '—' : '${_hour!.temp.toStringAsFixed(1)}',
                 _hour == null ? '' : '℃',
-                _hour == null ? '' : _tempMood(_hour!.temp), _hi),
-            _indexCell(Icons.speed_rounded, '气压',
+                _hour == null ? '' : _tempMood(_hour!.temp),
+                _hi),
+            _indexCell(
+                Icons.speed_rounded,
+                '气压',
                 _hour == null ? '—' : '${_hour!.pressure.toStringAsFixed(1)}',
                 _hour == null ? '' : 'hPa',
                 _hour?.pressureTrend == 'rising'
@@ -1516,28 +1519,34 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     : _hour?.pressureTrend == 'falling'
                         ? '↓ 下降'
                         : '→ 平稳',
-                _hour?.pressureTrend == 'falling'
-                    ? AppTheme.warning
-                    : _hiDim),
-            _indexCell(Icons.air_rounded, '风',
-                _hour == null
-                    ? '—'
-                    : '${beaufortLevel(_hour!.windSpeed)}',
+                _hour?.pressureTrend == 'falling' ? AppTheme.warning : _hiDim),
+            _indexCell(
+                Icons.air_rounded,
+                '风',
+                _hour == null ? '—' : '${beaufortLevel(_hour!.windSpeed)}',
                 _hour == null ? '' : '级',
-                _hour == null ? '' : '${_windDir(_hour!.windDir)}风', _hi),
+                _hour == null ? '' : '${_windDir(_hour!.windDir)}风',
+                _hi),
           ]),
           const SizedBox(height: 8),
           Row(children: [
-            _indexCell(Icons.water_drop_rounded, '水温',
+            _indexCell(
+                Icons.water_drop_rounded,
+                '水温',
                 _wm == null ? '—' : _wm!.temp.toStringAsFixed(1),
                 _wm == null ? '' : '℃',
-                _wm == null ? '' : _tempMood(_wm!.temp), _hiDim),
-            _indexCell(Icons.bubble_chart_rounded, '水氧',
+                _wm == null ? '' : _tempMood(_wm!.temp),
+                _hiDim),
+            _indexCell(
+                Icons.bubble_chart_rounded,
+                '水氧',
                 _wm == null ? '—' : _wm!.oxygen.toStringAsFixed(1),
                 _wm == null ? '' : 'mg/L',
                 _wm == null ? '' : (_wm!.oxygen >= 6 ? '充足' : '一般'),
                 _hi),
-            _indexCell(Icons.cloud_rounded, '天气',
+            _indexCell(
+                Icons.cloud_rounded,
+                '天气',
                 _fw?.description.isNotEmpty == true ? _fw!.description : '—',
                 '',
                 _hour == null ? '' : '${_hour!.precipProb}% 降水',
@@ -1756,8 +1765,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   /// 正文里存的还是「[好鱼！]」这种中文，只有装了新版才认得出是表情 ——
   /// 老版本 / 网页后台看到的仍是能读懂的文字，不会变成乱码。
   Widget _commentBody(String content) {
-    const base = TextStyle(
-        fontSize: 14.5, height: 1.5, color: AppTheme.textPrimary);
+    const base =
+        TextStyle(fontSize: 14.5, height: 1.5, color: AppTheme.textPrimary);
     final only = StickerCodec.single(content);
     if (only != null) {
       // 只有表情：按表情包的大小给（比行内大，一眼能看清图上的字）
@@ -1918,7 +1927,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   _bottomAction(
                     icon: Icons.mode_comment_outlined,
                     label: '${_post.commentCount}',
-                    onTap: () => FocusScope.of(context).requestFocus(FocusNode()),
+                    onTap: () =>
+                        FocusScope.of(context).requestFocus(FocusNode()),
                   ),
                 ],
               ),
@@ -1974,90 +1984,96 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     return ValueListenableBuilder<double>(
       valueListenable: _offVN,
       builder: (_, off, __) {
-        final shellT =
-            stickyShellOpacity(offset: off, coverHeight: _coverH);
+        final shellT = stickyShellOpacity(offset: off, coverHeight: _coverH);
         if (shellT <= 0) return const SizedBox.shrink();
         final top = MediaQuery.of(context).padding.top;
         final barH = top + 46;
-        return Container(
-          height: barH,
-          padding: EdgeInsets.only(top: top, left: 4, right: 6),
-          decoration: BoxDecoration(
-            color: AppTheme.surface.withOpacity(shellT),
-            border: Border(
-                bottom: BorderSide(
-                    color: AppTheme.divider.withOpacity(shellT), width: 1)),
-          ),
-          child: Row(
-            children: [
-              IconButton(
-                iconSize: 20,
-                padding: const EdgeInsets.all(8),
-                constraints: const BoxConstraints(),
-                icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                    color: AppTheme.textPrimary),
-                onPressed: () => Navigator.of(context).maybePop(),
-              ),
-              const SizedBox(width: 2),
-              Expanded(
-                child: ValueListenableBuilder<double>(
-                  valueListenable: _nameTopVN,
-                  builder: (_, nameTop, __) {
-                    // 名字顶部滑到「顶栏下沿 + 12」时开始出现，
-                    // 再往上 36px 完全显示 —— 那一刻卡片里的名字已被遮住。
-                    final infoT = stickyInfoOpacity(
-                      nameTop: nameTop,
-                      barHeight: barH,
-                    );
-                    return IgnorePointer(
-                      ignoring: infoT < .5,
-                      child: Opacity(
-                        opacity: infoT,
-                        child: Row(
-                          children: [
-                            UserAvatar(
-                              url: ApiConfig.mediaUrl(_post.avatarUrl),
-                              userId: _post.userId,
-                              radius: 15,
-                              vipLevel: _post.authorVip,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                _authorName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppTheme.textPrimary),
-                              ),
-                            ),
-                            if (_canFollow) ...[
-                              FollowButton(
-                                userId: _post.userId,
-                                tiny: true,
-                                initialFollowing: _following,
-                                onChanged: (v) => _following = v,
-                              ),
-                              const SizedBox(width: 4),
-                            ],
-                          ],
-                        ),
-                      ),
-                    );
-                  },
+        // ★ 整体 Opacity，而不是只给背景色加 alpha：
+        //   以前背景半透明、返回按钮和「更多」却是不透明的 —— 白栏还在淡入时
+        //   两个黑色图标已经硬生生压在封面上了。
+        return Opacity(
+          opacity: shellT,
+          child: Container(
+            // 测试要判断「白栏到底出没出现」，给它一个稳定的 Key
+            key: const ValueKey('post-sticky-bar'),
+            height: barH,
+            padding: EdgeInsets.only(top: top, left: 4, right: 6),
+            decoration: const BoxDecoration(
+              color: AppTheme.surface,
+              border:
+                  Border(bottom: BorderSide(color: AppTheme.divider, width: 1)),
+            ),
+            child: Row(
+              children: [
+                IconButton(
+                  iconSize: 20,
+                  padding: const EdgeInsets.all(8),
+                  constraints: const BoxConstraints(),
+                  icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                      color: AppTheme.textPrimary),
+                  onPressed: () => Navigator.of(context).maybePop(),
                 ),
-              ),
-              IconButton(
-                iconSize: 20,
-                padding: const EdgeInsets.all(6),
-                constraints: const BoxConstraints(),
-                icon: const Icon(Icons.more_horiz_rounded,
-                    color: AppTheme.textPrimary),
-                onPressed: _showMore,
-              ),
-            ],
+                const SizedBox(width: 2),
+                Expanded(
+                  child: ValueListenableBuilder<double>(
+                    valueListenable: _nameTopVN,
+                    builder: (_, nameTop, __) {
+                      // 名字顶部滑到「顶栏下沿 + 12」时开始出现，
+                      // 再往上 36px 完全显示 —— 那一刻卡片里的名字已被遮住。
+                      final infoT = stickyInfoOpacity(
+                        nameTop: nameTop,
+                        barHeight: barH,
+                      );
+                      return IgnorePointer(
+                        ignoring: infoT < .5,
+                        child: Opacity(
+                          opacity: infoT,
+                          child: Row(
+                            children: [
+                              UserAvatar(
+                                url: ApiConfig.mediaUrl(_post.avatarUrl),
+                                userId: _post.userId,
+                                radius: 15,
+                                vipLevel: _post.authorVip,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _authorName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppTheme.textPrimary),
+                                ),
+                              ),
+                              if (_canFollow) ...[
+                                FollowButton(
+                                  userId: _post.userId,
+                                  tiny: true,
+                                  initialFollowing: _following,
+                                  onChanged: (v) => _following = v,
+                                ),
+                                const SizedBox(width: 4),
+                              ],
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                IconButton(
+                  iconSize: 20,
+                  padding: const EdgeInsets.all(6),
+                  constraints: const BoxConstraints(),
+                  icon: const Icon(Icons.more_horiz_rounded,
+                      color: AppTheme.textPrimary),
+                  onPressed: _showMore,
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -2076,103 +2092,105 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             controller: _scroll,
             padding: EdgeInsets.zero,
             children: [
-            // 封面 + 内容区上浮圆角
-            Stack(
-              children: [
-                _cover(),
-                SizedBox(height: 0),
-              ],
-            ),
-            Transform.translate(
-              offset: const Offset(0, -18),
-              child: Container(
-                decoration: const BoxDecoration(
-                  color: AppTheme.background,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                ),
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 4),
-                    _gallery(),
-                    _authorCard(),
-                    _waterCard(),
-                    _statsCard(),
-                    // _praiseBar() 已按用户要求下线：点赞不占评论区的位置
-                    // 正文
-                    if ((_post.body ?? '').trim().isNotEmpty)
+              // 封面 + 内容区上浮圆角
+              Stack(
+                children: [
+                  _cover(),
+                  SizedBox(height: 0),
+                ],
+              ),
+              Transform.translate(
+                offset: const Offset(0, -18),
+                child: Container(
+                  decoration: const BoxDecoration(
+                    color: AppTheme.background,
+                    borderRadius:
+                        BorderRadius.vertical(top: Radius.circular(20)),
+                  ),
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 4),
+                      _gallery(),
+                      _authorCard(),
+                      _waterCard(),
+                      _statsCard(),
+                      // _praiseBar() 已按用户要求下线：点赞不占评论区的位置
+                      // 正文
+                      if ((_post.body ?? '').trim().isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                          child: Text(
+                            _post.body!,
+                            style: const TextStyle(
+                              fontSize: 15.5,
+                              height: 1.68,
+                              color: AppTheme.textPrimary,
+                            ),
+                          ),
+                        ),
+                      _tagsRow(),
+                      _spotCard(),
+                      _indexCard(),
+                      const SizedBox(height: 16),
+                      // 评论
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                        child: Text(
-                          _post.body!,
-                          style: const TextStyle(
-                            fontSize: 15.5,
-                            height: 1.68,
-                            color: AppTheme.textPrimary,
-                          ),
+                        padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
+                        child: Row(
+                          children: [
+                            const Text('评论',
+                                style: TextStyle(
+                                    fontSize: 15.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: AppTheme.textPrimary)),
+                            const SizedBox(width: 5),
+                            const Text('COMMENTS',
+                                style: TextStyle(
+                                    fontSize: 10,
+                                    letterSpacing: .8,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppTheme.textSecondary)),
+                            const Spacer(),
+                            Text('${_post.commentCount} 条',
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    color: AppTheme.textSecondary)),
+                            const Icon(Icons.keyboard_arrow_down_rounded,
+                                size: 18, color: AppTheme.textSecondary),
+                          ],
                         ),
                       ),
-                    _tagsRow(),
-                    _spotCard(),
-                    _indexCard(),
-                    const SizedBox(height: 16),
-                    // 评论
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
-                      child: Row(
-                        children: [
-                          const Text('评论',
-                              style: TextStyle(
-                                  fontSize: 15.5,
-                                  fontWeight: FontWeight.w800,
-                                  color: AppTheme.textPrimary)),
-                          const SizedBox(width: 5),
-                          const Text('COMMENTS',
-                              style: TextStyle(
-                                  fontSize: 10,
-                                  letterSpacing: .8,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppTheme.textSecondary)),
-                          const Spacer(),
-                          Text('${_post.commentCount} 条',
-                              style: const TextStyle(
-                                  fontSize: 12,
-                                  color: AppTheme.textSecondary)),
-                          const Icon(Icons.keyboard_arrow_down_rounded,
-                              size: 18, color: AppTheme.textSecondary),
-                        ],
-                      ),
-                    ),
-                    if (_loading)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 24),
-                        child: Center(
-                          child: SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: AppTheme.primaryBorder),
+                      if (_loading)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 24),
+                          child: Center(
+                            child: SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppTheme.primaryBorder),
+                            ),
                           ),
-                        ),
-                      )
-                    else if (_comments.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 30),
-                        child: Center(
-                          child: Text('还没有评论，来抢沙发',
-                              style: TextStyle(
-                                  fontSize: 13,
-                                  color: AppTheme.textSecondary)),
-                        ),
-                      )
-                    else
-                      ..._comments.map(_commentTile),
-                    const SizedBox(height: 100),
-                  ],
+                        )
+                      else if (_comments.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 30),
+                          child: Center(
+                            child: Text('还没有评论，来抢沙发',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    color: AppTheme.textSecondary)),
+                          ),
+                        )
+                      else
+                        ..._comments.map(_commentTile),
+                      const SizedBox(height: 100),
+                    ],
+                  ),
                 ),
               ),
-            ),
             ],
           ),
           // 吸顶作者条（滚过封面才出现）
