@@ -377,6 +377,9 @@ class AiSpotService {
     return 6;
   }
 
+  /// 对外暴露的风级（v2.1.57：鱼种习性推荐要按风级判断喜风浪）
+  static int beaufortOf(double ms) => _beaufort(ms);
+
   /// 从 A 看 B 的方位角（0=北，顺时针）
   static double _bearing(double lat1, double lng1, double lat2, double lng2) {
     final p1 = lat1 * math.pi / 180;
