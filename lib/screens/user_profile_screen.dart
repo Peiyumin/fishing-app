@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
@@ -124,89 +125,153 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Widget _header(UserProfile? p) {
+    final cover = p?.cover;
+    final hasCover = cover != null && cover.isNotEmpty;
     return Container(
-      padding: const EdgeInsets.all(20),
       color: AppTheme.primary,
-      child: Column(
+      child: Stack(
         children: [
-          Row(
-            children: [
-              UserAvatar(
-                url: p?.avatar,
-                userId: p?.id,
-                radius: 34,
-                vipLevel: p?.vip.level,
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(p?.nickname ?? '钓友',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 4),
-                    if (p != null && p.bio.trim().isNotEmpty)
-                      Text(p.bio.trim(),
-                          style: const TextStyle(
-                              color: Colors.white70, fontSize: 13)),
-                    const SizedBox(height: 8),
-                    if (!(p?.isMe ?? false))
-                      Row(
-                        children: [
-                          FollowButton(
-                            userId: widget.userId,
-                            initialFollowing: p?.isFollowing ?? false,
-                            isMe: p?.isMe ?? false,
-                            onChanged: (f) => _load(),
-                          ),
-                          const SizedBox(width: 10),
-                          OutlinedButton.icon(
-                            onPressed: _openChat,
-                            icon: const Icon(Icons.chat_bubble_outline, size: 16),
-                            label: const Text('私信'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.white,
-                              side: const BorderSide(color: Colors.white70),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+          // 背景图（v2.1.56）：设置过就铺满，所有人看到的都是同一张
+          Positioned.fill(
+            child: hasCover
+                ? CachedNetworkImage(
+                    imageUrl: cover,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => const DecoratedBox(
+                        decoration: BoxDecoration(gradient: AppTheme.brandGradient),
+                        child: SizedBox.expand()),
+                    errorWidget: (_, __, ___) => const DecoratedBox(
+                        decoration: BoxDecoration(gradient: AppTheme.brandGradient),
+                        child: SizedBox.expand()),
+                  )
+                : const DecoratedBox(
+                    decoration: BoxDecoration(gradient: AppTheme.brandGradient),
+                    child: SizedBox.expand(),
+                  ),
+          ),
+          // 压暗：白字压在任意一张照片上都要读得清
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.30),
+                    Colors.black.withOpacity(0.55),
                   ],
                 ),
               ),
-            ],
+            ),
           ),
-          const SizedBox(height: 16),
-          // 关注 / 粉丝 / 发布
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _count('关注', p?.followingCount ?? 0, () {
-                Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => FollowListScreen(
-                    userId: widget.userId,
-                    title: '关注',
-                    followers: false,
-                  ),
-                ));
-              }),
-              _count('粉丝', p?.followerCount ?? 0, () {
-                Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => FollowListScreen(
-                    userId: widget.userId,
-                    title: '粉丝',
-                    followers: true,
-                  ),
-                ));
-              }),
-              _count('发布', p?.postCount ?? _posts.length, null),
-            ],
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    UserAvatar(
+                      url: p?.avatar,
+                      userId: p?.id,
+                      radius: 34,
+                      vipLevel: p?.vip.level,
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(p?.nickname ?? '钓友',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 4),
+                          if (p != null && p.bio.trim().isNotEmpty)
+                            Text(p.bio.trim(),
+                                style: const TextStyle(
+                                    color: Colors.white70, fontSize: 13)),
+                          const SizedBox(height: 8),
+                          if (!(p?.isMe ?? false))
+                            Row(
+                              children: [
+                                // ★ 两个按钮统一 36 高、药丸圆角（v2.1.56）
+                                //   原来是 关注 32 高 + 私信 默认高、圆角一个 16
+                                //   一个 20，截图里一高一矮明显不对齐
+                                FollowButton(
+                                  userId: widget.userId,
+                                  initialFollowing: p?.isFollowing ?? false,
+                                  isMe: p?.isMe ?? false,
+                                  height: 36,
+                                  // ★ 这个页面头像是压在深色背景图上的，
+                                  //   默认的「深色底 + 白字」几乎看不见（截图里
+                                  //   只剩一个「关注」浮在暗部）。用描边白底，
+                                  //   未关注是白底黑字、已关注是浅灰底灰字。
+                                  outline: true,
+                                  onChanged: (f) => _load(),
+                                ),
+                                const SizedBox(width: 10),
+                                SizedBox(
+                                  height: 36,
+                                  child: OutlinedButton.icon(
+                                    onPressed: _openChat,
+                                    icon: const Icon(Icons.chat_bubble_outline,
+                                        size: 15),
+                                    label: const Text('私信',
+                                        style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600)),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: Colors.white,
+                                      side: const BorderSide(
+                                          color: Colors.white70),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 14),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(18),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                // 关注 / 粉丝 / 发布
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _count('关注', p?.followingCount ?? 0, () {
+                      Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => FollowListScreen(
+                          userId: widget.userId,
+                          title: '关注',
+                          followers: false,
+                        ),
+                      ));
+                    }),
+                    _count('粉丝', p?.followerCount ?? 0, () {
+                      Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => FollowListScreen(
+                          userId: widget.userId,
+                          title: '粉丝',
+                          followers: true,
+                        ),
+                      ));
+                    }),
+                    _count('发布', p?.postCount ?? _posts.length, null),
+                  ],
+                ),
+              ],
+            ),
           ),
         ],
       ),
