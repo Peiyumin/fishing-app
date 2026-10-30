@@ -12,12 +12,15 @@ import '../models/user_profile.dart';
 import '../services/api_config.dart';
 import '../services/fish_service.dart';
 import '../services/follow_service.dart';
+import '../services/geo_place.dart';
+import '../services/location_service.dart';
 import '../services/post_service.dart';
 import '../services/profile_service.dart';
 import '../services/refresh_bus.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/fish_dex_card.dart';
+import '../utils/county_label.dart';
 import '../widgets/user_avatar.dart';
 import 'auth_screen.dart';
 import 'edit_profile_screen.dart';
@@ -39,7 +42,14 @@ import '../utils/json_num.dart';
 ///   → 徽章行 → 五项数据（作品/喜欢/关注/粉丝/积分）→ 会员条
 ///   → 我的订单/卡券 → 我的服务宫格 → 智能服务条 → 两张活动卡 → 我的发布
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  const ProfileScreen({super.key, this.debugMe, this.debugRegPlace});
+
+  /// 截图/测试用：直接给一份资料，省掉网络请求。
+  /// 线上永远为 null，走的还是 `_loadMe()` 那条真实链路。
+  final UserProfile? debugMe;
+
+  /// 截图/测试用：直接给一个注册地文案（线上为 null）
+  final String? debugRegPlace;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -48,6 +58,9 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   List<Post> _myPosts = [];
   UserProfile? _me;
+
+  /// 注册地（v2.1.57）：优先后端记录，没有就按当前定位补一份
+  String _regPlace = '';
 
   ProfilePageConfig _cfg = ProfilePageConfig.defaults;
   FishGuide _guide = FishService.fallback;
@@ -59,6 +72,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.debugMe != null) _me = widget.debugMe;
+    if (widget.debugRegPlace != null) _regPlace = widget.debugRegPlace!;
     // 积分兑换 / 发布渔获后刷新资料（积分余额要跟着变）
     RefreshBus.profileTick.addListener(_onProfileTick);
     RefreshBus.feedTick.addListener(_onFeedTick);
@@ -132,6 +147,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
     } catch (_) {
       // 关注功能未启用：忽略，计数行不显示
+    }
+    await _loadRegPlace();
+  }
+
+  /// 注册地：后端的 regPlace 优先；空的话（老账号 / 未升级后端）就用当前
+  /// 定位补一个，并且只显示不强行写库 —— 写库那条路在 SessionProvider 里，
+  /// 服务端只在 reg_place 为空时接受。
+  Future<void> _loadRegPlace() async {
+    final saved = _me?.regPlace ?? '';
+    if (saved.isNotEmpty) {
+      if (mounted && saved != _regPlace) setState(() => _regPlace = saved);
+      return;
+    }
+    if (_regPlace.isNotEmpty) return;
+    try {
+      if (!await LocationService.hasPermission()) return;
+      final p = await GeoPlace.current();
+      if (p == null || p.isEmpty) return;
+      final place = countyLabel(
+        city: p.city,
+        district: p.district,
+        province: p.province,
+        withProvince: true,
+      );
+      if (mounted && place.isNotEmpty) setState(() => _regPlace = place);
+    } catch (_) {
+      // 定位失败就不显示这一行，不编地名
     }
   }
 
@@ -410,6 +452,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       ),
                     ),
+                    // ★ v2.1.57：等级徽章（用户要求个人主页显示等级）
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primary.withOpacity(0.10),
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: Text(
+                        'LV${_me?.level ?? 1}',
+                        style: const TextStyle(
+                            fontSize: 10,
+                            height: 1.5,
+                            fontWeight: FontWeight.w800,
+                            color: AppTheme.primary),
+                      ),
+                    ),
                     if (vip.isVip) ...[
                       const SizedBox(width: 6),
                       Container(
@@ -453,6 +513,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       color: AppTheme.textSecondary),
                 ),
                 const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(Icons.place_outlined,
+                        size: 12, color: AppTheme.textSecondary),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        _regPlace.isNotEmpty ? _regPlace : '定位未开启',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 11.5, color: AppTheme.textSecondary),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
                 Row(
                   children: [
                     Icon(Icons.badge_outlined,
