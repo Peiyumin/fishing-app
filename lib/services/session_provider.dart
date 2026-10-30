@@ -20,6 +20,7 @@ class SessionProvider extends ChangeNotifier {
   static const _kUserId = 'session_user_id';
   static const _kNickname = 'session_nickname';
   static const _kAvatar = 'session_avatar';
+  static const _kCover = 'session_cover';
   static const _kBio = 'session_bio';
   static const _kVipLevel = 'session_vip_level';
   static const _kVipName = 'session_vip_name';
@@ -31,6 +32,7 @@ class SessionProvider extends ChangeNotifier {
   String? _userId;
   String? _nickname;
   String? _avatar;
+  String? _cover;
   String? _bio;
   int _vipLevel = 0;
   String _vipName = '';
@@ -57,6 +59,9 @@ class SessionProvider extends ChangeNotifier {
   }
   String? get nickname => _nickname;
   String? get avatar => _avatar;
+
+  /// 个人主页背景图（原始相对路径）
+  String? get cover => _cover;
   String? get bio => _bio;
 
   /// 当前登录用户的会员样式（用于头像会员框等）
@@ -71,6 +76,14 @@ class SessionProvider extends ChangeNotifier {
   /// 头像的完整可访问地址（相对路径自动拼站点根，绝对地址自动修端口）
   String? get avatarUrl => ApiConfig.mediaUrl(_avatar);
 
+  /// 背景图完整地址（没设置过返回 null，调用方走默认渐变）
+  String? get coverUrl {
+    final c = _cover;
+    if (c == null || c.trim().isEmpty) return null;
+    final u = ApiConfig.mediaUrl(c);
+    return (u == null || u.isEmpty) ? null : u;
+  }
+
   /// 启动时从本地恢复登录态（在 runApp 前调用）
   Future<void> restore() async {
     final prefs = await SharedPreferences.getInstance();
@@ -78,6 +91,7 @@ class SessionProvider extends ChangeNotifier {
     _userId = prefs.getString(_kUserId);
     _nickname = prefs.getString(_kNickname);
     _avatar = prefs.getString(_kAvatar);
+    _cover = prefs.getString(_kCover);
     _bio = prefs.getString(_kBio);
     _vipLevel = prefs.getInt(_kVipLevel) ?? 0;
     _vipName = prefs.getString(_kVipName) ?? '';
@@ -153,6 +167,7 @@ class SessionProvider extends ChangeNotifier {
     _userId = data['id'] as String?;
     _nickname = (data['nickname'] as String?) ?? '钓友';
     _avatar = data['avatar'] as String?;
+    if (data['cover'] != null) _cover = data['cover'] as String?;
     if (data['bio'] != null) _bio = data['bio'] as String?;
     _vipLevel = jsonInt(data['vipLevel']) ?? 0;
     _vipName = (data['vipName'] as String?) ?? '';
@@ -168,6 +183,7 @@ class SessionProvider extends ChangeNotifier {
     await prefs.setString(_kUserId, _userId ?? '');
     await prefs.setString(_kNickname, _nickname ?? '');
     await prefs.setString(_kAvatar, _avatar ?? '');
+    await prefs.setString(_kCover, _cover ?? '');
     await prefs.setString(_kBio, _bio ?? '');
     await prefs.setInt(_kVipLevel, _vipLevel);
     await prefs.setString(_kVipName, _vipName);
@@ -184,15 +200,17 @@ class SessionProvider extends ChangeNotifier {
 
   /// 修改我的资料（昵称 / 头像 / 个性签名），成功后同步全局状态与本地缓存
   Future<UserProfile> updateProfile(
-      {String? nickname, String? avatar, String? bio}) async {
+      {String? nickname, String? avatar, String? cover, String? bio}) async {
     final data = jsonMap(await ApiClient.post('/users/me/profile', {
       if (nickname != null) 'nickname': nickname,
       if (avatar != null) 'avatar': avatar,
+      if (cover != null) 'cover': cover,
       if (bio != null) 'bio': bio,
     }));
     final profile = UserProfile.fromJson(Map<String, dynamic>.from(data));
     _nickname = profile.nickname;
     _avatar = profile.avatar;
+    _cover = profile.cover;
     _bio = profile.bio;
     _vipLevel = profile.vip.level;
     _vipName = profile.vip.name;
@@ -203,6 +221,7 @@ class SessionProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kNickname, _nickname ?? '');
     await prefs.setString(_kAvatar, _avatar ?? '');
+    await prefs.setString(_kCover, _cover ?? '');
     await prefs.setString(_kBio, _bio ?? '');
     await prefs.setInt(_kVipLevel, _vipLevel);
     await prefs.setString(_kVipName, _vipName);
@@ -227,6 +246,7 @@ class SessionProvider extends ChangeNotifier {
     _userId = null;
     _nickname = null;
     _avatar = null;
+    _cover = null;
     _bio = null;
     _vipLevel = 0;
     _vipName = '';
@@ -241,6 +261,7 @@ class SessionProvider extends ChangeNotifier {
     await prefs.remove(_kUserId);
     await prefs.remove(_kNickname);
     await prefs.remove(_kAvatar);
+    await prefs.remove(_kCover);
     await prefs.remove(_kBio);
     await prefs.remove(_kVipLevel);
     await prefs.remove(_kVipName);
