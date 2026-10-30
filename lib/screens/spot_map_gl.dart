@@ -173,6 +173,11 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   // 算出一批值得去的位置，按「离我由近到远」排序，同时标到地图上。
   List<AiSpot> _aiSpots = const [];
   bool _aiBusy = false;
+
+  /// AI 按钮副标题里的次数提示（v2.1.56）：「剩 2 次 / 已用完 / 会员」
+  ///
+  /// 免费 3 次是硬规则，直接写在按钮上看得到，比点下去才弹窗友好。
+  String _aiQuotaText = '';
   bool _aiDataAdded = false;
 
   /// 要素顶层 id → 钓点 id
@@ -208,6 +213,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     super.initState();
     widget.controller?.bind(_moveTo);
     _loadData();
+    _loadQuotaText();
     MapConfigService.load().then((_) async {
       if (!mounted) return;
       // 先切底图源，_buildStyle() 依赖 _tile
@@ -1572,8 +1578,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
                         fontSize: 14,
                         height: 1.15,
                         fontWeight: FontWeight.w700)),
-                const Text('AI SPOT',
-                    style: TextStyle(
+                Text(
+                    _aiQuotaText.isEmpty ? 'AI SPOT' : 'AI SPOT · $_aiQuotaText',
+                    style: const TextStyle(
                         color: Color(0x99FFFFFF),
                         fontSize: 8,
                         height: 1.2,
@@ -1802,6 +1809,26 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     } catch (_) {}
   }
 
+  /// 拉一次次数提示（不阻断任何操作，纯粹是让按钮显示「剩 N 次」）
+  Future<void> _loadQuotaText() async {
+    try {
+      final sp = Provider.of<SessionProvider>(context, listen: false);
+      if (!sp.isLoggedIn) {
+        if (mounted && _aiQuotaText.isNotEmpty) setState(() => _aiQuotaText = '');
+        return;
+      }
+      if (sp.isMember) {
+        if (mounted) setState(() => _aiQuotaText = '会员');
+        return;
+      }
+      final q = await AiQuotaService.fetch();
+      if (!mounted) return;
+      setState(() => _aiQuotaText = q.canUse ? '剩 ${q.remaining} 次' : '已用完');
+    } catch (_) {
+      // 次数只是提示，拿不到就不显示
+    }
+  }
+
   /// 点「AI 找钓点」：定位 → 全屏雷达扫描（过程可视化）→ 回填标注
   ///
   /// ★ v2.1.49：不再「转个圈直接弹一个白色底部面板」。
@@ -1858,7 +1885,11 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       // 扫出结果才算一次（网络失败/无结果是我们的问题，不该扣用户次数）
       if (result.list.isNotEmpty) {
         final sp = Provider.of<SessionProvider>(context, listen: false);
-        await AiQuotaService.consume(userId: sp.userId);
+        final r = await AiQuotaService.consume(userId: sp.userId);
+        if (mounted && !r.quota.member) {
+          setState(() => _aiQuotaText =
+              r.quota.canUse ? '剩 ${r.quota.remaining} 次' : '已用完');
+        }
       }
       if (!mounted) return;
 
