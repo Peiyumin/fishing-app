@@ -30,6 +30,7 @@ import '../widgets/cover_photo.dart';
 import '../widgets/follow_button.dart';
 import '../utils/json_num.dart';
 import '../utils/size_text.dart';
+import '../utils/sticky_reveal.dart';
 import 'photo_viewer_screen.dart';
 
 // ─────────────────────────────────────────────────────────────
@@ -107,6 +108,14 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   final _offVN = ValueNotifier<double>(0);
   double _coverH = 360;
 
+  /// 作者卡里那个名字在屏幕上的 y 坐标（全局）。
+  ///
+  /// 顶栏里的名字**必须等它滚出屏幕**才出现：否则上下滑动时屏幕上会同时
+  /// 有两处作者名（顶栏一个、卡片一个），看起来就是「重叠」。
+  /// 初值给一个很大的数 = 「还在屏幕下面很远」→ 顶栏先不显示名字。
+  final _nameKey = GlobalKey();
+  final _nameTopVN = ValueNotifier<double>(9999);
+
   /// 封面原图宽高比（高/宽）。拿到才能算「顶对齐只露上面 2/3」要留多高；
   /// null = 还没解出来，先用兜底高度，解出来后 setState 重排一次。
   double? _imgAspect;
@@ -121,7 +130,23 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     _loadWeather();
     _scroll.addListener(() {
       _offVN.value = _scroll.hasClients ? _scroll.offset : 0;
+      _syncNameTop();
     });
+  }
+
+  /// 记录作者卡里名字的屏幕位置（滚动时调）
+  void _syncNameTop() {
+    final ctx = _nameKey.currentContext;
+    if (ctx == null) return;
+    final ro = ctx.findRenderObject();
+    if (ro is! RenderBox || !ro.attached || !ro.hasSize) return;
+    try {
+      final dy = ro.localToGlobal(Offset.zero).dy;
+      // 元素被 Sliver 回收时拿不到位置，保留上一次的值（已经是「滚出去了」）
+      if (dy.isFinite && dy > -4000 && dy < 12000) _nameTopVN.value = dy;
+    } catch (_) {
+      // 布局尚未完成时 localToGlobal 可能抛错，忽略即可，下次滚动再算
+    }
   }
 
   @override
@@ -129,6 +154,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     _ctrl.dispose();
     _scroll.dispose();
     _offVN.dispose();
+    _nameTopVN.dispose();
     super.dispose();
   }
 
@@ -493,6 +519,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                 WidgetsBinding.instance.addPostFrameCallback((_) {
                   if (!mounted || _imgAspect != null) return;
                   setState(() => _imgAspect = ar);
+                  // 封面高度变了，作者名的屏幕位置也跟着变，重算一次
+                  WidgetsBinding.instance
+                      .addPostFrameCallback((_) => _syncNameTop());
                 });
               },
             )
@@ -833,8 +862,10 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     Row(
                       children: [
                         Flexible(
+                          // ★ 顶栏要等这个名字滚出屏幕才敢显示（避免两个名字同屏）
                           child: Text(
                             _authorName,
+                            key: _nameKey,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -1927,74 +1958,106 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
   // ══════════════════════ 吸顶作者条 ══════════════════════
 
-  /// 滚过封面后从顶部浮出的作者条（参考稿的交互）：
+  /// 滚过封面后从顶部浮出的作者条：
   /// 返回 + 头像 + 昵称 + 关注 + 更多，白底 + 底部细线。
+  ///
+  /// ★ v2.1.55 修「重叠」：
+  ///   ① 以前封面还剩 96px 就 `t = 0`、再 80px 就全白 —— 于是白栏是**压在
+  ///      封面的标题/数字上**淡入的，视觉上两块内容糊在一起；
+  ///   ② 更糟的是顶栏里的作者名和下面作者卡里的名字**同时在屏幕上**，
+  ///      两个「不存在的人」上下叠着，用户截图里的重叠就是这个。
+  ///   现在拆成两个进度：
+  ///   - [shellT] 白栏本体：封面**基本滚完**才出现（不再压封面）；
+  ///   - [infoT]  头像/名字/关注：等作者卡里的名字被顶栏盖住之后才渐显
+  ///              （位置由 [_nameKey] 实时测量），屏幕上永远只有一个名字。
   Widget _stickyBar() {
     return ValueListenableBuilder<double>(
       valueListenable: _offVN,
       builder: (_, off, __) {
-        // 封面下沿前 96px 开始渐显，再滚 80px 完全出现
-        final t = ((off - (_coverH - 96)) / 80).clamp(0.0, 1.0);
-        if (t <= 0) return const SizedBox.shrink();
+        final shellT =
+            stickyShellOpacity(offset: off, coverHeight: _coverH);
+        if (shellT <= 0) return const SizedBox.shrink();
         final top = MediaQuery.of(context).padding.top;
-        return Opacity(
-          opacity: t,
-          child: Container(
-            padding: EdgeInsets.only(top: top + 4, bottom: 6, left: 4, right: 6),
-            decoration: BoxDecoration(
-              color: AppTheme.surface.withOpacity(t),
-              border: Border(
-                  bottom: BorderSide(
-                      color: AppTheme.divider.withOpacity(t), width: 1)),
-            ),
-            child: Row(
-              children: [
-                IconButton(
-                  iconSize: 20,
-                  padding: const EdgeInsets.all(8),
-                  constraints: const BoxConstraints(),
-                  icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                      color: AppTheme.textPrimary),
-                  onPressed: () => Navigator.of(context).maybePop(),
+        final barH = top + 46;
+        return Container(
+          height: barH,
+          padding: EdgeInsets.only(top: top, left: 4, right: 6),
+          decoration: BoxDecoration(
+            color: AppTheme.surface.withOpacity(shellT),
+            border: Border(
+                bottom: BorderSide(
+                    color: AppTheme.divider.withOpacity(shellT), width: 1)),
+          ),
+          child: Row(
+            children: [
+              IconButton(
+                iconSize: 20,
+                padding: const EdgeInsets.all(8),
+                constraints: const BoxConstraints(),
+                icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                    color: AppTheme.textPrimary),
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
+              const SizedBox(width: 2),
+              Expanded(
+                child: ValueListenableBuilder<double>(
+                  valueListenable: _nameTopVN,
+                  builder: (_, nameTop, __) {
+                    // 名字顶部滑到「顶栏下沿 + 12」时开始出现，
+                    // 再往上 36px 完全显示 —— 那一刻卡片里的名字已被遮住。
+                    final infoT = stickyInfoOpacity(
+                      nameTop: nameTop,
+                      barHeight: barH,
+                    );
+                    return IgnorePointer(
+                      ignoring: infoT < .5,
+                      child: Opacity(
+                        opacity: infoT,
+                        child: Row(
+                          children: [
+                            UserAvatar(
+                              url: ApiConfig.mediaUrl(_post.avatarUrl),
+                              userId: _post.userId,
+                              radius: 15,
+                              vipLevel: _post.authorVip,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _authorName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppTheme.textPrimary),
+                              ),
+                            ),
+                            if (_canFollow) ...[
+                              FollowButton(
+                                userId: _post.userId,
+                                tiny: true,
+                                initialFollowing: _following,
+                                onChanged: (v) => _following = v,
+                              ),
+                              const SizedBox(width: 4),
+                            ],
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 ),
-                const SizedBox(width: 2),
-                UserAvatar(
-                  url: ApiConfig.mediaUrl(_post.avatarUrl),
-                  userId: _post.userId,
-                  radius: 15,
-                  vipLevel: _post.authorVip,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _authorName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: AppTheme.textPrimary),
-                  ),
-                ),
-                if (_canFollow) ...[
-                  FollowButton(
-                    userId: _post.userId,
-                    tiny: true,
-                    initialFollowing: _following,
-                    onChanged: (v) => _following = v,
-                  ),
-                  const SizedBox(width: 4),
-                ],
-                IconButton(
-                  iconSize: 20,
-                  padding: const EdgeInsets.all(6),
-                  constraints: const BoxConstraints(),
-                  icon: const Icon(Icons.more_horiz_rounded,
-                      color: AppTheme.textPrimary),
-                  onPressed: _showMore,
-                ),
-              ],
-            ),
+              ),
+              IconButton(
+                iconSize: 20,
+                padding: const EdgeInsets.all(6),
+                constraints: const BoxConstraints(),
+                icon: const Icon(Icons.more_horiz_rounded,
+                    color: AppTheme.textPrimary),
+                onPressed: _showMore,
+              ),
+            ],
           ),
         );
       },
@@ -2124,7 +2187,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       valueListenable: _offVN,
       child: page,
       builder: (_, off, child) => AnnotatedRegion<SystemUiOverlayStyle>(
-        value: off > _coverH - 90
+        value: off > _coverH - 24
             ? SystemUiOverlayStyle.dark
             : SystemUiOverlayStyle.light,
         child: child!,
