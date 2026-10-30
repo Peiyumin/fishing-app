@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
@@ -30,6 +31,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _picker = ImagePicker();
 
   String? _avatarPath; // 新选择的本地头像路径
+  String? _coverPath; // 新选择的本地背景图路径（v2.1.56）
+  bool _coverCleared = false; // 用户点了「恢复默认」
   bool _saving = false;
   bool _pwdSaving = false;
   bool _showPwdForm = false;
@@ -62,6 +65,63 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _pickAvatar(ImageSource source) async {
     final x = await _picker.pickImage(source: source, maxWidth: 512, maxHeight: 512, imageQuality: 85);
     if (x != null) setState(() => _avatarPath = x.path);
+  }
+
+  /// 选背景图：宽一点、质量高一点（横图铺满主页顶部）
+  Future<void> _pickCover(ImageSource source) async {
+    final x = await _picker.pickImage(
+      source: source,
+      maxWidth: 1440,
+      maxHeight: 900,
+      imageQuality: 82,
+    );
+    if (x != null) {
+      setState(() {
+        _coverPath = x.path;
+        _coverCleared = false;
+      });
+    }
+  }
+
+  void _showCoverSheet() {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('从相册选择'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickCover(ImageSource.gallery);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined),
+              title: const Text('拍照'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickCover(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.restart_alt),
+              title: const Text('恢复默认背景'),
+              subtitle: const Text('用 App 自带的深绿渐变'),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() {
+                  _coverPath = null;
+                  _coverCleared = true;
+                });
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showAvatarSheet() {
@@ -117,7 +177,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         avatarUrl = await ApiClient.uploadFile(_avatarPath!,
             contentType: 'image/jpeg');
       }
-      await sp.updateProfile(nickname: nick, avatar: avatarUrl, bio: bio);
+      String? coverUrl;
+      if (_coverPath != null) {
+        coverUrl = await ApiClient.uploadFile(_coverPath!,
+            contentType: 'image/jpeg');
+      } else if (_coverCleared) {
+        coverUrl = ''; // 空串 = 清掉背景图，回到默认渐变
+      }
+      await sp.updateProfile(
+        nickname: nick,
+        avatar: avatarUrl,
+        cover: coverUrl,
+        bio: bio,
+      );
       if (mounted) {
         _toast('资料已保存');
         Navigator.of(context).pop();
@@ -162,6 +234,71 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  /// 背景图选择卡（点击整块就能换）
+  Widget _coverCard(SessionProvider sp, bool demo) {
+    final local = _coverPath;
+    final remote = _coverCleared ? null : sp.coverUrl;
+    return GestureDetector(
+      onTap: demo ? null : _showCoverSheet,
+      child: Container(
+        height: 132,
+        width: double.infinity,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+          gradient: AppTheme.brandGradient,
+        ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (local != null)
+              Image.file(File(local), fit: BoxFit.cover)
+            else if (remote != null)
+              CachedNetworkImage(
+                imageUrl: remote,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => const ColoredBox(
+                    color: AppTheme.primaryLight, child: SizedBox.expand()),
+                errorWidget: (_, __, ___) => const SizedBox.shrink(),
+              ),
+            // 底部压暗，白字才看得清
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withOpacity(0.45),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 12,
+              bottom: 10,
+              child: Row(
+                children: [
+                  const Icon(Icons.wallpaper, size: 15, color: Colors.white),
+                  const SizedBox(width: 6),
+                  Text(
+                    (local != null || remote != null) ? '点击更换背景图' : '点击上传背景图',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      shadows: [Shadow(blurRadius: 4, color: Colors.black45)],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final sp = Provider.of<SessionProvider>(context);
@@ -186,6 +323,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               child: const Text('当前为演示模式（未配置后端），资料修改不可用。',
                   style: TextStyle(fontSize: 13, color: Colors.brown)),
             ),
+          // 背景图（v2.1.56：主页顶部大图，所有人都能看到）
+          _coverCard(sp, demo),
+          const SizedBox(height: 6),
+          const Text('背景图会显示在你的主页顶部，别人也能看到',
+              style: TextStyle(fontSize: 11.5, color: Colors.grey)),
+          const SizedBox(height: 18),
           // 头像
           Center(
             child: Stack(
