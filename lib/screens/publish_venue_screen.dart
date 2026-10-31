@@ -390,7 +390,7 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
                               SizedBox(height: 4),
                               Text('添加图片',
                                   style: TextStyle(
-                                      fontSize: 10, color: Colors.grey)),
+                                      fontSize: 10, color: AppTheme.textTertiary)),
                             ],
                           ),
                         ),
@@ -400,7 +400,7 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
                 const SizedBox(height: 6),
                 Text('展示钓场环境实拍，最多 9 张，第一张将作为封面',
                     style: TextStyle(
-                        fontSize: 11, color: Colors.grey.withOpacity(0.9))),
+                        fontSize: 11, color: AppTheme.textTertiary.withOpacity(0.9))),
                 const SizedBox(height: 16),
                 // —— 名称 ——
                 TextField(
