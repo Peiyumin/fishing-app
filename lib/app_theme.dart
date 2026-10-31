@@ -128,7 +128,19 @@ class AppTheme {
   static const double sp8 = 32;
 
   /// 卡片之间的纵向间距（列表页统一用这一档，别一处 10 一处 12）
-  static const double cardGap = 12;
+  ///
+  /// v2.1.61：12 → 8。用户反馈「卡片与卡片之间间距太大」，12pt 连着
+  /// 卡片自己的 12pt 内边距，视觉上会变成一道 24pt 的白沟。
+  static const double cardGap = 8;
+
+  /// 页面左右留白（列表/卡片统一用这一档）
+  ///
+  /// v2.1.61：16 / 12 / 14 三种写法并存的局面收成 10 —— 一行里两列卡片
+  /// 中间 8、两边 16 的话，两侧的缝会明显比中间宽。
+  static const double pagePad = 10;
+
+  /// 双列瀑布流的行列间距
+  static const double gridGap = 8;
 
   static const double fsCaption = 12;
   static const double fsBody = 14;
