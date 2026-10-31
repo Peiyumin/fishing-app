@@ -16,16 +16,19 @@ import 'publish_spot_screen.dart';
 class PublishHubScreen extends StatelessWidget {
   const PublishHubScreen({super.key});
 
-  /// 类别定义：图标 / 名称 / 副标题 / 主题色
+  /// 类别定义：图标 / 名称 / 副标题
+  ///
+  /// 不再给每类配一个主题色：一屏八个高饱和图标是「不协调」的根源，
+  /// 设计稿只有近黑 + 一个荧光黄绿，类别靠图标形状 + 名称区分就够了。
   static const List<_HubItem> _items = [
-    _HubItem('post', Icons.phishing, '发布渔获', '晒渔获晒鱼情', AppTheme.primary),
-    _HubItem('ask', Icons.help_outline, '钓鱼问答', '有问题大家帮', AppTheme.primary),
-    _HubItem('say', Icons.chat_bubble_outline, '随便说说', '点滴心情随记', AppTheme.violet),
-    _HubItem('sell', Icons.sell_outlined, '出售二手', '闲置渔具变现', AppTheme.danger),
-    _HubItem('buy', Icons.shopping_cart_outlined, '求购二手', '发布求购需求', AppTheme.star),
-    _HubItem('venue', Icons.storefront_outlined, '加钓场', '审核后展示', AppTheme.primaryDark),
-    _HubItem('shop', Icons.store_outlined, '加渔具店', '审核后展示', AppTheme.indigo),
-    _HubItem('wild', Icons.add_location_alt_outlined, '标记野钓点', '地图全员可见', AppTheme.deepOrange),
+    _HubItem('post', Icons.phishing, '发布渔获', '晒渔获晒鱼情'),
+    _HubItem('ask', Icons.help_outline, '钓鱼问答', '有问题大家帮'),
+    _HubItem('say', Icons.chat_bubble_outline, '随便说说', '点滴心情随记'),
+    _HubItem('sell', Icons.sell_outlined, '出售二手', '闲置渔具变现'),
+    _HubItem('buy', Icons.shopping_cart_outlined, '求购二手', '发布求购需求'),
+    _HubItem('venue', Icons.storefront_outlined, '加钓场', '审核后展示'),
+    _HubItem('shop', Icons.store_outlined, '加渔具店', '审核后展示'),
+    _HubItem('wild', Icons.add_location_alt_outlined, '标记野钓点', '地图全员可见'),
   ];
 
   void _open(BuildContext context, String key) {
@@ -70,24 +73,22 @@ class PublishHubScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('选择发布类别'),
-        elevation: 0,
-      ),
+      backgroundColor: AppTheme.background,
+      appBar: AppBar(title: const Text('选择发布类别')),
       body: Column(
         children: [
-          // 顶部引导
+          // 顶部引导（整页唯一的重色块）
           Container(
             width: double.infinity,
-            margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
             decoration: BoxDecoration(
               gradient: AppTheme.brandGradient,
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(AppTheme.radiusLg),
             ),
             child: const Row(
               children: [
-                Icon(Icons.explore, color: Colors.white, size: 30),
+                Icon(Icons.explore, color: Colors.white, size: 28),
                 SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -97,11 +98,11 @@ class PublishHubScreen extends StatelessWidget {
                           style: TextStyle(
                               color: Colors.white,
                               fontSize: 16,
-                              fontWeight: FontWeight.bold)),
+                              fontWeight: FontWeight.w700)),
                       SizedBox(height: 3),
                       Text('发动态 / 问问题 / 淘二手 / 标钓点',
                           style: TextStyle(
-                              color: Colors.white70, fontSize: 12)),
+                              color: Colors.white60, fontSize: 11.5)),
                     ],
                   ),
                 ),
@@ -109,14 +110,23 @@ class PublishHubScreen extends StatelessWidget {
             ),
           ),
           // 八宫格
+          //
+          // v2.1.59：原来是「图标 + 两行文字」直接摊在灰底上，没有任何容器；
+          // 且「出售二手」单独套了一层浅红底（categorySoft 的历史残留），
+          // 八个格子里只有一个带色块，看着像被误选中的按钮。
+          // 现在八格统一白卡 + 统一近黑图标，色相只由图标形状区分。
           Expanded(
-            child: GridView.count(
-              padding: const EdgeInsets.all(16),
-              crossAxisCount: 4,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 10,
-              childAspectRatio: 0.78,
-              children: _items.map((item) => _hubCell(context, item)).toList(),
+            child: GridView.builder(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
+              physics: const BouncingScrollPhysics(),
+              itemCount: _items.length,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 4,
+                mainAxisSpacing: 10,
+                crossAxisSpacing: 10,
+                childAspectRatio: 0.92,
+              ),
+              itemBuilder: (_, i) => _hubCell(context, _items[i]),
             ),
           ),
         ],
@@ -125,37 +135,39 @@ class PublishHubScreen extends StatelessWidget {
   }
 
   Widget _hubCell(BuildContext context, _HubItem item) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(14),
-      onTap: () => _open(context, item.key),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // 图标底
-          Container(
-            width: 54,
-            height: 54,
-            decoration: BoxDecoration(
-              color: AppTheme.categorySoft(item.key),
-              borderRadius: BorderRadius.circular(17),
-            ),
-            child: Icon(item.icon, color: item.color, size: 27),
+    return Material(
+      color: AppTheme.surface,
+      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        onTap: () => _open(context, item.key),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+            border: Border.all(color: AppTheme.border),
           ),
-          const SizedBox(height: 7),
-          Text(item.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                  color: AppTheme.textPrimary)),
-          const SizedBox(height: 2),
-          Text(item.sub,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  fontSize: 10, color: AppTheme.textSecondary)),
-        ],
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(item.icon, color: AppTheme.primary, size: 24),
+              const SizedBox(height: 7),
+              Text(item.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textPrimary)),
+              const SizedBox(height: 2),
+              Text(item.sub,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 9.5, color: AppTheme.textTertiary)),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -166,6 +178,5 @@ class _HubItem {
   final IconData icon;
   final String name;
   final String sub;
-  final Color color;
-  const _HubItem(this.key, this.icon, this.name, this.sub, this.color);
+  const _HubItem(this.key, this.icon, this.name, this.sub);
 }
