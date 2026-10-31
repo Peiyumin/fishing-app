@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -418,9 +420,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   /// 都是 11.5 号灰字，四行小字堆在签名下面像说明书。
   ///
   /// 现在的几何（封面用 Stack 背景层，不占 Column 的第一行）：
-  ///   封面可见高 132 → 头像 top = 132-32 = 100（压住下沿 32）
-  ///   → 昵称/胶囊/签名/元信息 的 top 也是 100（与头像顶齐，不再掉到下方）
-  ///   → 卡片底 = 100 + max(头像 78, 文字列) + 16
+  ///   封面可见高 248 → 头像 top = 248-32 = 216（压住下沿 32）
+  ///   → 昵称/胶囊/签名/元信息 的 top 也是 216（与头像顶齐，不再掉到下方）
+  ///   → 卡片底 = 216 + max(头像 78, 文字列) + 16
   /// 文字列左缩进 = 14 + 头像 78 + 12 = 104，昵称可用宽度 ≈ 250pt（旧版 ≈120）
   Widget _profileHeader(SessionProvider sp) {
     final vip = _me?.vip ?? MemberStyle.normal;
@@ -431,7 +433,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final hasCover =
         widget.debugCover != null || (cover != null && cover.isNotEmpty);
 
-    const coverH = 132.0;
+    // v2.1.60：132 → 248。原来只是一道 132 高的窄条（宽高比 2.66:1），
+    // 竖图被裁掉大半，看着「背景只显示了一半」；加高后是一整张图的量感，
+    // 底部靠 130pt 长的渐变慢慢化进卡片白底。
+    const coverH = 248.0;
     const avatarR = 36.0;
     final meta = _metaLine(uid);
 
@@ -638,20 +643,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (!has || height <= 0) {
       return const SizedBox(height: 0, width: double.infinity);
     }
+    // 同一张图要画两层（清晰层 + 模糊层），做成工厂避免复用同一个 widget 实例
+    Widget img() =>
+        widget.debugCover ??
+        CachedNetworkImage(
+          imageUrl: cover ?? '',
+          fit: BoxFit.cover,
+          placeholder: (_, __) => _coverFallback(),
+          errorWidget: (_, __, ___) => _coverFallback(),
+        );
     return SizedBox(
       height: height,
       width: double.infinity,
       child: Stack(
         fit: StackFit.expand,
         children: [
-          widget.debugCover ??
-              CachedNetworkImage(
-                imageUrl: cover ?? '',
-                fit: BoxFit.cover,
-                placeholder: (_, __) => _coverFallback(),
-                errorWidget: (_, __, ___) => _coverFallback(),
+          // ① 原图铺满整块封面
+          ClipRect(child: img()),
+          // ② 下半部叠一层同源的重度虚化：越往下越糊。
+          //    和清晰层同图同 fit，模糊层永远对得上，不会出现错位接缝；
+          //    ShaderMask 用竖向渐变把模糊层「擦」出来，接缝是渐变的不是硬边。
+          //    起点 0.42：上半张保持清晰，只在往下走的时候开始虚。
+          ClipRect(
+            child: ShaderMask(
+              shaderCallback: (r) => const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.transparent, Colors.white],
+                stops: [0.38, 0.92],
+              ).createShader(r),
+              blendMode: BlendMode.dstIn,
+              child: ImageFiltered(
+                imageFilter: ImageFilter.blur(
+                    sigmaX: 12, sigmaY: 12, tileMode: TileMode.clamp),
+                child: img(),
               ),
-          // 底部渐隐到卡片底色：头像和昵称压在图上也读得清
+            ),
+          ),
+          // ③ 长渐变淡出到卡片白底：0 → 52% 完全透明，82% 处 62% 白，97% 起纯白。
+          //    图是一路「化掉」的，不是被一刀切平；同时给压在封面上的
+          //    头像、昵称、签名垫了一层白纱，浅色深色封面都读得清。
           DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -659,12 +690,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 end: Alignment.bottomCenter,
                 colors: [
                   Colors.transparent,
-                  AppTheme.surface.withOpacity(0.18),
+                  AppTheme.surface.withOpacity(0.08),
+                  AppTheme.surface.withOpacity(0.66),
                   AppTheme.surface,
                 ],
-                // v2.1.59：渐隐起点从 0.48 下移到 0.60 —— 原来封面刚过一半
-                // 就被白色吃掉，浅色封面看着像"没有封面"
-                stops: const [0.60, 0.92, 1.0],
+                stops: const [0.0, 0.58, 0.86, 0.98],
               ),
             ),
           ),
