@@ -366,7 +366,7 @@ class _PublishShopScreenState extends State<PublishShopScreen> {
                               SizedBox(height: 4),
                               Text('添加图片',
                                   style: TextStyle(
-                                      fontSize: 10, color: Colors.grey)),
+                                      fontSize: 10, color: AppTheme.textTertiary)),
                             ],
                           ),
                         ),
@@ -376,7 +376,7 @@ class _PublishShopScreenState extends State<PublishShopScreen> {
                 const SizedBox(height: 6),
                 Text('拍店面/货架，最多 9 张，第一张作为封面',
                     style: TextStyle(
-                        fontSize: 11, color: Colors.grey.withOpacity(0.9))),
+                        fontSize: 11, color: AppTheme.textTertiary.withOpacity(0.9))),
                 const SizedBox(height: 16),
 
                 // —— 店名 ——
