@@ -420,9 +420,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   /// 都是 11.5 号灰字，四行小字堆在签名下面像说明书。
   ///
   /// 现在的几何（封面用 Stack 背景层，不占 Column 的第一行）：
-  ///   封面可见高 248 → 头像 top = 248-32 = 216（压住下沿 32）
-  ///   → 昵称/胶囊/签名/元信息 的 top 也是 216（与头像顶齐，不再掉到下方）
-  ///   → 卡片底 = 216 + max(头像 78, 文字列) + 16
+  ///   封面可见高 200 → 头像 top = 200-32 = 168（压住下沿 32）
+  ///   → 昵称/胶囊/签名/元信息 的 top 也是 168（与头像顶齐，不再掉到下方）
+  ///   → 卡片底 = 168 + max(头像 78, 文字列) + 16
   /// 文字列左缩进 = 14 + 头像 78 + 12 = 104，昵称可用宽度 ≈ 250pt（旧版 ≈120）
   Widget _profileHeader(SessionProvider sp) {
     final vip = _me?.vip ?? MemberStyle.normal;
@@ -436,12 +436,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
     // v2.1.60：132 → 248。原来只是一道 132 高的窄条（宽高比 2.66:1），
     // 竖图被裁掉大半，看着「背景只显示了一半」；加高后是一整张图的量感，
     // 底部靠 130pt 长的渐变慢慢化进卡片白底。
-    const coverH = 248.0;
+    // v2.1.61：248 → 200。用户反馈「背景图太高、一进页面半屏都是图」，
+    // 收低 48pt，头像仍然压住下沿 32，读起来还是「一张图的量感」。
+    const coverH = 200.0;
     const avatarR = 36.0;
     final meta = _metaLine(uid);
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      margin: const EdgeInsets.fromLTRB(
+          AppTheme.pagePad, 10, AppTheme.pagePad, 0),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: AppTheme.surface,
@@ -791,7 +794,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _badgeBar() {
     final show = _myBadges.take(5).toList();
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
+      margin: const EdgeInsets.fromLTRB(
+          AppTheme.pagePad, AppTheme.cardGap, AppTheme.pagePad, 0),
       padding: const EdgeInsets.fromLTRB(14, 11, 10, 11),
       decoration: BoxDecoration(
         color: AppTheme.surface,
@@ -883,7 +887,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           () => _runAction('wallet')),
     ];
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
+      margin: const EdgeInsets.fromLTRB(
+          AppTheme.pagePad, AppTheme.cardGap, AppTheme.pagePad, 0),
       padding: const EdgeInsets.symmetric(vertical: 15),
       decoration: BoxDecoration(
         color: AppTheme.surface,
@@ -948,7 +953,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final c2 = vip.isVip ? vip.color2 : AppTheme.inkSurface;
     final fg = vip.isVip ? Colors.white : AppTheme.accent;
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
+      margin: const EdgeInsets.fromLTRB(
+          AppTheme.pagePad, AppTheme.cardGap, AppTheme.pagePad, 0),
       height: 52,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -1059,7 +1065,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _menuCard() {
     if (_cfg.menus.isEmpty) return const SizedBox.shrink();
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
+      margin: const EdgeInsets.fromLTRB(
+          AppTheme.pagePad, AppTheme.cardGap, AppTheme.pagePad, 0),
       decoration: BoxDecoration(
         color: AppTheme.surface,
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
@@ -1143,7 +1150,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _servicesCard() {
     if (_cfg.services.isEmpty) return const SizedBox.shrink();
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
+      margin: const EdgeInsets.fromLTRB(
+          AppTheme.pagePad, AppTheme.cardGap, AppTheme.pagePad, 0),
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
       decoration: BoxDecoration(
         color: AppTheme.surface,
@@ -1214,7 +1222,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final s = _cfg.smartBar;
     if (s.title.isEmpty) return const SizedBox.shrink();
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
+      margin: const EdgeInsets.fromLTRB(
+          AppTheme.pagePad, AppTheme.cardGap, AppTheme.pagePad, 0),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
       decoration: BoxDecoration(
         color: AppTheme.primarySoft,
@@ -1262,7 +1271,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _cardsRow() {
     if (_cfg.cards.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
+      padding: const EdgeInsets.fromLTRB(
+          AppTheme.pagePad, AppTheme.cardGap, AppTheme.pagePad, 0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
