@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../widgets/ui_kit.dart';
 import '../models/my_order.dart';
 import '../services/shop_service.dart';
 import '../widgets/center_toast.dart';
@@ -760,48 +761,18 @@ class _EmptyState extends StatelessWidget {
     required this.onAction,
   });
 
+  // v2.1.59：空状态统一走 UiEmptyState（黑底胶囊按钮 + 圆角方形图标底），
+  // 原来这里是自己拼的一套「浅灰圆 + 浅灰胶囊按钮」，和发现页/我的页
+  // 的空状态不是同一个长相。
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 72,
-            height: 72,
-            decoration: const BoxDecoration(
-              color: AppTheme.primaryLight,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.receipt_long_outlined,
-                size: 34, color: AppTheme.primary),
-          ),
-          const SizedBox(height: 14),
-          Text(title,
-              style:
-                  const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 6),
-          Text(body,
-              style: const TextStyle(
-                  fontSize: 12.5, color: AppTheme.textSecondary)),
-          const SizedBox(height: 16),
-          GestureDetector(
-            onTap: onAction,
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 9),
-              decoration: BoxDecoration(
-                color: AppTheme.primaryLight,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(action,
-                  style: const TextStyle(
-                      fontSize: 13,
-                      color: AppTheme.primary,
-                      fontWeight: FontWeight.w600)),
-            ),
-          ),
-        ],
+      child: UiEmptyState(
+        icon: Icons.receipt_long_outlined,
+        title: title,
+        desc: body,
+        actionLabel: action,
+        onAction: onAction,
       ),
     );
   }
