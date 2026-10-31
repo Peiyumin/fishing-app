@@ -12,6 +12,7 @@ import '../services/api_config.dart';
 import '../utils/geo_names.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/app_refresh.dart';
+import '../widgets/ui_kit.dart';
 import '../widgets/waterfall_post_card.dart';
 import 'auth_screen.dart';
 import 'post_detail_screen.dart';
@@ -448,33 +449,33 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   Widget _empty() {
+    final needLogin = _emptyHint?.contains('登录') == true;
     return ListView(
       children: [
         SizedBox(
-          height: MediaQuery.of(context).size.height * 0.55,
+          height: MediaQuery.of(context).size.height * 0.52,
           child: Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.inbox_outlined,
-                    size: 44, color: Colors.grey.withOpacity(0.5)),
-                const SizedBox(height: 10),
-                Text(
-                  _emptyHint ?? '这里还没有内容，下拉刷新试试',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      fontSize: 14, color: AppTheme.textSecondary),
+                // v2.1.59：空状态统一走 UiEmptyState
+                // （原来是一个 44px 灰色半透明图标 + 一行灰字，全站五六个页面各写一套）
+                UiEmptyState(
+                  icon: Icons.inbox_outlined,
+                  title: _emptyHint ??
+                      (_tabKey == 'follow' ? '还没有关注的钓友' : '这里还没有内容'),
+                  desc: needLogin
+                      ? '登录后可以看到关注的人和同城钓友的最新渔获'
+                      : (_tabKey == 'follow'
+                          ? '去「推荐」「同城」看看，关注感兴趣的钓友'
+                          : '下拉刷新试试，或切到「最新」看刚发的渔获'),
+                  actionLabel: needLogin ? '去登录' : null,
+                  onAction: needLogin ? _goLogin : null,
                 ),
-                if (_emptyHint?.contains('登录') == true) ...[
-                  const SizedBox(height: 14),
-                  FilledButton(onPressed: _goLogin, child: const Text('去登录')),
-                ],
-                if (_tabKey == 'city' && _city != null) ...[
-                  const SizedBox(height: 6),
+                if (_tabKey == 'city' && _city != null)
                   Text('当前城市：$_city',
                       style: const TextStyle(
-                          fontSize: 12, color: AppTheme.textSecondary)),
-                ],
+                          fontSize: 12, color: AppTheme.textTertiary)),
               ],
             ),
           ),
@@ -482,4 +483,5 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       ],
     );
   }
+
 }
