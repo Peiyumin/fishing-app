@@ -51,7 +51,7 @@ class SpotCard extends StatelessWidget {
       child: Container(
         width: cardWidth,
         height: cardHeight,
-        margin: const EdgeInsets.only(right: 10),
+        margin: const EdgeInsets.only(right: AppTheme.gridGap),
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
           color: AppTheme.surface,
