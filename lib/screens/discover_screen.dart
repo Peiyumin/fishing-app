@@ -32,7 +32,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   /// [中文名, 英文副标, 接口 tab 参数]
   static const List<List<String>> _tabDefs = [
     ['推荐', 'FOR YOU', 'recommend'],
-    ['热门', 'HOT', 'hot'],
+    // v2.1.58：用户要求「分类里的热门改为最新」—— 按发布时间倒序，
+    // 不再按浏览量打散。第二个字是英文副标，第三个是接口 tab 参数。
+    ['最新', 'NEW', 'latest'],
     ['同城', 'LOCAL', 'city'],
     ['关注', 'FOLLOW', 'follow'],
   ];
