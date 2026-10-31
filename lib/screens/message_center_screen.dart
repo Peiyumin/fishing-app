@@ -85,15 +85,10 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
-        title: const Text('消息',
-            style: TextStyle(fontWeight: FontWeight.w700, color: Colors.white)),
-        centerTitle: true,
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
-        ),
+        title: const Text('消息'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.notifications_none, color: Colors.white),
+            icon: const Icon(Icons.notifications_none),
             tooltip: '通知设置',
             onPressed: () => Navigator.of(context).pushNamed('/notify-settings'),
           ),
@@ -103,7 +98,7 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
               '全部已读',
               style: TextStyle(
                   fontSize: 12.5,
-                  color: Colors.white,
+                  color: AppTheme.textSecondary,
                   fontWeight: FontWeight.w600),
             ),
           ),
@@ -117,7 +112,7 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
           children: [
             if (_loading) _loadingBar(),
             _chatCard(),
-            const SizedBox(height: 18),
+            const SizedBox(height: 20),
             _noticeSection(),
           ],
         ),
@@ -132,61 +127,86 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
       );
 
   /// 私信入口（黑卡）
+  ///
+  /// 整页只留这一块重色：其余都是白卡 + 浅灰底，黑色在这里是「焦点」，
+  /// 一进消息页第一眼就落在私信上。圆角与卡片统一走 radiusLg。
   Widget _chatCard() {
     final unread = _summary.chat;
-    return Container(
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppTheme.primary, AppTheme.primaryDark],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         onTap: () async {
           await Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => const ConversationListScreen(),
           ));
           _load();
         },
-        leading: Container(
-          width: 44,
-          height: 44,
+        child: Ink(
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
+            gradient: const LinearGradient(
+              colors: [AppTheme.primary, AppTheme.primaryDark],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
           ),
-          alignment: Alignment.center,
-          child: const Icon(Icons.forum_outlined,
-              color: AppTheme.primary, size: 22),
-        ),
-        title: Row(
-          children: [
-            const Text('私信',
-                style: TextStyle(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+            child: Row(
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
                     color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800)),
-            const SizedBox(width: 6),
-            Text('MESSAGES',
-                style: TextStyle(
-                    color: Colors.white.withOpacity(0.5),
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1)),
-            const Spacer(),
-            if (unread > 0) _badge(unread),
-          ],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(Icons.forum_outlined,
+                      color: AppTheme.primary, size: 21),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          const Text('私信',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15.5,
+                                  fontWeight: FontWeight.w800)),
+                          const SizedBox(width: 6),
+                          Text('MESSAGES',
+                              style: TextStyle(
+                                  color: Colors.white.withOpacity(0.45),
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 1)),
+                          if (unread > 0) ...[
+                            const SizedBox(width: 8),
+                            _badge(unread),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text('与钓友和客服的对话',
+                          style: TextStyle(
+                              color: Colors.white.withOpacity(0.6),
+                              fontSize: 11.5)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Icon(Icons.chevron_right,
+                    size: 17, color: Colors.white54),
+              ],
+            ),
+          ),
         ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 3),
-          child: Text('与钓友和客服的对话',
-              style: TextStyle(
-                  color: Colors.white.withOpacity(0.65), fontSize: 12)),
-        ),
-        trailing: const Icon(Icons.chevron_right, color: Colors.white54),
       ),
     );
   }
@@ -211,7 +231,9 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
       (key: 'reply', title: '回复', desc: '你的评论收到了回复', icon: Icons.reply_outlined, unread: _summary.reply),
       (key: 'like', title: '点赞', desc: '有人给你点了赞', icon: Icons.thumb_up_outlined, unread: _summary.like),
     ];
-    // 通知四类（点赞用普通拇指图标，避免依赖高版本图标常量）
+    // v2.1.59：四类通知合成**一张卡 + 三条分割线**。
+    // 原来是四张各自独立的白卡、每张 margin-bottom 10，四个「通知」整整齐齐
+    // 占掉一屏，看着像四块互不相干的砖；合成一张后视觉上一组就能读完。
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -231,52 +253,77 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
                     color: AppTheme.textSecondary)),
           ],
         ),
-        const SizedBox(height: 10),
-        for (final it in items)
-          _noticeTile(it.key, it.title, it.desc, it.icon, it.unread),
+        const SizedBox(height: 8),
+        Container(
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+            border: Border.all(color: AppTheme.border),
+          ),
+          child: Column(
+            children: [
+              for (var i = 0; i < items.length; i++) ...[
+                // 分割线缩进到「文字左边界」，不穿到图标下面
+                if (i > 0) const SizedBox(
+                      width: double.infinity,
+                      child: Divider(height: 1, indent: 60)),
+                _noticeTile(items[i].key, items[i].title, items[i].desc,
+                    items[i].icon, items[i].unread),
+              ],
+            ],
+          ),
+        ),
       ],
     );
   }
 
   Widget _noticeTile(
       String type, String title, String desc, IconData icon, int unread) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: ListTile(
-        onTap: () async {
-          await Navigator.of(context).push(MaterialPageRoute(
-            builder: (_) => NoticeListScreen(type: type, title: title),
-          ));
-          _load();
-        },
-        leading: Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: AppTheme.primaryLight,
-            borderRadius: BorderRadius.circular(11),
-          ),
-          alignment: Alignment.center,
-          child: Icon(icon, color: AppTheme.primary, size: 21),
-        ),
-        title: Text(title,
-            style: const TextStyle(
-                fontSize: 14.5, fontWeight: FontWeight.w700)),
-        subtitle: Text(desc,
-            style: const TextStyle(
-                fontSize: 11.5, color: AppTheme.textSecondary)),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
+    return InkWell(
+      onTap: () async {
+        await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => NoticeListScreen(type: type, title: title),
+        ));
+        _load();
+      },
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
+        child: Row(
           children: [
-            if (unread > 0) _badge(unread),
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: AppTheme.primaryLight,
+                borderRadius: BorderRadius.circular(11),
+              ),
+              alignment: Alignment.center,
+              child: Icon(icon, color: AppTheme.primary, size: 18),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.textPrimary)),
+                  const SizedBox(height: 2),
+                  Text(desc,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 11.5, color: AppTheme.textSecondary)),
+                ],
+              ),
+            ),
+            if (unread > 0) ...[const SizedBox(width: 8), _badge(unread)],
             const SizedBox(width: 4),
             const Icon(Icons.chevron_right,
-                size: 18, color: AppTheme.textSecondary),
+                size: 17, color: AppTheme.textTertiary),
           ],
         ),
       ),
