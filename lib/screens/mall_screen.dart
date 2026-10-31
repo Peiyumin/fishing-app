@@ -62,9 +62,6 @@ class _MallScreenState extends State<MallScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('商城'),
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
-        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -204,7 +201,7 @@ class _MallScreenState extends State<MallScreen> {
           crossAxisCount: 2,
           mainAxisSpacing: 12,
           crossAxisSpacing: 12,
-          childAspectRatio: 0.66,
+          childAspectRatio: 0.72,
         ),
         itemBuilder: (_, i) => _card(_filtered[i]),
       ),
