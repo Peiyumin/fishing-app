@@ -140,7 +140,7 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
               const Text('钓点报错',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 12),
-              const Text('选择原因', style: TextStyle(color: Colors.grey)),
+              const Text('选择原因', style: TextStyle(color: AppTheme.textTertiary)),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
@@ -629,7 +629,7 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
               errorWidget: (_, __, ___) => Container(
                 color: AppTheme.primarySoft,
                 child: const Icon(Icons.broken_image_outlined,
-                    color: Colors.grey, size: 36),
+                    color: AppTheme.textTertiary, size: 36),
               ),
             ),
           ),
@@ -659,7 +659,7 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 15, color: Colors.grey),
+          Icon(icon, size: 15, color: AppTheme.textTertiary),
           const SizedBox(width: 8),
           Expanded(
             child: Text(text,
