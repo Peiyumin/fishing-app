@@ -266,13 +266,14 @@ class _SpotsScreenState extends State<SpotsScreen>
       children: [
         // 类型筛选
         SizedBox(
-          height: 46,
+          // v2.1.61：46 → 42（胶囊本身 30 左右，之前上下各留 8pt 空）
+          height: 42,
           child: ListView(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.symmetric(horizontal: AppTheme.pagePad),
             children: _types
                 .map((t) => Padding(
-                      padding: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.only(right: 6),
                       child: ChoiceChip(
                         label: Text(t),
                         selected: _type == t,
@@ -300,10 +301,10 @@ class _SpotsScreenState extends State<SpotsScreen>
                         ),
                       ])
                     : ListView.separated(
-                        padding: const EdgeInsets.only(bottom: 16),
+                        // v2.1.61：卡与卡 8 → 6，底部 16 → 12
+                        padding: const EdgeInsets.only(top: 6, bottom: 12),
                         itemCount: _visibleVenues.length,
-                        separatorBuilder: (_, __) =>
-                            const SizedBox(height: 8),
+                        separatorBuilder: (_, __) => const SizedBox(height: 6),
                         itemBuilder: (_, i) => _venueCard(_visibleVenues[i]),
                       ),
           ),
@@ -332,7 +333,8 @@ class _SpotsScreenState extends State<SpotsScreen>
         .toList();
     final distance = _distanceText(s);
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      // v2.1.61：左右 12 → pagePad，底部 10 交给列表的 separator（不重复留白）
+      margin: const EdgeInsets.symmetric(horizontal: AppTheme.pagePad),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: AppTheme.surface,
@@ -344,7 +346,7 @@ class _SpotsScreenState extends State<SpotsScreen>
         child: InkWell(
           onTap: () => _openDetail(s),
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(10),
             // 固定 96×96 的缩略图：四张卡的图必须一样大
             //（之前那套「按内容撑高」会让图跟着文字高度伸缩，一卡一个高度）
             child: Row(
@@ -365,7 +367,7 @@ class _SpotsScreenState extends State<SpotsScreen>
                         : _venueThumb(),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -645,9 +647,9 @@ class _SpotsScreenState extends State<SpotsScreen>
               ),
             ])
           : ListView.separated(
-              padding: const EdgeInsets.fromLTRB(0, 8, 0, 20),
+              padding: const EdgeInsets.fromLTRB(0, 6, 0, 16),
               itemCount: _shops.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              separatorBuilder: (_, __) => const SizedBox(height: 6),
               itemBuilder: (_, i) => _shopCard(_shops[i]),
             ),
     );
@@ -662,7 +664,7 @@ class _SpotsScreenState extends State<SpotsScreen>
         .toList();
     final distance = _distanceText(s);
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12),
+      margin: const EdgeInsets.symmetric(horizontal: AppTheme.pagePad),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
