@@ -394,7 +394,8 @@ class WaterfallGrid extends StatelessWidget {
     super.key,
     required this.posts,
     required this.onTap,
-    this.padding = const EdgeInsets.fromLTRB(12, 8, 12, 12),
+    this.padding = const EdgeInsets.fromLTRB(
+        AppTheme.pagePad, 6, AppTheme.pagePad, AppTheme.pagePad),
     this.shrinkWrap = false,
     this.physics,
     // .52 ≈ 卡宽 200 时总高 385：图片 4:3 + 两行字 + 城市 + 底部行
@@ -409,8 +410,9 @@ class WaterfallGrid extends StatelessWidget {
       physics: physics ?? (shrinkWrap ? const NeverScrollableScrollPhysics() : null),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
+        // v2.1.61：10 → 8，和两边的 pagePad 拉近，四边的缝看着一样宽
+        mainAxisSpacing: AppTheme.gridGap,
+        crossAxisSpacing: AppTheme.gridGap,
         childAspectRatio: childAspectRatio,
       ),
       itemCount: posts.length,
