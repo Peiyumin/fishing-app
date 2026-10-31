@@ -22,6 +22,7 @@ import '../services/post_service.dart';
 import '../services/refresh_bus.dart';
 import '../services/session_provider.dart';
 import '../services/weather_service.dart';
+import '../utils/gear_options.dart';
 import '../utils/geo_names.dart';
 import '../utils/image_data_uri.dart';
 import '../utils/size_text.dart';
@@ -76,6 +77,12 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
   final TextEditingController _lengthCtrl = TextEditingController();
   final TextEditingController _weightCtrl = TextEditingController();
 
+  /// v2.1.58 装备与钓点：饵料（自由填写）+ 鱼竿长度 + 钓点类型（各选一个）
+  /// 三样都允许留空 —— 不是所有人都愿意一条条填，留空就不显示，不逼填。
+  final TextEditingController _baitCtrl = TextEditingController();
+  String _rodLength = '';
+  String _waterType = '';
+
   static const int _maxMedia = 5;
   static const int _maxStory = 3000;
   final _picker = ImagePicker();
@@ -101,6 +108,10 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
       _lng = ex.lng;
       _placeLabel = ex.locationName;
       _locating = false;
+      // v2.1.58：编辑时把装备与钓点一起回填，不然一保存就被清空
+      _baitCtrl.text = ex.bait;
+      _rodLength = ex.rodLength;
+      _waterType = ex.waterType;
       // 编辑模式要把已有的尺寸/重量填回来（原来是空的，一保存就被清掉了）
       if (ex.lengthCm != null && ex.lengthCm! > 0) {
         _lengthCtrl.text = ex.lengthCm!.toStringAsFixed(1);
@@ -118,6 +129,7 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
     _storyCtrl.dispose();
     _lengthCtrl.dispose();
     _weightCtrl.dispose();
+    _baitCtrl.dispose();
     super.dispose();
   }
 
@@ -528,6 +540,9 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
           lengthCm: lengthCm,
           weightG: weightG,
           weather: wx,
+          bait: _baitCtrl.text.trim(),
+          rodLength: _rodLength,
+          waterType: _waterType,
         );
         if (mounted) {
           RefreshBus.bumpFeed();
@@ -556,6 +571,9 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
           lengthCm: lengthCm,
           weightG: weightG,
           weather: wx,
+          bait: _baitCtrl.text.trim(),
+          rodLength: _rodLength,
+          waterType: _waterType,
         );
         if (mounted) {
           RefreshBus.bumpFeed();
@@ -722,6 +740,8 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
           _catchCard(),
           const SizedBox(height: 12),
           _sizeCard(),
+          const SizedBox(height: 12),
+          _gearCard(),
         ],
       ),
       bottomNavigationBar: SafeArea(
@@ -741,6 +761,185 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
                       style: TextStyle(
                           fontSize: 16, fontWeight: FontWeight.w700)),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 饵料 · 鱼竿 · 钓点（v2.1.58）
+  ///
+  /// 用户要求：发布渔获时要能填饵料、选鱼竿长度、选钓点类型，
+  /// 而且这些在展示页也要看得到。三样都选填 —— 空着就不写进库、详情页也不显示。
+  Widget _gearCard() {
+    final bait = _baitCtrl.text.trim();
+    final filled = <String>[
+      if (bait.isNotEmpty) bait,
+      if (_rodLength.isNotEmpty) rodLengthText(_rodLength),
+      if (_waterType.isNotEmpty) _waterType,
+    ];
+    return _card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _cardTitle(Icons.set_meal_outlined, '饵料 · 鱼竿 · 钓点',
+              trailing: filled.isEmpty ? '选填' : filled.join(' · ')),
+          const SizedBox(height: 12),
+
+          // ── 饵料 ──
+          const Text('饵料',
+              style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textPrimary)),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _baitCtrl,
+            maxLength: 30,
+            onChanged: (_) => setState(() {}),
+            buildCounter: (_,
+                    {required currentLength,
+                    required maxLength,
+                    required isFocused}) =>
+                null,
+            style: const TextStyle(fontSize: 13),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: '例：腥香拉饵、蚯蚓、玉米',
+              hintStyle:
+                  TextStyle(fontSize: 12.5, color: AppTheme.textSecondary),
+              filled: true,
+              fillColor: AppTheme.primarySoft,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: AppTheme.divider),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: AppTheme.divider),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: AppTheme.primary),
+              ),
+            ),
+          ),
+          const SizedBox(height: 2),
+          // 常用饵料快捷词：点一下填进去，再点一下取消（不强迫只用这几个）
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: kBaitQuickPicks
+                .map((b) => _gearChip(
+                      b,
+                      bait == b,
+                      () => setState(() {
+                        _baitCtrl.text = bait == b ? '' : b;
+                        _baitCtrl.selection = TextSelection.collapsed(
+                            offset: _baitCtrl.text.length);
+                      }),
+                      dense: true,
+                    ))
+                .toList(),
+          ),
+
+          const SizedBox(height: 14),
+          _gearDivider(),
+          const SizedBox(height: 12),
+
+          // ── 鱼竿长度 ──
+          Row(
+            children: [
+              const Text('鱼竿长度',
+                  style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.textPrimary)),
+              const SizedBox(width: 6),
+              Text(_rodLength.isEmpty ? '点一下选中，再点取消' : rodLengthText(_rodLength),
+                  style: const TextStyle(
+                      fontSize: 11, color: AppTheme.textSecondary)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: kRodLengths
+                .map((r) => _gearChip(
+                      '$r 米',
+                      _rodLength == r,
+                      () => setState(() => _rodLength = _rodLength == r ? '' : r),
+                    ))
+                .toList(),
+          ),
+
+          const SizedBox(height: 14),
+          _gearDivider(),
+          const SizedBox(height: 12),
+
+          // ── 钓点类型 ──
+          Row(
+            children: [
+              const Text('钓点',
+                  style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.textPrimary)),
+              const SizedBox(width: 6),
+              Text(_waterType.isEmpty ? '坑塘 / 江河 / 水库 …' : _waterType,
+                  style: const TextStyle(
+                      fontSize: 11, color: AppTheme.textSecondary)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: kWaterTypes
+                .map((w) => _gearChip(
+                      w,
+                      _waterType == w,
+                      () => setState(() => _waterType = _waterType == w ? '' : w),
+                    ))
+                .toList(),
+          ),
+          const SizedBox(height: 10),
+          const Text('填了会显示在渔获详情页，别人看你的渔获能直接参考',
+              style: TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+        ],
+      ),
+    );
+  }
+
+  Widget _gearDivider() => const SizedBox(
+        height: 1,
+        child: Divider(height: 1, thickness: 1, color: AppTheme.divider),
+      );
+
+  /// 装备选项小胶囊：选中=主色实心，未选中=浅底描边
+  Widget _gearChip(String label, bool on, VoidCallback onTap,
+      {bool dense = false}) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+            horizontal: dense ? 10 : 11, vertical: dense ? 5 : 6),
+        decoration: BoxDecoration(
+          color: on ? AppTheme.primary : AppTheme.primarySoft,
+          borderRadius: BorderRadius.circular(dense ? 12 : 14),
+          border: Border.all(
+              color: on ? AppTheme.primary : AppTheme.divider, width: 1),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: dense ? 11.5 : 12,
+            fontWeight: on ? FontWeight.w700 : FontWeight.w500,
+            color: on ? Colors.white : AppTheme.textPrimary,
           ),
         ),
       ),
