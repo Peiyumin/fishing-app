@@ -21,7 +21,7 @@ class SectionHeader extends StatelessWidget {
     this.actionLabel,
     this.onAction,
     this.padding =
-        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        const EdgeInsets.symmetric(horizontal: AppTheme.pagePad, vertical: 5),
   });
 
   @override
