@@ -329,7 +329,7 @@ class _PublishScreenState extends State<PublishScreen> {
                               ? '视频单选 · 与图片二选一'
                               : '最多 9 张 · ${_images.length}/$_maxImages',
                           style: const TextStyle(
-                              fontSize: 11, color: Colors.grey),
+                              fontSize: 11, color: AppTheme.textTertiary),
                         ),
                         const Spacer(),
                         if (_images.isNotEmpty)
@@ -439,7 +439,7 @@ class _PublishScreenState extends State<PublishScreen> {
                     const SizedBox(height: 8),
                     Text(
                       '图片一次最多选 9 张；视频只能选 1 个（≤60MB），二者不能混发',
-                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                      style: TextStyle(fontSize: 11, color: AppTheme.textTertiary),
                     ),
                   ],
                 ),
@@ -456,7 +456,7 @@ class _PublishScreenState extends State<PublishScreen> {
                     color: AppTheme.primary),
                 title: Text(_locationName ?? '添加定位（选填）',
                     style: TextStyle(
-                        color: _locationName == null ? Colors.grey : null)),
+                        color: _locationName == null ? AppTheme.textTertiary : null)),
                 subtitle: const Text('发布后展示在动态卡片上',
                     style: TextStyle(fontSize: 11)),
                 trailing: TextButton(
