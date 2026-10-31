@@ -19,24 +19,22 @@ class WeatherCard extends StatelessWidget {
   final String? placeLabel;
   const WeatherCard({super.key, required this.weather, this.placeLabel});
 
-  /// 分数 → 颜色：四档语义分级（≥80 爆护 / ≥60 有口 / ≥40 一般 / 其余口差）
+  /// 分数 → 颜色：**直接复用天气页那一档**（[AppTheme.biteScore]）。
   ///
-  /// 一律走 [AppTheme] 的语义色，别在页面里自己调一版绿金橙红 ——
-  /// 之前首页卡和天气页各有一套，同一个 72 分在两边是两个不同的橙色。
-  /// 深底页面要用亮一阶（见 weather_screen 的 _Pal），那是有意的：深底上
-  /// 这四色直接铺会发闷，但**色相和档位保持一致**。
-  static Color scoreColor(int s) {
-    if (s >= 80) return AppTheme.primary;
-    if (s >= 60) return AppTheme.star;
-    if (s >= 40) return AppTheme.warning;
-    return AppTheme.danger;
-  }
+  /// v2.1.62：这里原来是另一套（≥80 近黑 / ≥60 暖金 / ≥40 橙 / 其余红），
+  /// 且把颜色当作**填充色**、分数写白字；天气页则是同色系的**文字色**。
+  /// 同一个 85 分 → 首页黑胶囊白字、天气页黄绿数字，用户反馈「两边颜色
+  /// 不一致」。现在判档与色值都只有一个来源，改一处分处同步。
+  static Color scoreColor(int s) => AppTheme.biteScore(s);
 
   @override
   Widget build(BuildContext context) {
     final score = weather.score;
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      // v2.1.62：左右 12 → pagePad（和宫格/钓点/瀑布流同一条边线），
+      // 上下 8 → 4（上面紧接分区标题，标题自己还带 4pt 下边距）
+      margin: const EdgeInsets.symmetric(
+          horizontal: AppTheme.pagePad, vertical: 4),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
@@ -44,51 +42,77 @@ class WeatherCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                // 图标与颜色都跟着当前天气走：晴=金黄太阳，阴=灰蓝云，雨=蓝雨点
-                Icon(
-                  Wmo.icon(weather.weatherCode),
-                  size: 22,
-                  color: Wmo.color(weather.weatherCode),
-                ),
-                const SizedBox(width: 6),
-                Text('钓鱼天气',
-                    style:
-                        const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                if (placeLabel != null && placeLabel!.isNotEmpty) ...[
-                  const SizedBox(width: 6),
-                  // 注意：这里不能用 Flexible —— Flexible 会和下面的 Spacer
-                  // 平分剩余空间，把「垂钓指数」顶到中间去。用定宽盒子后，
-                  // 剩余空间全归 Spacer，指数胶囊才会紧贴卡片右侧。
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 84),
-                    child: Text('· $placeLabel',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 12.5, color: AppTheme.textSecondary)),
+                // ★ v2.1.62：左组整体进 Expanded，去掉原来的 Spacer。
+                //   320dp 窄屏 + 长地名（「黔东南苗族侗族自治州」）时，
+                //   图标 + 标题 + 地名 + 时段 + 指数胶囊加起来会超过一行，
+                //   RenderFlex 直接溢 60pt。左组进 Expanded 后，地名自己
+                //   省略号截断，右侧的指数胶囊永远钉在卡片右缘。
+                //   （旧写法用 ConstrainedBox 定宽 84，只能是「够用就够用」，
+                //    窄屏必炸；这里的地名改用 Flexible，有多宽用多宽。）
+                Expanded(
+                  child: Row(
+                    children: [
+                      // 图标与颜色都跟着当前天气走：晴=金黄太阳，阴=灰蓝云，雨=蓝雨点
+                      Icon(
+                        Wmo.icon(weather.weatherCode),
+                        size: 22,
+                        color: Wmo.color(weather.weatherCode),
+                      ),
+                      const SizedBox(width: 6),
+                      Text('钓鱼天气',
+                          style: const TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.bold)),
+                      if (placeLabel != null && placeLabel!.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text('· $placeLabel',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 12.5,
+                                  color: AppTheme.textSecondary)),
+                        ),
+                      ],
+                    ],
                   ),
-                ],
-                const Spacer(),
+                ),
                 // 时段标签：明确这是哪一小时的数据，和天气页对得上
                 if (weather.atLabel.isNotEmpty) ...[
+                  const SizedBox(width: 4),
                   Text(weather.atLabel,
                       style: const TextStyle(
                           fontSize: 11, color: AppTheme.textSecondary)),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 5),
                 ],
                 // 垂钓指数：直接显示分数，贴右侧显示
+                //
+                // v2.1.62：改成和天气页一样的「浅色底 + 同色数字」——
+                // 数字用 AppTheme.biteScore(score)，和天气页顶部「指数 85」
+                // 一字不差地同色；底只垫 12% 的同色，白卡上不抢眼。
                 Container(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: scoreColor(score),
+                    color: AppTheme.biteScoreSoft(score),
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: Text('垂钓指数：$score',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600)),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('垂钓指数',
+                          style: TextStyle(
+                              color: AppTheme.textSecondary,
+                              fontSize: 11.5,
+                              height: 1.1)),
+                      const SizedBox(width: 4),
+                      Text('$score',
+                          style: TextStyle(
+                              color: scoreColor(score),
+                              fontSize: 13.5,
+                              height: 1.1,
+                              fontWeight: FontWeight.w800)),
+                    ],
+                  ),
                 ),
               ],
             ),
