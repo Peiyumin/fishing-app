@@ -127,6 +127,9 @@ class AppTheme {
   static const double sp6 = 24;
   static const double sp8 = 32;
 
+  /// 卡片之间的纵向间距（列表页统一用这一档，别一处 10 一处 12）
+  static const double cardGap = 12;
+
   static const double fsCaption = 12;
   static const double fsBody = 14;
   static const double fsTitle = 16;
@@ -232,16 +235,27 @@ class AppTheme {
       outline: border,
       error: danger,
     ),
+    // ★ v2.1.59：二级页顶栏统一为**浅色**。
+    //
+    // 旧版走主题近黑：全站 44 个页面里有 33 个是「浅灰页面 + 一整块纯黑顶栏」，
+    // 一进设置/消息/订单就先撞一大块黑，视觉上又沉又割裂；另有 11 个页面
+    // 自己写了白底，于是同一层级的页面顶栏一半黑一半白。
+    // 现在统一成「白底 + 近黑标题 + 1px 细线收边」，与卡片同一材质，
+    // 页面从顶部到内容是一整片浅色，才是「干净、一眼清新」。
+    //
+    // 沉浸页（天气 / 地图 / 池塘 / AI 雷达 / 渔获详情等深色头）
+    // **必须自己写 foregroundColor: Colors.white**，否则黑图标压在深底上会消失。
+    // 回归护栏见 test/v2159_shell_test.dart。
     appBarTheme: AppBarTheme(
-      backgroundColor: primary,
-      foregroundColor: Colors.white,
+      backgroundColor: surface,
+      foregroundColor: textPrimary,
       elevation: 0,
+      scrolledUnderElevation: 0,
+      surfaceTintColor: Colors.transparent,
       centerTitle: true,
-      titleTextStyle: const TextStyle(
-        fontSize: fsHeadline,
-        fontWeight: FontWeight.w700,
-        letterSpacing: 0.5,
-      ),
+      titleTextStyle: kAppBarTitle,
+      // 顶栏与内容的界线用 1px 细线，不用阴影 —— 阴影会让页面显得脏
+      shape: const Border(bottom: BorderSide(color: divider, width: 1)),
       // 不再写死 iconTheme 的白色：写死之后，页面把 AppBar 换成浅底、
       // 只设 foregroundColor 是**管不到图标的**，返回箭头/动作图标
       // 会白字白底直接消失（天气页、通知设置页都踩过）。
@@ -340,3 +354,22 @@ class AppTheme {
     ),
   );
 }
+
+/// 二级页顶栏标题样式（全站唯一一档）。
+///
+/// 改造前 44 个页面各自写了 15 / 16 / 17 / 18 / 19 五档字号、两种颜色，
+/// 于是同一层级的页面标题看着大小不一。现在只认这一个常量。
+const TextStyle kAppBarTitle = TextStyle(
+  fontSize: 17,
+  fontWeight: FontWeight.w700,
+  color: AppTheme.textPrimary,
+  letterSpacing: 0.2,
+);
+
+/// 沉浸页（深色顶栏）用的标题样式：白字
+const TextStyle kAppBarTitleOnDark = TextStyle(
+  fontSize: 17,
+  fontWeight: FontWeight.w700,
+  color: Colors.white,
+  letterSpacing: 0.2,
+);
