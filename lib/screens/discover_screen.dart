@@ -454,7 +454,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding:
-            const EdgeInsets.fromLTRB(AppTheme.pagePad, 2, AppTheme.pagePad, 8),
+            const EdgeInsets.fromLTRB(AppTheme.pagePad, 2, AppTheme.pagePad, 5),
         itemCount: _tabDefs.length,
         separatorBuilder: (_, __) => const SizedBox(width: 6),
         itemBuilder: (_, i) {
@@ -541,8 +541,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             // v2.1.61：左右 12 → pagePad，上 12 → 8（页边距统一收窄）
+            // v2.1.62：上 8 → 6，卡片和 tab 条贴得更近（tab 条自己下边距也收到 6）
             padding: const EdgeInsets.fromLTRB(
-                AppTheme.pagePad, 8, AppTheme.pagePad, 90),
+                AppTheme.pagePad, 6, AppTheme.pagePad, 90),
             onTap: (p) => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => PostDetailScreen(post: p)),
             ),
