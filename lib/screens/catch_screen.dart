@@ -106,6 +106,10 @@ class _CatchScreenState extends State<CatchScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('渔获'),
+        // ★ 深色顶栏：AppBarTheme 默认是浅色，这里必须显式声明白色前景，
+        //   否则返回箭头与标题会是近黑色压在近黑渐变上（等于消失）
+        foregroundColor: Colors.white,
+        titleTextStyle: kAppBarTitleOnDark,
         flexibleSpace: Container(
           decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
         ),
@@ -179,7 +183,7 @@ class _CatchScreenState extends State<CatchScreen> {
                             children: [
                               Icon(Icons.phishing,
                                   size: 46,
-                                  color: Colors.grey.withOpacity(0.45)),
+                                  color: AppTheme.textTertiary.withOpacity(0.45)),
                               const SizedBox(height: 10),
                               Text(
                                 _emptyHint ?? '这里还没有渔获，下拉刷新试试',
