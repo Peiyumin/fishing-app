@@ -47,9 +47,9 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen>
         title: const Text('我的发布'),
         bottom: TabBar(
           controller: _tab,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-          indicatorColor: Colors.white,
+          labelColor: AppTheme.primary,
+          unselectedLabelColor: AppTheme.textSecondary,
+          indicatorColor: AppTheme.primary,
           indicatorSize: TabBarIndicatorSize.label,
           labelStyle:
               const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
