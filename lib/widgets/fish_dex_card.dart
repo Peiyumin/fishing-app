@@ -62,7 +62,8 @@ class FishDexCard extends StatelessWidget {
     final hero = unlocked.isNotEmpty ? unlocked.last : null;
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
+      margin: const EdgeInsets.fromLTRB(
+          AppTheme.pagePad, AppTheme.cardGap, AppTheme.pagePad, 0),
       padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
       decoration: BoxDecoration(
         color: _cardBg,
