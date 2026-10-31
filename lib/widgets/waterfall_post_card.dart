@@ -108,7 +108,10 @@ class WaterfallPostCard extends StatelessWidget {
           children: [
             Expanded(child: _coverArea()),
             Padding(
-              padding: const EdgeInsets.fromLTRB(9, 7, 9, 8),
+              // v2.1.62：上下左右各收 1pt —— 卡片整体要「矮一点点」，
+              // 光调宽高比会让图变矮而字区不变，看着头轻脚重；
+              // 内边距一起收，缩的是整张卡的呼吸量，不是某一块。
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 7),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -125,7 +128,7 @@ class WaterfallPostCard extends StatelessWidget {
                       color: AppTheme.textPrimary,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 3),
                   if (_place.isNotEmpty)
                     Row(
                       children: [
@@ -143,7 +146,7 @@ class WaterfallPostCard extends StatelessWidget {
                         ),
                       ],
                     ),
-                  const SizedBox(height: 5),
+                  const SizedBox(height: 4),
                   _footer(),
                 ],
               ),
@@ -243,7 +246,9 @@ class WaterfallPostCard extends StatelessWidget {
           left: 0,
           right: 0,
           bottom: 0,
-          height: 96,
+          // v2.1.62：96 → 88。图区变矮后渐变按原高度会盖到图中间，
+          // 照片的主体（鱼）容易被压暗，跟着图区一起收。
+          height: 88,
           child: IgnorePointer(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -285,9 +290,9 @@ class WaterfallPostCard extends StatelessWidget {
 
         // 底部文字：鱼种名 / 分类·条数 / 指数
         Positioned(
-          left: 8,
-          right: 8,
-          bottom: 8,
+          left: 7,
+          right: 7,
+          bottom: 7,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -394,12 +399,17 @@ class WaterfallGrid extends StatelessWidget {
     super.key,
     required this.posts,
     required this.onTap,
+    // v2.1.62：上 6 → 4、下 pagePad → 8，和下一条内容贴得近一点
     this.padding = const EdgeInsets.fromLTRB(
-        AppTheme.pagePad, 6, AppTheme.pagePad, AppTheme.pagePad),
+        AppTheme.pagePad, 4, AppTheme.pagePad, 8),
     this.shrinkWrap = false,
     this.physics,
-    // .52 ≈ 卡宽 200 时总高 385：图片 4:3 + 两行字 + 城市 + 底部行
-    this.childAspectRatio = .52,
+    // ★ childAspectRatio = 宽 / 高，**调大就是压矮**。
+    //   v2.1.61 及以前是 .52（卡宽 184 时总高 ≈ 354，图区 ≈ 271）；
+    //   v2.1.62 用户要求「卡片高度再低一点点」→ .57，总高 ≈ 323、
+    //   图区 ≈ 240（图片比例 1:1.3，仍比 1:1 竖，不会变成横条）。
+    //   再往下调（.60 起）图区就接近正方形，鱼获照片的主体会被裁掉。
+    this.childAspectRatio = .57,
   });
 
   @override
