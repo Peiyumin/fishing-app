@@ -59,6 +59,15 @@ class Post {
   /// 饵料及鱼竿说明（v2.1.57）：作者在渔获详情页填的一段话，可为空
   final String gear;
 
+  /// 饵料（v2.1.58）：发布渔获时填，如「腥香拉饵」「蚯蚓」。空串=未填
+  final String bait;
+
+  /// 鱼竿长度（v2.1.58）：库里存 "3.6" 这种纯数字串，展示时拼「3.6 米」
+  final String rodLength;
+
+  /// 钓点类型（v2.1.58）：坑塘 / 江河 / 水库 / 湖泊 / 溪流 / 海钓
+  final String waterType;
+
   static const Map<String, String> categoryLabels = {
     'post': '渔获',
     'ask': '问答',
@@ -97,6 +106,9 @@ class Post {
     this.weightG,
     this.weather,
     this.gear = '',
+    this.bait = '',
+    this.rodLength = '',
+    this.waterType = '',
     this.badges = const [],
   });
 
@@ -160,6 +172,11 @@ class Post {
       weather: parseWeather(json['weather'] ?? json['weather_json']),
       // 列表/详情是 posts.gear_note（p.* 直出）；/catch/mine 不带这个字段
       gear: (json['gear_note'] ?? json['gear'] ?? '').toString(),
+      // v2.1.58 三个结构化字段同样是 p.* 直出（列名就是 bait / rod_length /
+      // water_type），老后端没有这几列时一律回退空串，页面按「未填」处理
+      bait: (json['bait'] ?? '').toString(),
+      rodLength: (json['rod_length'] ?? '').toString(),
+      waterType: (json['water_type'] ?? '').toString(),
       badges: parseBadges(json['badges']),
     );
   }
@@ -315,6 +332,10 @@ class Post {
     double? weightG,
     CatchWeather? weather,
     List<BadgeItem>? badges,
+    String? gear,
+    String? bait,
+    String? rodLength,
+    String? waterType,
   }) {
     return Post(
       id: id ?? this.id,
@@ -346,6 +367,10 @@ class Post {
       weightG: weightG ?? this.weightG,
       weather: weather ?? this.weather,
       badges: badges ?? this.badges,
+      gear: gear ?? this.gear,
+      bait: bait ?? this.bait,
+      rodLength: rodLength ?? this.rodLength,
+      waterType: waterType ?? this.waterType,
     );
   }
 }
