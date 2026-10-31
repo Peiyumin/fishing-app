@@ -521,6 +521,10 @@ class _HomeScreenState extends State<HomeScreen>
         toolbarHeight: 46,
         centerTitle: true,
         titleSpacing: 12,
+        // ★ v2.1.59：AppBarTheme 已改为「白底 + 近黑图标」，首页这里是深色
+        //   Hero（flexibleSpace 画近黑渐变），必须显式把前景改回白色，
+        //   否则标题/消息铃铛会变成黑图标压在黑底上直接消失。
+        foregroundColor: Colors.white,
         title: SizedBox(
           width: double.infinity,
           child: Stack(
