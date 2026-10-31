@@ -691,7 +691,8 @@ class _HomeScreenState extends State<HomeScreen>
               // 高度写死可以彻底避免「加了标签把卡片撑变形 / 被裁掉」
               //
               // v2.1.61：+6 → +2，横向列表的上下再无谓留白
-              height: SpotCard.cardHeight + 2,
+              // v2.1.62：+2 → 0，卡片自己已经有 8pt 内边距，外面不再加
+              height: SpotCard.cardHeight,
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: AppTheme.pagePad),
@@ -735,11 +736,10 @@ class _HomeScreenState extends State<HomeScreen>
                           WaterfallGrid(
                             posts: _posts,
                             shrinkWrap: true,
+                            // v2.1.62：上 4 → 2、下 pagePad → 6，
+                            // 和上面的「钓友动态」标题咬得更紧
                             padding: const EdgeInsets.fromLTRB(
-                                AppTheme.pagePad,
-                                4,
-                                AppTheme.pagePad,
-                                AppTheme.pagePad),
+                                AppTheme.pagePad, 2, AppTheme.pagePad, 6),
                             onTap: (p) => _guard(() =>
                                 Navigator.of(context).push(MaterialPageRoute(
                                     builder: (_) => PostDetailScreen(post: p)))),
