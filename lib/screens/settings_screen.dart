@@ -13,6 +13,7 @@ import '../services/notification_service.dart';
 import '../services/session_provider.dart';
 import '../services/settings_service.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/ui_kit.dart';
 import 'about_screen.dart';
 import 'address_list_screen.dart';
 import 'history_accounts_screen.dart';
@@ -274,11 +275,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       appBar: AppBar(
         title: const Text('设置'),
         elevation: 0,
-        backgroundColor: Colors.white,
-        foregroundColor: AppTheme.textPrimary,
-        titleTextStyle: const TextStyle(
-            fontSize: 17, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
-        iconTheme: const IconThemeData(color: AppTheme.textPrimary),
       ),
       body: AbsorbPointer(
         absorbing: _busy,
@@ -294,14 +290,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: '消息推送',
                 trailing: _switch(_push, _togglePush),
               ),
-              const Divider(height: 1, indent: 46),
+              const SizedBox(
+                      width: double.infinity,
+                      child: Divider(height: 1, indent: 52)),
               _row(
                 icon: Icons.auto_awesome_outlined,
                 title: '个性化推荐',
-                sub: '向我推荐适合我的个性化内容/广告',
+                sub: '按你的搜索与浏览推荐内容',
                 trailing: _switch(_personalized, _togglePersonalized),
               ),
-              const Divider(height: 1, indent: 46),
+              const SizedBox(
+                      width: double.infinity,
+                      child: Divider(height: 1, indent: 52)),
               _row(
                 icon: Icons.format_size_rounded,
                 title: '字体大小',
@@ -309,13 +309,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onTap: _pickFont,
               ),
             ]),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(6, 8, 10, 0),
-              child: Text(
-                '允许我们使用你的搜索记录向你推荐相关内容',
-                style: TextStyle(fontSize: 11.5, color: AppTheme.textTertiary),
-              ),
-            ),
 
             // ── 账号 ──
             const _GroupTitle('账号'),
@@ -328,7 +321,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   MaterialPageRoute(builder: (_) => const HistoryAccountsScreen()),
                 ),
               ),
-              const Divider(height: 1, indent: 46),
+              const SizedBox(
+                      width: double.infinity,
+                      child: Divider(height: 1, indent: 52)),
               _row(
                 icon: Icons.location_on_outlined,
                 title: '收货地址',
@@ -336,7 +331,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   MaterialPageRoute(builder: (_) => const AddressListScreen()),
                 ),
               ),
-              const Divider(height: 1, indent: 46),
+              const SizedBox(
+                      width: double.infinity,
+                      child: Divider(height: 1, indent: 52)),
               _row(
                 icon: Icons.visibility_off_outlined,
                 title: '鱼获隐私',
@@ -344,7 +341,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     chevron: true),
                 onTap: _catchPrivacySheet,
               ),
-              const Divider(height: 1, indent: 46),
+              const SizedBox(
+                      width: double.infinity,
+                      child: Divider(height: 1, indent: 52)),
               _row(
                 icon: Icons.headset_mic_outlined,
                 title: '联系客服',
@@ -356,15 +355,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const _GroupTitle('隐私与协议'),
             _card([
               _legalRow('用户协议', 'terms', Icons.description_outlined),
-              const Divider(height: 1, indent: 46),
+              const SizedBox(
+                      width: double.infinity,
+                      child: Divider(height: 1, indent: 52)),
               _legalRow('隐私政策', 'privacy', Icons.shield_outlined),
-              const Divider(height: 1, indent: 46),
+              const SizedBox(
+                      width: double.infinity,
+                      child: Divider(height: 1, indent: 52)),
               _row(
                 icon: Icons.undo_rounded,
                 title: '撤回同意隐私',
                 onTap: _withdrawConsent,
               ),
-              const Divider(height: 1, indent: 46),
+              const SizedBox(
+                      width: double.infinity,
+                      child: Divider(height: 1, indent: 52)),
               _row(
                 icon: Icons.lock_outline_rounded,
                 title: '个人信息与权限',
@@ -372,11 +377,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   MaterialPageRoute(builder: (_) => const PermissionCheckScreen()),
                 ),
               ),
-              const Divider(height: 1, indent: 46),
+              const SizedBox(
+                      width: double.infinity,
+                      child: Divider(height: 1, indent: 52)),
               _legalRow('个人信息收集与使用清单', 'collect', Icons.list_alt_rounded),
-              const Divider(height: 1, indent: 46),
+              const SizedBox(
+                      width: double.infinity,
+                      child: Divider(height: 1, indent: 52)),
               _legalRow('第三方信息共享清单', 'third', Icons.ios_share_rounded),
-              const Divider(height: 1, indent: 46),
+              const SizedBox(
+                      width: double.infinity,
+                      child: Divider(height: 1, indent: 52)),
               _row(
                 icon: Icons.person_remove_outlined,
                 title: '注销账号',
@@ -396,7 +407,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onTap: () => CenterToast.show(context, '当前已是最新版本 $kAppVersion',
                     icon: Icons.verified_outlined),
               ),
-              const Divider(height: 1, indent: 46),
+              const SizedBox(
+                      width: double.infinity,
+                      child: Divider(height: 1, indent: 52)),
               _row(
                 icon: Icons.delete_outline_rounded,
                 title: '清除地图缓存',
@@ -404,7 +417,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     chevron: true),
                 onTap: _clearMapCache,
               ),
-              const Divider(height: 1, indent: 46),
+              const SizedBox(
+                      width: double.infinity,
+                      child: Divider(height: 1, indent: 52)),
               _row(
                 icon: Icons.info_outline_rounded,
                 title: '关于渔报',
@@ -441,13 +456,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // v2.1.59：分组卡圆角与全站统一到 radiusLg，横向内边距 13→14，
+  // 与消息页、我的页的卡片贴边位置对齐（都是 12 外边距 + 14 内边距）。
   Widget _card(List<Widget> children, {double padV = 2}) => Container(
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-          border: Border.all(color: AppTheme.divider),
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+          border: Border.all(color: AppTheme.border),
         ),
-        padding: EdgeInsets.symmetric(horizontal: 13, vertical: padV),
+        padding: EdgeInsets.symmetric(horizontal: 14, vertical: padV),
         child: Column(mainAxisSize: MainAxisSize.min, children: children),
       );
 
@@ -548,16 +566,8 @@ class _GroupTitle extends StatelessWidget {
   final String text;
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 14, 6, 7),
-      child: Text(text,
-          style: const TextStyle(
-              fontSize: 12.5,
-              fontWeight: FontWeight.w600,
-              color: AppTheme.textTertiary)),
-    );
-  }
+  Widget build(BuildContext context) =>
+      UiSectionTitle(text, padding: const EdgeInsets.fromLTRB(4, 18, 4, 8));
 }
 
 // ══════════════════════ 字体大小 ══════════════════════
