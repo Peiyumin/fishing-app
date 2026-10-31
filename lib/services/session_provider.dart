@@ -267,6 +267,36 @@ class SessionProvider extends ChangeNotifier {
     return profile;
   }
 
+  /// 会员开通 / 续费后把会员身份写回全局会话（v2.1.61）
+  ///
+  /// ★ 会员中心下单成功只刷新它自己的 `_info`，不会回写这里。天气 7 天、
+  ///   附近钓友这类「进页面时按会员身份放行」的功能，如果不同步，
+  ///   用户付完钱回来仍是未开通状态，必须杀掉 App 重开 —— 那是明显的 bug。
+  ///   只动会员相关字段，昵称 / 头像 / 登录态一概不碰。
+  Future<void> markMember({
+    required int level,
+    String name = '',
+    String expire = '',
+  }) async {
+    final style = MemberStyle.fromLevel(level);
+    _vipLevel = level <= 0 ? 0 : level;
+    _vipName = name.isNotEmpty ? name : (level <= 0 ? '' : style.name);
+    _vipColor = style.color;
+    _vipColor2 = style.color2;
+    _vipExpire = expire;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_kVipLevel, _vipLevel);
+      await prefs.setString(_kVipName, _vipName);
+      await prefs.setInt(_kVipColor, _vipColor.value);
+      await prefs.setInt(_kVipColor2, _vipColor2.value);
+      await prefs.setString(_kVipExpire, _vipExpire);
+    } catch (_) {
+      // 本地缓存写失败不影响本次会话内的权益
+    }
+  }
+
   /// 修改登录密码（oldPassword / newPassword）
   Future<void> changePassword(String oldPassword, String newPassword) async {
     if (!ApiConfig.enabled) throw Exception('未配置后端，演示模式不支持改密码');
