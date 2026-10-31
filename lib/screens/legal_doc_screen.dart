@@ -52,11 +52,6 @@ class _LegalDocScreenState extends State<LegalDocScreen> {
       appBar: AppBar(
         title: Text(widget.title),
         elevation: 0,
-        backgroundColor: Colors.white,
-        foregroundColor: AppTheme.textPrimary,
-        titleTextStyle: const TextStyle(
-            fontSize: 17, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
-        iconTheme: const IconThemeData(color: AppTheme.textPrimary),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
