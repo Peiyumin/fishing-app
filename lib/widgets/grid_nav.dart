@@ -33,9 +33,11 @@ class GridNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      // v2.1.61：左右跟着页边距收到 10，上下 8 → 6
+      margin: const EdgeInsets.symmetric(
+          horizontal: AppTheme.pagePad, vertical: 6),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
         child: GridView.count(
           crossAxisCount: 5, // 一行 5 个，两行共 10 个
           shrinkWrap: true,
