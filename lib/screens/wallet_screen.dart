@@ -1,3 +1,5 @@
+import 'dart:ui' show FontFeature;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -284,37 +286,58 @@ class _WalletScreenState extends State<WalletScreen> {
     );
   }
 
+  // v2.1.59：三块独立小白卡合成**一行三段**（白卡 + 两条竖线）。
+  //
+  // 原来三张卡各自带粗体数字，且分别是黑 / 红 / 黄三种颜色，一进钱包页
+  // 先看到三个不同颜色的数字，视线被拆散；数字本身没有正负含义，
+  // 颜色应该留给「收入/支出」明细行，统计区统一用近黑。
   Widget _summaryRow() {
-    return Row(
-      children: [
-        _summaryCell('累计收入', '¥${_info.totalIn.toStringAsFixed(2)}', AppTheme.primary),
-        _summaryCell('累计支出', '¥${_info.totalOut.toStringAsFixed(2)}', AppTheme.danger),
-        _summaryCell('累计获得', '${_info.totalPoints}', AppTheme.star),
-      ],
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      padding: const EdgeInsets.symmetric(vertical: 13),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Row(
+        children: [
+          _summaryCell('累计收入', '¥${_info.totalIn.toStringAsFixed(2)}'),
+          _summarySep(),
+          _summaryCell('累计支出', '¥${_info.totalOut.toStringAsFixed(2)}'),
+          _summarySep(),
+          _summaryCell('累计获得', '${_info.totalPoints}'),
+        ],
+      ),
     );
   }
 
-  Widget _summaryCell(String label, String value, Color color) {
+  Widget _summarySep() => Container(
+        width: 1,
+        height: 26,
+        color: AppTheme.divider,
+      );
+
+  Widget _summaryCell(String label, String value) {
     return Expanded(
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 3),
-        padding: const EdgeInsets.symmetric(vertical: 11),
-        decoration: BoxDecoration(
-          color: AppTheme.surface,
-          borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-          border: Border.all(color: AppTheme.border),
-        ),
-        child: Column(
-          children: [
-            Text(label,
-                style: const TextStyle(
-                    fontSize: 10.5, color: AppTheme.textSecondary)),
-            const SizedBox(height: 4),
-            Text(value,
-                style: TextStyle(
-                    fontSize: 13.5, fontWeight: FontWeight.w800, color: color)),
-          ],
-        ),
+      child: Column(
+        children: [
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 10.5, color: AppTheme.textSecondary)),
+          const SizedBox(height: 5),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
       ),
     );
   }
