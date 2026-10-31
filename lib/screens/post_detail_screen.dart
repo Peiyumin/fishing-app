@@ -29,6 +29,7 @@ import '../widgets/center_toast.dart';
 import '../widgets/cover_photo.dart';
 import '../widgets/follow_button.dart';
 import '../utils/json_num.dart';
+import '../utils/gear_options.dart';
 import '../utils/size_text.dart';
 import '../utils/sticky_reveal.dart';
 import 'photo_viewer_screen.dart';
@@ -86,6 +87,11 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   /// 饵料及鱼竿说明（v2.1.57）：作者可填，别人只读
   String _gear = '';
 
+  /// v2.1.58：发布时填的饵料 / 鱼竿长度 / 钓点类型，作者在详情页也能补改
+  String _bait = '';
+  String _rodLength = '';
+  String _waterType = '';
+
   /// 这条渔获能不能关注作者
   ///
   /// ★ v2.1.49：必须再判 `userId` 非空。以前只判 `isMe`，一旦 userId 是空串
@@ -130,6 +136,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     _post = widget.post;
     _following = widget.post.isFollowing;
     _gear = widget.post.gear;
+    _bait = widget.post.bait;
+    _rodLength = widget.post.rodLength;
+    _waterType = widget.post.waterType;
     _loadComments();
     _trackView();
     _loadWeather();
@@ -971,15 +980,17 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     );
   }
 
-  // ══════════════════════ 饵料 & 鱼竿（v2.1.57） ══════════════════════
-
-  /// 饵料及鱼竿说明卡
-  ///
-  /// 位置按用户要求放在「头像名字主卡」正下方。作者本人可以填写/修改，
-  /// 其他人只读；作者没填时本人看到的是引导文案，别人看到「还没有填写」。
+  // ══════════════════ 饵料 · 鱼竿 · 钓点（v2.1.57 / v2.1.58） ══════════════════
+  //
+  // v2.1.58：不只是一段自由文字了 —— 发布时填的「饵料 / 鱼竿长度 / 钓点」
+  // 三项分别成行显示（结构化的东西就该按字段摆），下面才是作者补充的一段话。
+  // 三项都没填、也没写补充时，才显示「还没填」。
   Widget _gearCard() {
-    final text = _gear.trim();
-    final has = text.isNotEmpty;
+    final bait = _bait.trim();
+    final rod = _rodLength.trim();
+    final water = _waterType.trim();
+    final note = _gear.trim();
+    final has = hasGearInfo(bait: bait, rod: rod, water: water, note: note);
     final canEdit = _post.isMe && ApiConfig.enabled;
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -997,7 +1008,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
               const Icon(Icons.set_meal_outlined,
                   size: 15, color: AppTheme.primary),
               const SizedBox(width: 6),
-              const Text('饵料 & 鱼竿',
+              const Text('饵料 · 鱼竿 · 钓点',
                   style: TextStyle(
                       fontSize: 13.5,
                       fontWeight: FontWeight.w800,
@@ -1023,59 +1034,277 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                 const SizedBox(width: 6),
             ],
           ),
-          const SizedBox(height: 2),
-          Padding(
-            padding: const EdgeInsets.only(right: 6),
-            child: Text(
-              has
-                  ? text
-                  : (canEdit
-                      ? '写下这次用的饵料和鱼竿，别人看渔获时也能参考。'
-                      : '作者还没有填写饵料和鱼竿'),
-              style: TextStyle(
-                fontSize: 12.5,
-                height: 1.6,
-                color: has ? AppTheme.textPrimary : AppTheme.textSecondary,
+          const SizedBox(height: 4),
+          if (has) ...[
+            if (water.isNotEmpty) _gearRow('钓点', water),
+            if (bait.isNotEmpty) _gearRow('饵料', bait),
+            if (rod.isNotEmpty) _gearRow('鱼竿', rodLengthText(rod)),
+            if (note.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: Text(note,
+                    style: const TextStyle(
+                        fontSize: 12.5,
+                        height: 1.6,
+                        color: AppTheme.textPrimary)),
+              ),
+            ],
+          ] else
+            Padding(
+              padding: const EdgeInsets.only(right: 6, top: 2),
+              child: Text(
+                canEdit
+                    ? '写下这次用的饵料、竿长和钓点，别人看渔获时也能参考。'
+                    : '作者还没有填写饵料和鱼竿',
+                style: const TextStyle(
+                    fontSize: 12.5,
+                    height: 1.6,
+                    color: AppTheme.textSecondary),
               ),
             ),
-          ),
         ],
       ),
     );
   }
 
-  /// 填写 / 修改饵料鱼竿（作者本人）
-  Future<void> _editGear() async {
-    final ctrl = TextEditingController(text: _gear);
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('饵料 & 鱼竿'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          maxLines: 4,
-          maxLength: 200,
-          decoration: const InputDecoration(
-            hintText: '例：腥香拉饵 + 3.9 米 28 调手竿，1.2 主线 / 0.6 子线',
-            border: OutlineInputBorder(),
-          ),
+  /// 「饵料  腥香拉饵」这样的一行：标签定宽、值可换行
+  Widget _gearRow(String label, String value) => Padding(
+        padding: const EdgeInsets.only(top: 5, right: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 32,
+              child: Text(label,
+                  style: const TextStyle(
+                      fontSize: 12, color: AppTheme.textSecondary)),
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(value,
+                  style: const TextStyle(
+                      fontSize: 12.5,
+                      height: 1.35,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textPrimary)),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('保存')),
-        ],
+      );
+
+  /// 填写 / 修改饵料、鱼竿、钓点（作者本人）
+  ///
+  /// 做成底部弹层而不是单行对话框：三项要分别选，塞进一个输入框只能是
+  /// 一段自由文字，存下来就无法按竿长/水域统计了。
+  Future<void> _editGear() async {
+    var bait = _bait;
+    var rod = _rodLength;
+    var water = _waterType;
+    final noteCtrl = TextEditingController(text: _gear);
+    final baitCtrl = TextEditingController(text: _bait);
+
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          Widget chip(String text, bool on, VoidCallback tap,
+                  {bool dense = false}) =>
+              GestureDetector(
+                onTap: tap,
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                      horizontal: dense ? 10 : 11, vertical: dense ? 5 : 6),
+                  decoration: BoxDecoration(
+                    color: on ? AppTheme.primary : AppTheme.primarySoft,
+                    borderRadius: BorderRadius.circular(dense ? 12 : 14),
+                    border: Border.all(
+                        color: on ? AppTheme.primary : AppTheme.divider),
+                  ),
+                  child: Text(text,
+                      style: TextStyle(
+                          fontSize: dense ? 11.5 : 12,
+                          fontWeight: on ? FontWeight.w700 : FontWeight.w500,
+                          color: on ? Colors.white : AppTheme.textPrimary)),
+                ),
+              );
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 14,
+              bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      const Text('饵料 · 鱼竿 · 钓点',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              color: AppTheme.textPrimary)),
+                      const Spacer(),
+                      TextButton(
+                          onPressed: () => Navigator.of(ctx).pop(false),
+                          child: const Text('取消')),
+                    ],
+                  ),
+                  const Text('饵料',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.textPrimary)),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: baitCtrl,
+                    maxLength: 30,
+                    buildCounter: (_,
+                            {required currentLength,
+                            required maxLength,
+                            required isFocused}) =>
+                        null,
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      hintText: '例：腥香拉饵、蚯蚓、玉米',
+                      hintStyle: const TextStyle(
+                          fontSize: 12.5, color: AppTheme.textSecondary),
+                      filled: true,
+                      fillColor: AppTheme.primarySoft,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 12),
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: const BorderSide(
+                              color: AppTheme.divider)),
+                      enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: const BorderSide(
+                              color: AppTheme.divider)),
+                      focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide:
+                              const BorderSide(color: AppTheme.primary)),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: kBaitQuickPicks
+                        .map((b) => chip(
+                              b,
+                              baitCtrl.text.trim() == b,
+                              () => setSheet(() {
+                                baitCtrl.text =
+                                    baitCtrl.text.trim() == b ? '' : b;
+                              }),
+                              dense: true,
+                            ))
+                        .toList(),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text('鱼竿长度',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.textPrimary)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: kRodLengths
+                        .map((r) => chip('$r 米', rod == r,
+                            () => setSheet(() => rod = rod == r ? '' : r)))
+                        .toList(),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text('钓点',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.textPrimary)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: kWaterTypes
+                        .map((w) => chip(
+                            w,
+                            water == w,
+                            () =>
+                                setSheet(() => water = water == w ? '' : w)))
+                        .toList(),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: noteCtrl,
+                    maxLines: 3,
+                    maxLength: 200,
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: '补充：线组搭配、窝料、当时鱼情（选填）',
+                      hintStyle: const TextStyle(
+                          fontSize: 12.5, color: AppTheme.textSecondary),
+                      filled: true,
+                      fillColor: AppTheme.primarySoft,
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: const BorderSide(
+                              color: AppTheme.divider)),
+                      enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: const BorderSide(
+                              color: AppTheme.divider)),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    height: 44,
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        bait = baitCtrl.text.trim();
+                        Navigator.of(ctx).pop(true);
+                      },
+                      child: const Text('保存',
+                          style: TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
     if (ok != true || !mounted) return;
     try {
-      final saved = await PostService.saveGear(_post.id, ctrl.text.trim());
+      final saved = await PostService.saveGearInfo(
+        _post.id,
+        bait: bait,
+        rodLength: rod,
+        waterType: water,
+        note: noteCtrl.text.trim(),
+      );
       if (!mounted) return;
-      setState(() => _gear = saved);
+      setState(() {
+        _bait = (saved['bait'] ?? bait).toString();
+        _rodLength = (saved['rodLength'] ?? rod).toString();
+        _waterType = (saved['waterType'] ?? water).toString();
+        _gear = (saved['note'] ?? noteCtrl.text.trim()).toString();
+      });
       CenterToast.show(context, '已保存');
     } catch (e) {
       if (!mounted) return;
