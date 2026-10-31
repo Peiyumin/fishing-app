@@ -65,18 +65,8 @@ class _NotifySettingsScreenState extends State<NotifySettingsScreen> {
     final granted = NotifyPrefs.osGranted;
     return Scaffold(
       backgroundColor: AppTheme.background,
-      appBar: AppBar(
-        title: const Text('通知设置'),
-        elevation: 0,
-        backgroundColor: Colors.white,
-        foregroundColor: AppTheme.textPrimary,
-        // 同上：白色顶栏必须把标题和图标一起改深，否则白字白底
-        titleTextStyle: const TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: AppTheme.textPrimary),
-        iconTheme: const IconThemeData(color: AppTheme.textPrimary),
-      ),
+      // 顶栏样式全部交给 AppBarTheme（v2.1.59 起主题就是浅色 + 近黑标题）
+      appBar: AppBar(title: const Text('通知设置')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 28),
         children: [
