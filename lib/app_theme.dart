@@ -131,16 +131,22 @@ class AppTheme {
   ///
   /// v2.1.61：12 → 8。用户反馈「卡片与卡片之间间距太大」，12pt 连着
   /// 卡片自己的 12pt 内边距，视觉上会变成一道 24pt 的白沟。
-  static const double cardGap = 8;
+  /// v2.1.62：8 → 6（用户继续要求「再小一点」）。
+  static const double cardGap = 6;
 
   /// 页面左右留白（列表/卡片统一用这一档）
   ///
   /// v2.1.61：16 / 12 / 14 三种写法并存的局面收成 10 —— 一行里两列卡片
   /// 中间 8、两边 16 的话，两侧的缝会明显比中间宽。
-  static const double pagePad = 10;
+  /// v2.1.62：10 → 8。用户反馈「两边离边的边距也要小一点」，
+  /// 并且要求这一档继续往下收；两列卡片保持「两侧 8 > 中间 6」的
+  /// 主次关系，隔着屏幕看两侧仍然比中间宽一点，不会显得挤。
+  static const double pagePad = 8;
 
   /// 双列瀑布流的行列间距
-  static const double gridGap = 8;
+  ///
+  /// v2.1.62：8 → 6（配合 pagePad 8，两侧 8 / 中间 6 / 行间 6）。
+  static const double gridGap = 6;
 
   static const double fsCaption = 12;
   static const double fsBody = 14;
@@ -224,6 +230,25 @@ class AppTheme {
         return primaryLight;
     }
   }
+
+  // ───────────────────── 垂钓指数（全站唯一一档） ─────────────────────
+  //
+  // ★ v2.1.62：首页天气卡的指数和天气页的指数原来各写一套：
+  //   首页是「≥80 近黑 / ≥60 暖金 / ≥40 橙 / 其余红」的**填充色**，
+  //   数字是压在色块上的白字；天气页是「≥90 近黑 / ≥80 黄绿深阶 /
+  //   ≥45 暖金深阶 / 其余灰」的**文字色**。
+  //   于是同一个 85 分：首页是一颗黑胶囊白字，天气页是一个黄绿数字 ——
+  //   用户一眼就看出两个页面在说两回事。
+  //   现在统一到这一档（白底可读的文字色），两边同一分数必定同色。
+  static Color biteScore(int s) {
+    if (s >= 90) return primary;
+    if (s >= 80) return accentDark;
+    if (s >= 45) return starDark;
+    return textTertiary;
+  }
+
+  /// 同上的浅色底：胶囊 / 徽章填充（12% 透明度，白底上不抢文字）
+  static Color biteScoreSoft(int s) => biteScore(s).withOpacity(.12);
 
   static final ThemeData light = ThemeData(
     useMaterial3: true,
