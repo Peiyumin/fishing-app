@@ -327,7 +327,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           _coverCard(sp, demo),
           const SizedBox(height: 6),
           const Text('背景图会显示在你的主页顶部，别人也能看到',
-              style: TextStyle(fontSize: 11.5, color: Colors.grey)),
+              style: TextStyle(fontSize: 11.5, color: AppTheme.textTertiary)),
           const SizedBox(height: 18),
           // 头像
           Center(
@@ -364,7 +364,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           const SizedBox(height: 8),
           const Center(
             child: Text('点击相机图标更换头像',
-                style: TextStyle(fontSize: 12, color: Colors.grey)),
+                style: TextStyle(fontSize: 12, color: AppTheme.textTertiary)),
           ),
           const SizedBox(height: 20),
           // 昵称
