@@ -66,7 +66,7 @@ class _ActivityListScreenState extends State<ActivityListScreen> {
           ),
           TextButton.icon(
             onPressed: _openPublish,
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
             icon: const Icon(Icons.add_circle_outline, size: 18),
             label: const Text('发布', style: TextStyle(fontSize: 13.5)),
           ),
