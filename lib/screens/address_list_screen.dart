@@ -98,11 +98,6 @@ class _AddressListScreenState extends State<AddressListScreen> {
       appBar: AppBar(
         title: const Text('收货地址'),
         elevation: 0,
-        backgroundColor: Colors.white,
-        foregroundColor: AppTheme.textPrimary,
-        titleTextStyle: const TextStyle(
-            fontSize: 17, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
-        iconTheme: const IconThemeData(color: AppTheme.textPrimary),
         actions: [
           TextButton(
             onPressed: () => _edit(),
