@@ -92,7 +92,7 @@ class _ArticleListScreenState extends State<ArticleListScreen>
           if (widget.allowPublish)
             TextButton.icon(
               onPressed: _openPublish,
-              style: TextButton.styleFrom(foregroundColor: Colors.white),
+              style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
               icon: const Icon(Icons.edit_outlined, size: 18),
               label: const Text('投稿', style: TextStyle(fontSize: 13.5)),
             ),
