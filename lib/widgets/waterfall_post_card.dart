@@ -95,15 +95,12 @@ class WaterfallPostCard extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(.05),
-              blurRadius: 10,
-              offset: const Offset(0, 3),
-            ),
-          ],
+          color: AppTheme.surface,
+          // v2.1.59：圆角/阴影改走设计 token（原来是写死的 14 + 裸 BoxShadow，
+          // 和全站其它卡片不是一档，摆在一起能看出圆角不一样大）
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          border: Border.all(color: AppTheme.divider),
+          boxShadow: AppTheme.lightShadow,
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(
@@ -215,13 +212,7 @@ class WaterfallPostCard extends StatelessWidget {
       children: [
         if (_cover.isEmpty)
           Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFF1D242E), Color(0xFF07080C)],
-              ),
-            ),
+            decoration: const BoxDecoration(gradient: AppTheme.brandGradient),
             alignment: Alignment.center,
             child: Padding(
               padding: const EdgeInsets.all(12),
@@ -242,9 +233,9 @@ class WaterfallPostCard extends StatelessWidget {
             imageUrl: ApiConfig.mediaUrl(_cover) ?? '',
             fit: BoxFit.cover,
             placeholder: (_, __) =>
-                Container(color: AppTheme.primaryLight),
+                Container(color: AppTheme.primarySoft),
             errorWidget: (_, __, ___) =>
-                Container(color: AppTheme.primaryLight),
+                Container(color: AppTheme.primarySoft),
           ),
 
         // 底部渐变（压在鱼种名下面）
