@@ -451,13 +451,13 @@ class _FishGuideScreenState extends State<FishGuideScreen>
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 18),
+      // v2.1.59：这块原来是「近黑→纯黑」的渐变大卡，一进图鉴页先撞 260pt 的
+      // 黑块；改成与全站一致的白卡后，整页是浅色的一片，头像和等级数字
+      // 反而更突出（一屏只留指数/荧光这类真正的强调色）
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [AppTheme.primaryDark, AppTheme.primary],
-        ),
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+        border: Border.all(color: AppTheme.border),
       ),
       child: Column(
         children: [
@@ -466,7 +466,7 @@ class _FishGuideScreenState extends State<FishGuideScreen>
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               border: Border.all(
-                  color: logged ? AppTheme.star : Colors.white30, width: 2),
+                  color: logged ? AppTheme.star : AppTheme.border, width: 2),
             ),
             child: CircleAvatar(
               radius: 34,
@@ -487,26 +487,26 @@ class _FishGuideScreenState extends State<FishGuideScreen>
           if (!logged) ...[
             const Text('未登录',
                 style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 19,
-                    fontWeight: FontWeight.w800)),
+                    color: AppTheme.textPrimary,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700)),
             const SizedBox(height: 6),
-            Text('登录后开启「我的鱼种图鉴」',
-                style: TextStyle(
-                    color: Colors.white.withOpacity(0.88), fontSize: 12)),
+            const Text('登录后开启「我的鱼种图鉴」',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
             const SizedBox(height: 12),
             SizedBox(
               height: 34,
-              child: OutlinedButton(
+              child: ElevatedButton(
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const AuthScreen()),
                 ),
-                style: OutlinedButton.styleFrom(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primary,
                   foregroundColor: Colors.white,
-                  side: const BorderSide(color: Colors.white70),
+                  elevation: 0,
                   padding: const EdgeInsets.symmetric(horizontal: 22),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(18)),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusPill)),
                 ),
                 child: const Text('立即登录',
                     style:
@@ -522,7 +522,7 @@ class _FishGuideScreenState extends State<FishGuideScreen>
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                  color: Colors.white,
+                  color: AppTheme.textPrimary,
                   fontSize: 17,
                   fontWeight: FontWeight.w700),
             ),
@@ -532,15 +532,15 @@ class _FishGuideScreenState extends State<FishGuideScreen>
               children: [
                 Text('Lv.${lv.level}',
                     style: const TextStyle(
-                        color: AppTheme.star,
-                        fontSize: 16,
+                        color: AppTheme.starDark,
+                        fontSize: 15,
                         fontWeight: FontWeight.w800)),
                 const SizedBox(width: 6),
                 Text(lv.name,
                     style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800)),
+                        color: AppTheme.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700)),
               ],
             ),
             const SizedBox(height: 6),
@@ -548,8 +548,8 @@ class _FishGuideScreenState extends State<FishGuideScreen>
               lv.nextName.isEmpty
                   ? '已解锁 ${_guide.unlockedCount} 种，达到最高等级'
                   : '再发现 $need 个新鱼种，即可晋级 Lv.${lv.level + 1}「${lv.nextName}」',
-              style: TextStyle(
-                  color: Colors.white.withOpacity(0.88), fontSize: 12),
+              style: const TextStyle(
+                  color: AppTheme.textSecondary, fontSize: 12),
             ),
           ],
         ],
@@ -568,10 +568,10 @@ class _FishGuideScreenState extends State<FishGuideScreen>
       padding: const EdgeInsets.symmetric(vertical: 12),
       decoration: BoxDecoration(
         color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         border: Border.all(color: AppTheme.border),
       ),
-      child:       Row(
+      child: Row(
         children: [
           _statCell('常见鱼种', '${_guide.fresh.length + _guide.salt.length - rare}'),
           Container(width: 1, height: 26, color: AppTheme.divider),
@@ -587,7 +587,7 @@ class _FishGuideScreenState extends State<FishGuideScreen>
                 style: const TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w800,
-                    color: AppTheme.primary)),
+                    color: AppTheme.textPrimary)),
             const SizedBox(height: 2),
             Text(label,
                 style: const TextStyle(
