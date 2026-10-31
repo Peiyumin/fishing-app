@@ -11,9 +11,15 @@ import 'chat_screen.dart';
 import 'user_profile_screen.dart';
 import '../widgets/app_refresh.dart';
 
-/// 附近钓友：所有登录用户可用；按定位由近到远，列表含头像/名字/签名/关注/私信/距离
+/// 附近钓友：按定位由近到远，列表含头像/名字/签名/关注/私信/距离
+///
+/// v2.1.61：[embedded] = true 时不再自带 Scaffold / AppBar，
+/// 直接嵌进「发现」页的「钓友」Tab（那一页自己已经有顶栏和 tab 条）。
+/// 逻辑（定位、关注、私信、空态）两边完全共用，不做第二份。
 class NearbyAnglersScreen extends StatefulWidget {
-  const NearbyAnglersScreen({super.key});
+  final bool embedded;
+
+  const NearbyAnglersScreen({super.key, this.embedded = false});
 
   @override
   State<NearbyAnglersScreen> createState() => _NearbyAnglersScreenState();
@@ -116,6 +122,12 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final content = AppRefresh(
+      color: AppTheme.primary,
+      onRefresh: _init,
+      child: _body(),
+    );
+    if (widget.embedded) return content;
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
@@ -123,11 +135,7 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
             style: TextStyle(fontWeight: FontWeight.w700)),
         centerTitle: true,
       ),
-      body: AppRefresh(
-        color: AppTheme.primary,
-        onRefresh: _init,
-        child: _body(),
-      ),
+      body: content,
     );
   }
 
@@ -143,9 +151,11 @@ class _NearbyAnglersScreenState extends State<NearbyAnglersScreen> {
       return _empty();
     }
     return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+      // v2.1.61：跟着全站页边距收窄（12 → pagePad，间距 8 → 6）
+      padding: EdgeInsets.fromLTRB(
+          AppTheme.pagePad, widget.embedded ? 8 : 10, AppTheme.pagePad, 24),
       itemCount: _list.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      separatorBuilder: (_, __) => const SizedBox(height: 6),
       itemBuilder: (_, i) => _card(_list[i]),
     );
   }
