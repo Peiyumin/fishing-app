@@ -68,16 +68,16 @@ class _LureScreenState extends State<LureScreen>
         actions: [
           TextButton.icon(
             onPressed: _openPublish,
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
             icon: const Icon(Icons.edit_outlined, size: 17),
             label: const Text('投稿', style: TextStyle(fontSize: 13.5)),
           ),
         ],
         bottom: TabBar(
           controller: _tab,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-          indicatorColor: Colors.white,
+          labelColor: AppTheme.primary,
+          unselectedLabelColor: AppTheme.textSecondary,
+          indicatorColor: AppTheme.primary,
           indicatorSize: TabBarIndicatorSize.label,
           labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
           tabs: _tabs.map((t) => Tab(text: t.label)).toList(),
