@@ -3,17 +3,20 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
 import '../models/fishing_species.dart';
 import '../models/fish.dart';
 import '../models/weather_forecast.dart';
 import '../services/location_service.dart';
+import '../services/session_provider.dart';
 import '../services/weather_service.dart';
 import '../services/fish_service.dart';
 import '../services/tide_service.dart';
 import '../utils/geo_names.dart';
 import '../widgets/location_prompt.dart';
+import '../widgets/member_gate.dart';
 import '../widgets/app_refresh.dart';
 
 /// 天气页调色板 —— 深墨绿水面，不是深蓝夜空
@@ -233,13 +236,11 @@ class _WeatherScreenState extends State<WeatherScreen> {
         centerTitle: true,
         foregroundColor: _Pal.txt,
         systemOverlayStyle: SystemUiOverlayStyle.dark,
-        // ★ 必须显式给 titleTextStyle / iconTheme 上色：
-        //   AppBarTheme 里的 iconTheme 是写死的白色，只设 foregroundColor
-        //   管不到标题和图标 —— 换浅底之后「钓鱼天气预报」和刷新按钮
-        //   就是白字白底，等于整条顶栏消失。
-        titleTextStyle: const TextStyle(
-            fontSize: 17, fontWeight: FontWeight.w700, color: _Pal.txt),
-        iconTheme: const IconThemeData(color: _Pal.txt),
+        // v2.1.61：只留 foregroundColor，不再自己写死 titleTextStyle。
+        //   AppBarTheme 在 2.1.59 已经统一成「浅底 + 近黑标题 17/w700」，
+        //   这里再覆盖一遍等于把主题里的字体族也一起丢了 —— 换字体 /
+        //   中文回退时这一页的标题会单独失效（测试渲染里直接显示成方块）。
+        //   iconTheme 同理，主题已给 textPrimary。
         title: const Text('钓鱼天气预报'),
         actions: [
           IconButton(
@@ -305,10 +306,27 @@ class _WeatherScreenState extends State<WeatherScreen> {
       for (var i = 0; i < b.hours.length; i++) b.hours[i].time: i
     };
 
-    final dayIdx = _selected.clamp(0, b.days.length - 1);
+    // 会员看满 7 天；非会员只放行前 2 天（第 3 天起挂锁，点了引导开通）
+    //
+    // 用 listen:false + try/catch 是一处刻意的取舍：
+    //   · 天气页是独立 push 的页面，测试里会裸 pump（没有 provider 作用域），
+    //     listen:true 会直接抛 ProviderNotFound，把整页测试带崩；
+    //   · 开通会员回来后由 [_unlockForecast] 手动 setState 触发重读，
+    //     这条路径已经覆盖了「刚买完要立刻放行」的场景。
+    var isMember = false;
+    try {
+      isMember = Provider.of<SessionProvider>(context, listen: false).isMember;
+    } catch (_) {
+      isMember = false;
+    }
+    final unlockedDays = isMember ? b.days.length : 2;
+
+    // 用 `_selected` 之前先夹到「当前身份能看的天数」：
+    // 会员到期后如果把选中页停在 7 天里的第 5 天，这里会把它拉回第 2 天，
+    // 否则逐时表会把锁住那天的数据漏出来。
+    final dayIdx = _selected.clamp(0, (unlockedDays - 1).clamp(0, b.days.length - 1));
     final day = b.days[dayIdx];
     final dayHours = b.hoursOf(day.date);
-
     // 「现在」那一行的高亮，与顶部卡同一个下标（见 _currentHourIndex）
     final nowIdx = _currentHourIndex(b);
 
@@ -357,6 +375,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
           sp: sp,
           mode: mode,
           selected: dayIdx,
+          unlockedDays: unlockedDays,
+          onLocked: _unlockForecast,
           onSelect: (i) => setState(() => _selected = i),
         ),
         const SizedBox(height: 2),
@@ -396,6 +416,22 @@ class _WeatherScreenState extends State<WeatherScreen> {
   }
 
   // ───────────────────────── 弹层 ─────────────────────────
+
+  /// 点「锁」的日期胶囊：非会员只放行 2 天，其余 5 天引导开通会员
+  ///
+  /// 开通成功后 [ensureMemberFeature] 会把会员身份写回 SessionProvider，
+  /// 这里的 setState 让整页立刻按「会员 7 天」重排，不用退出重进。
+  Future<void> _unlockForecast() async {
+    final ok = await ensureMemberFeature(
+      context,
+      title: '解锁 7 天预报',
+      desc: '普通用户可查看未来 2 天的天气与鱼情。开通会员后解锁完整 7 天：'
+          '逐小时气压、水温、风与鱼口评分，以及附近钓友、不限条数私信。',
+      confirmLabel: '开通会员',
+    );
+    if (!mounted) return;
+    if (ok) setState(() {});
+  }
 
   void _sheet(String title, List<Widget> body) {
     showModalBottomSheet(
@@ -1229,6 +1265,16 @@ class _DateStrip extends StatelessWidget {
   final FishingSpecies sp;
   final FishingMode mode;
   final int selected;
+
+  /// 当前身份能免费看的天数（会员 = 全部 7 天，普通用户 = 2 天）
+  ///
+  /// v2.1.61：天气改会员功能 —— 非会员只放行前 2 天，第 3 天起在胶囊上
+  /// 画一把小锁，点了弹开通会员；会员直接看满 7 天。
+  final int unlockedDays;
+
+  /// 点了锁住的日期
+  final VoidCallback onLocked;
+
   final ValueChanged<int> onSelect;
 
   const _DateStrip({
@@ -1238,6 +1284,8 @@ class _DateStrip extends StatelessWidget {
     required this.sp,
     required this.mode,
     required this.selected,
+    required this.unlockedDays,
+    required this.onLocked,
     required this.onSelect,
   });
 
@@ -1274,19 +1322,23 @@ class _DateStrip extends StatelessWidget {
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, i) {
           final d = bundle.days[i].date;
-          final sel = i == selected;
-          final sc = _dayScore(i);
+          final sel = i == selected && i < unlockedDays;
+          final locked = i >= unlockedDays;
+          final sc = locked ? 0 : _dayScore(i);
           final n = Bite.fishCount(sc);
           final disabled = sc < 45;
 
           return GestureDetector(
-            onTap: () => onSelect(i),
+            // 锁着的日期不切页，直接引导开通会员
+            onTap: locked ? onLocked : () => onSelect(i),
             child: Container(
               width: 62,
               padding: const EdgeInsets.symmetric(vertical: 8),
               decoration: BoxDecoration(
                 gradient: null,
-                color: sel ? AppTheme.primary : AppTheme.surface,
+                color: sel
+                    ? AppTheme.primary
+                    : (locked ? AppTheme.primarySoft : AppTheme.surface),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
                   color: sel ? AppTheme.primary : _Pal.line,
@@ -1311,6 +1363,11 @@ class _DateStrip extends StatelessWidget {
                         fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 5),
+                  if (locked)
+                    // 小锁：比圆点显眼一点，但不喧哗（同一个灰阶，只有图标）
+                    const Icon(Icons.lock_outline,
+                        size: 12, color: _Pal.muted)
+                  else
                   // 鱼情 3 档用「点」表示：原来是 3 个 8px 的 🐟，
                   // 一屏 7 张日期卡就是 21 条彩色小鱼 —— emoji 自带
                   // 橙红蓝绿，直接破坏「黑白灰 + 一个荧光黄绿」的体系，
