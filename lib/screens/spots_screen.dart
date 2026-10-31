@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
+import '../widgets/ui_kit.dart';
 
 import '../models/fishing_spot.dart';
 import '../services/location_service.dart';
@@ -177,9 +178,6 @@ class _SpotsScreenState extends State<SpotsScreen>
         title: const Text('钓点'),
         // 头部高度与其他主 Tab 统一（首页 46，发现 44 + 44）
         toolbarHeight: 46,
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
-        ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(44),
           child: Container(
@@ -298,7 +296,7 @@ class _SpotsScreenState extends State<SpotsScreen>
                         Center(
                           child: Text('点右上角「+」提交钓场，审核通过后展示',
                               style: TextStyle(
-                                  fontSize: 12, color: Colors.grey)),
+                                  fontSize: 12, color: AppTheme.textTertiary)),
                         ),
                       ])
                     : ListView.separated(
@@ -315,188 +313,170 @@ class _SpotsScreenState extends State<SpotsScreen>
   }
 
   /// 图2 样式钓场卡片：封面 / 名称 / 标签 / 星级 / 地址距离 / 鱼种 / 收费 / 简介
+  /// 钓点卡（列表页）
+  ///
+  /// v2.1.59 重排：原来一屏塞了「名称 / 标签 / 地址 / 鱼种 / 门票 / 描述」六行，
+  /// 每行前面一个彩色 emoji（📍🐟🎣📝），是整页最「花」的地方；
+  /// 缩略图固定 96 高，却被六行文字撑到 150 多，图和字完全不成比例。
+  /// 现在压成四行 —— 名称+评分 / 标签 / 地址+距离 / 门票+评论数，
+  /// 图标一律用 Material 线性图标（textTertiary），描述留给详情页。
   Widget _venueCard(FishingSpot s) {
     final tags = s.tags
         .split(',')
         .map((t) => t.trim())
         .where((t) => t.isNotEmpty)
+        .take(3)
         .toList();
     final distance = _distanceText(s);
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () => _openDetail(s),
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 封面
-              ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: SizedBox(
-                  width: 112,
-                  height: 96,
-                  child: s.coverUrl != null
-                      ? Image.network(
-                          s.coverUrl!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            color: AppTheme.primaryLight,
-                            child: const Icon(Icons.phishing,
-                                color: AppTheme.primary),
-                          ),
-                        )
-                      : Container(
-                          color: AppTheme.primaryLight,
-                          child: const Icon(Icons.phishing,
-                              color: AppTheme.primary),
-                        ),
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _openDetail(s),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            // IntrinsicHeight + stretch：缩略图高度**跟着文字列走**，
+            // 不再固定 96 —— 否则标签换行时卡片被文字撑高、图下方留一块空白
+            child: IntrinsicHeight(
+              child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 封面：与右侧内容等高
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                  child: SizedBox(
+                    width: 96,
+                    child: s.coverUrl != null
+                        ? Image.network(
+                            s.coverUrl!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => _venueThumb(),
+                          )
+                        : _venueThumb(),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              // 信息区
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // 名称 + 星级
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(s.name,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // ① 名称 + 评分
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              s.name,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                   fontSize: 15,
-                                  fontWeight: FontWeight.bold)),
-                        ),
-                        const Icon(Icons.star,
-                            size: 15, color: AppTheme.star),
-                        const SizedBox(width: 3),
-                        Text(s.rating.toStringAsFixed(1),
-                            style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: AppTheme.star)),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    // 标签（推荐 / 黑坑 / 电话认证…）
-                    if (tags.isNotEmpty)
-                      Wrap(
-                        spacing: 5,
-                        runSpacing: 4,
-                        children: tags
-                            .map((t) => Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: t.contains('推荐')
-                                        ? AppTheme.warningLight
-                                        : t.contains('认证')
-                                            ? AppTheme.primaryLight
-                                            : AppTheme.violetLight,
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(t,
-                                      style: TextStyle(
-                                          fontSize: 10,
-                                          color: t.contains('推荐')
-                                              ? AppTheme.warning
-                                              : t.contains('认证')
-                                                  ? AppTheme.primary
-                                                  : AppTheme.violet)),
-                                ))
-                            .toList(),
-                      ),
-                    const SizedBox(height: 4),
-                    // 地址 + 距离
-                    Row(
-                      children: [
-                        const Icon(Icons.location_on_outlined,
-                            size: 13, color: Colors.grey),
-                        const SizedBox(width: 3),
-                        Expanded(
-                          child: Text(
-                            s.address.isNotEmpty ? s.address : '地址待补充',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 11.5, color: Colors.grey),
+                                  height: 1.2,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTheme.textPrimary),
+                            ),
                           ),
-                        ),
-                        if (distance != null) ...[
                           const SizedBox(width: 6),
-                          Text(distance,
-                              style: const TextStyle(
-                                  fontSize: 11.5,
-                                  color: AppTheme.textSecondary,
-                                  fontWeight: FontWeight.w600)),
+                          const Icon(Icons.star_rounded,
+                              size: 13, color: AppTheme.star),
+                          const SizedBox(width: 1),
+                          Text(
+                            s.rating.toStringAsFixed(1),
+                            style: const TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.textSecondary),
+                          ),
                         ],
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    // 鱼种 + 评论数
-                    Row(
-                      children: [
-                        const Icon(Icons.set_meal_outlined,
-                            size: 13, color: Colors.grey),
-                        const SizedBox(width: 3),
-                        Expanded(
-                          child: Text(
-                            s.fish.isNotEmpty ? s.fish : '鱼种待补充',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 11.5, color: Colors.grey),
-                          ),
-                        ),
-                        const Icon(Icons.chat_bubble_outline,
-                            size: 12, color: Colors.grey),
-                        const SizedBox(width: 3),
-                        Text('${s.commentCount}',
-                            style: const TextStyle(
-                                fontSize: 11.5, color: Colors.grey)),
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    // 收费
-                    Row(
-                      children: [
-                        const Icon(Icons.payments_outlined,
-                            size: 13, color: Colors.grey),
-                        const SizedBox(width: 3),
-                        Expanded(
-                          child: Text(
-                            s.fee.isNotEmpty ? s.fee : '收费待补充',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 11.5, color: Colors.grey),
-                          ),
+                      ),
+                      // ② 标签：推荐走淡黄绿，其余中性灰 —— 一屏最多一个强调色
+                      if (tags.isNotEmpty) ...[
+                        const SizedBox(height: 7),
+                        Wrap(
+                          spacing: 5,
+                          runSpacing: 4,
+                          children: tags
+                              .map((t) => UiTag(t,
+                                  tone: t.contains('推荐')
+                                      ? UiTagTone.accent
+                                      : UiTagTone.neutral))
+                              .toList(),
                         ),
                       ],
-                    ),
-                    if (s.description.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(s.description,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 11.5, color: Colors.black54)),
+                      const SizedBox(height: 9),
+                      // ③ 地址 + 距离
+                      Row(
+                        children: [
+                          const Icon(Icons.place_outlined,
+                              size: 12.5, color: AppTheme.textTertiary),
+                          const SizedBox(width: 3),
+                          Expanded(
+                            child: Text(
+                              s.address.isNotEmpty ? s.address : '地址待补充',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 11.5, color: AppTheme.textSecondary),
+                            ),
+                          ),
+                          if (distance != null) ...[
+                            const SizedBox(width: 6),
+                            Text(distance,
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    color: AppTheme.textTertiary)),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      // ④ 门票 + 评论数
+                      Row(
+                        children: [
+                          const Icon(Icons.local_offer_outlined,
+                              size: 12, color: AppTheme.textTertiary),
+                          const SizedBox(width: 3),
+                          Expanded(
+                            child: Text(
+                              s.fee.isNotEmpty ? s.fee : '收费待补充',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 11.5, color: AppTheme.textSecondary),
+                            ),
+                          ),
+                          const Icon(Icons.mode_comment_outlined,
+                              size: 11.5, color: AppTheme.textTertiary),
+                          const SizedBox(width: 3),
+                          Text('${s.commentCount}',
+                              style: const TextStyle(
+                                  fontSize: 11, color: AppTheme.textTertiary)),
+                        ],
+                      ),
                     ],
-                  ],
+                  ),
                 ),
+              ],
               ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
+
+  /// 无封面时的占位（浅灰底 + 近黑钓钩，不用纯灰块）
+  Widget _venueThumb() => Container(
+        color: AppTheme.primarySoft,
+        alignment: Alignment.center,
+        child: const Icon(Icons.phishing,
+            size: 22, color: AppTheme.textTertiary),
+      );
 
   /// 竖排文字：每个汉字一行（中文竖排没有原生排版，用一列 Text 最稳）
   List<Widget> _vChars(String s, {double size = 12, FontWeight w = FontWeight.w600}) {
@@ -659,7 +639,7 @@ class _SpotsScreenState extends State<SpotsScreen>
               SizedBox(height: 8),
               Center(
                 child: Text('点右上角「+」提交渔具店，审核通过后展示',
-                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    style: TextStyle(fontSize: 12, color: AppTheme.textTertiary)),
               ),
             ])
           : ListView.separated(
@@ -759,7 +739,7 @@ class _SpotsScreenState extends State<SpotsScreen>
                     Row(
                       children: [
                         const Icon(Icons.category_outlined,
-                            size: 13, color: Colors.grey),
+                            size: 13, color: AppTheme.textTertiary),
                         const SizedBox(width: 3),
                         Expanded(
                           child: Text(
@@ -777,7 +757,7 @@ class _SpotsScreenState extends State<SpotsScreen>
                     Row(
                       children: [
                         const Icon(Icons.location_on_outlined,
-                            size: 13, color: Colors.grey),
+                            size: 13, color: AppTheme.textTertiary),
                         const SizedBox(width: 3),
                         Expanded(
                           child: Text(
@@ -785,7 +765,7 @@ class _SpotsScreenState extends State<SpotsScreen>
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                                fontSize: 11.5, color: Colors.grey),
+                                fontSize: 11.5, color: AppTheme.textTertiary),
                           ),
                         ),
                         if (distance != null) ...[
@@ -802,11 +782,11 @@ class _SpotsScreenState extends State<SpotsScreen>
                     Row(
                       children: [
                         const Icon(Icons.rate_review_outlined,
-                            size: 12, color: Colors.grey),
+                            size: 12, color: AppTheme.textTertiary),
                         const SizedBox(width: 3),
                         Text('${s.commentCount} 条顾客评价',
                             style: const TextStyle(
-                                fontSize: 11.5, color: Colors.grey)),
+                                fontSize: 11.5, color: AppTheme.textTertiary)),
                       ],
                     ),
                   ],
