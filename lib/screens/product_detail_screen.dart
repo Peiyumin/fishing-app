@@ -239,9 +239,6 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('商品详情'),
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
-        ),
       ),
       bottomNavigationBar: _bottomBar(),
       body: ListView(
