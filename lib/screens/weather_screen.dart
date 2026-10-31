@@ -2166,10 +2166,11 @@ Color _scoreColor(int s) {
   // 四档要能一眼分出高低：爆护最亮（它就是用户扫表时在找的那几行），
   // 有口次亮，口弱转橙（不是好鱼情），<45 直接降到次要文字色。
   // 原来 ≥90 用暗绿、≥80 用亮绿，两档几乎同色，等于没有分级。
-  if (s >= 90) return AppTheme.primary;
-  if (s >= 80) return _Pal.green;
-  if (s >= 45) return _Pal.gold;
-  return _Pal.muted;
+  //
+  // ★ v2.1.62：判档逻辑挪到 [AppTheme.biteScore]，首页天气卡改用同一
+  //   条函数 —— 同一个分数在首页和天气页必须同色，否则用户会以为
+  //   其中一处算错了。这里只做转发，方便本页十余处调用点不必改名。
+  return AppTheme.biteScore(s);
 }
 
 /// AI 因素条目（本地引擎与 AI 大模型面板共用）
