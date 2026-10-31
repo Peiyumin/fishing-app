@@ -689,10 +689,12 @@ class _HomeScreenState extends State<HomeScreen>
             SizedBox(
               // 卡片自身 96 高（见 SpotCard.cardHeight），这里只留一点呼吸空间，
               // 高度写死可以彻底避免「加了标签把卡片撑变形 / 被裁掉」
-              height: SpotCard.cardHeight + 6,
+              //
+              // v2.1.61：+6 → +2，横向列表的上下再无谓留白
+              height: SpotCard.cardHeight + 2,
               child: ListView(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                padding: const EdgeInsets.symmetric(horizontal: AppTheme.pagePad),
                 children: _spots
                     .map((s) => SpotCard(
                           spot: s,
@@ -733,7 +735,11 @@ class _HomeScreenState extends State<HomeScreen>
                           WaterfallGrid(
                             posts: _posts,
                             shrinkWrap: true,
-                            padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+                            padding: const EdgeInsets.fromLTRB(
+                                AppTheme.pagePad,
+                                4,
+                                AppTheme.pagePad,
+                                AppTheme.pagePad),
                             onTap: (p) => _guard(() =>
                                 Navigator.of(context).push(MaterialPageRoute(
                                     builder: (_) => PostDetailScreen(post: p)))),
