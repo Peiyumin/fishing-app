@@ -724,7 +724,8 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
           TextButton(
             onPressed: _showPrivacy,
             child: const Text('隐私规范',
-                style: TextStyle(color: Colors.white, fontSize: 13)),
+                style: TextStyle(
+                    color: AppTheme.textSecondary, fontSize: 13)),
           ),
         ],
       ),
