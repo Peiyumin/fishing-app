@@ -304,8 +304,8 @@ class _MemberCenterScreenState extends State<MemberCenterScreen> {
             padding: EdgeInsets.zero,
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2,
-              mainAxisSpacing: 8,
-              crossAxisSpacing: 8,
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
               mainAxisExtent: 76,
             ),
             itemCount: perks.length,
@@ -315,7 +315,8 @@ class _MemberCenterScreenState extends State<MemberCenterScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 decoration: BoxDecoration(
                   color: AppTheme.surface,
-                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                  // 与商城商品卡、信息流卡同一档圆角（16），不再用 12
+                  borderRadius: BorderRadius.circular(AppTheme.radiusMd),
                   border: Border.all(color: AppTheme.border),
                 ),
                 child: Row(
@@ -370,15 +371,27 @@ class _MemberCenterScreenState extends State<MemberCenterScreen> {
       return Padding(
         padding: const EdgeInsets.fromLTRB(12, 18, 12, 0),
         child: Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: AppTheme.surface,
-            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-            border: Border.all(color: AppTheme.border),
+            // 用「提示」的语义色（暖黄极浅底），而不是一张和内容卡同样的白卡 ——
+            // 原来这块白卡看着像"内容为空"，其实是一句运营提示
+            color: AppTheme.warningLight,
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
           ),
-          child: const Text('后台暂未配置会员套餐，请先在「运营配置 → 会员套餐」添加',
-              style: TextStyle(
-                  fontSize: 12.5, color: AppTheme.textSecondary, height: 1.5)),
+          child: const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline, size: 16, color: AppTheme.warning),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text('后台暂未配置会员套餐，请先在「运营配置 → 会员套餐」添加',
+                    style: TextStyle(
+                        fontSize: 12.5,
+                        color: AppTheme.warning,
+                        height: 1.5)),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -580,7 +593,8 @@ class _MemberCenterScreenState extends State<MemberCenterScreen> {
                 elevation: 0,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(24)),
+                    borderRadius:
+                        BorderRadius.circular(AppTheme.radiusMd)),
               ),
               onPressed: _buying ? null : _buy,
               child: _buying
@@ -616,8 +630,11 @@ class _MemberCenterScreenState extends State<MemberCenterScreen> {
           padding: const EdgeInsets.symmetric(vertical: 9),
           decoration: BoxDecoration(
             color: active ? AppTheme.surface : Colors.transparent,
-            borderRadius: BorderRadius.circular(9),
-            border: active ? Border.all(color: AppTheme.primary) : null,
+            borderRadius: BorderRadius.circular(10),
+            border: active
+                ? Border.all(color: AppTheme.primary, width: 1.4)
+                : null,
+            boxShadow: active ? AppTheme.lightShadow : null,
           ),
           child: Column(
             children: [
@@ -631,7 +648,11 @@ class _MemberCenterScreenState extends State<MemberCenterScreen> {
               if (value != null) ...[
                 const SizedBox(height: 2),
                 Text(
-                  key == 'points' ? '余额 $value' : '余额 ¥${_trim(value.toDouble())}',
+                  // v2.1.59：原来「积分兑换」下面写的是「余额 0」，
+                  // 语义对不上（这里应该是可用积分数），一字之差像 bug
+                  key == 'points'
+                      ? '可用 $value 积分'
+                      : '可用 ¥${_trim(value.toDouble())}',
                   style: TextStyle(
                       fontSize: 9.5,
                       color: (active ? AppTheme.primary : AppTheme.textSecondary)
