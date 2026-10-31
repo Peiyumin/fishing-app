@@ -200,9 +200,6 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_s.name),
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
-        ),
       ),
       body: ListView(
         padding: EdgeInsets.zero,
@@ -454,7 +451,7 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
               errorWidget: (_, __, ___) => Container(
                 color: AppTheme.primarySoft,
                 child: const Icon(Icons.broken_image_outlined,
-                    color: Colors.grey, size: 36),
+                    color: AppTheme.textTertiary, size: 36),
               ),
             ),
           ),
