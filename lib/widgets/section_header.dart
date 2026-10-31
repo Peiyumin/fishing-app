@@ -21,7 +21,9 @@ class SectionHeader extends StatelessWidget {
     this.actionLabel,
     this.onAction,
     this.padding =
-        const EdgeInsets.symmetric(horizontal: AppTheme.pagePad, vertical: 5),
+        // v2.1.62：上下 5 → 4。分区标题本身带 16pt 行高，5+5 的留白
+        // 再加上下卡片各自的外边距，一道缝就会到 18pt 以上（用户说的「太散」）。
+        const EdgeInsets.symmetric(horizontal: AppTheme.pagePad, vertical: 4),
   });
 
   @override
