@@ -155,6 +155,7 @@ class PostService {
   ///   null      默认（置顶优先 + 时间倒序，首页信息流）
   ///   recommend 推荐：浏览 + 点赞×3 + 评论×5 综合热度排序
   ///   hot       热门：按浏览人数取前 50 随机打乱（服务端打乱）
+  ///   latest    最新（v2.1.58）：严格按发布时间倒序，置顶也不提前
   ///   city      同城：city 地级市精确过滤
   ///   follow    关注：只看已关注用户（需登录）
   /// 仅测试用：非 null 时 [fetchFeed] 直接返回它，不碰网络。
@@ -164,6 +165,17 @@ class PostService {
   /// 给它一个显式注入口，比在测试里伪造一整套 HTTP 响应干净。
   @visibleForTesting
   static List<Post>? debugFeedOverride;
+
+  /// 最新排序（v2.1.58）：严格按发布时间倒序，**不看浏览量、也不让置顶提前**。
+  ///
+  /// 单独抽成纯函数，一是列表与演示数据共用同一套规则，二是能直接单测
+  /// 「置顶的老帖不许跑第一」这种只有真机才看得出的问题。
+  @visibleForTesting
+  static List<Post> sortLatest(List<Post> input) {
+    final out = List<Post>.from(input);
+    out.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return out;
+  }
 
   static Future<List<Post>> fetchFeed({
     int limit = 20,
@@ -186,6 +198,9 @@ class PostService {
         case 'hot':
           list.sort((a, b) => b.viewCount.compareTo(a.viewCount));
           list = list.take(10).toList()..shuffle();
+          break;
+        case 'latest':
+          list = sortLatest(list);
           break;
         case 'city':
           list = city == null
@@ -220,6 +235,12 @@ class PostService {
               p.viewCount + p.likeCount * 3 + p.commentCount * 5;
           return score(b).compareTo(score(a));
         });
+      }
+      // 最新（v2.1.58）：按发布时间严格倒序。
+      // 后端已支持 tab=latest；老后端会忽略未知 tab 返回「置顶优先 + 时间倒序」，
+      // 那就在本地再排一次 —— 置顶帖也不会跑到最新里打头。
+      if (tab == 'latest' && list.length > 1) {
+        list = sortLatest(list);
       }
       // 热门：先按浏览人数取前 10，再随机打散（每次进入顺序不同）
       if (tab == 'hot' && list.length > 1) {
@@ -289,6 +310,10 @@ class PostService {
     double? lengthCm, // 渔获体长(cm)：AI 估算或用户手填
     double? weightG, // 渔获重量(g)
     CatchWeather? weather, // 渔获时天气快照（发布那一刻抓，之后详情页不再重算）
+    // v2.1.58 装备三件套（渔获详情页与列表卡片用）
+    String bait = '', // 饵料，如「腥香拉饵」
+    String rodLength = '', // 鱼竿长度，纯数字串「3.6」
+    String waterType = '', // 钓点类型：坑塘 / 江河 / 水库 / 湖泊 / 溪流 / 海钓
   }) async {
     if (_demo) {
       _demoPosts.insert(
@@ -311,6 +336,9 @@ class PostService {
           lengthCm: lengthCm,
           weightG: weightG,
           weather: weather,
+          bait: bait,
+          rodLength: rodLength,
+          waterType: waterType,
           createdAt: DateTime.now(),
         ),
       );
@@ -349,6 +377,9 @@ class PostService {
       if (lengthCm != null) 'lengthCm': lengthCm,
       if (weightG != null) 'weightG': weightG,
       if (weather != null) 'weather': weather.toJson(),
+      if (bait.trim().isNotEmpty) 'bait': bait.trim(),
+      if (rodLength.trim().isNotEmpty) 'rodLength': rodLength.trim(),
+      if (waterType.trim().isNotEmpty) 'waterType': waterType.trim(),
     });
   }
 
@@ -459,14 +490,48 @@ class PostService {
   ///
   /// 传空串表示清空。返回服务端存的最终文本（后端会裁到 200 字）。
   static Future<String> saveGear(String postId, String gear) async {
-    if (_demo) return gear;
+    final saved = await saveGearInfo(postId, note: gear);
+    return (saved['note'] ?? gear).toString();
+  }
+
+  /// 保存渔获的「饵料 / 鱼竿长度 / 钓点类型 / 补充说明」（v2.1.58）
+  ///
+  /// 四个字段都是「传什么存什么」，传空串即清空；传 null 表示这一项不动
+  /// （详情页的编辑面板允许只改其中一项）。
+  /// 返回服务端回写的最终值，键：bait / rodLength / waterType / note。
+  static Future<Map<String, dynamic>> saveGearInfo(
+    String postId, {
+    String? bait,
+    String? rodLength,
+    String? waterType,
+    String? note,
+  }) async {
+    final local = <String, dynamic>{
+      if (bait != null) 'bait': bait,
+      if (rodLength != null) 'rodLength': rodLength,
+      if (waterType != null) 'waterType': waterType,
+      if (note != null) 'note': note,
+    };
+    if (_demo) return local;
     if (ApiClient.token == null) throw Exception('请先登录');
-    final r = await ApiClient.post('/posts/$postId/gear', {'gear': gear});
+    final r = await ApiClient.post('/posts/$postId/gear', {
+      if (bait != null) 'bait': bait,
+      if (rodLength != null) 'rodLength': rodLength,
+      if (waterType != null) 'waterType': waterType,
+      if (note != null) 'gear': note,
+    });
     final m = r is Map ? Map<String, dynamic>.from(r) : const <String, dynamic>{};
     final data = (m['data'] is Map)
         ? Map<String, dynamic>.from(m['data'] as Map)
         : m;
-    return (data['gear'] ?? gear).toString();
+    return <String, dynamic>{
+      'bait': (data['bait'] ?? bait ?? '').toString(),
+      'rodLength': (data['rodLength'] ?? data['rod_length'] ?? rodLength ?? '')
+          .toString(),
+      'waterType': (data['waterType'] ?? data['water_type'] ?? waterType ?? '')
+          .toString(),
+      'note': (data['gear'] ?? data['note'] ?? note ?? '').toString(),
+    };
   }
 
   /// 编辑自己发布的动态（仅作者，后端二次校验）  /// [images] 为「最终要保留的图片 URL 列表」（已存在的网络图 + 本次新上传的图）
@@ -480,6 +545,9 @@ class PostService {
     double? lengthCm,
     double? weightG,
     CatchWeather? weather,
+    String? bait,
+    String? rodLength,
+    String? waterType,
   }) async {
     if (_demo) return;
     if (ApiClient.token == null) throw Exception('请先登录');
@@ -490,6 +558,9 @@ class PostService {
       'fish': fish,
       if (lengthCm != null) 'lengthCm': lengthCm,
       if (weightG != null) 'weightG': weightG,
+      if (bait != null) 'bait': bait,
+      if (rodLength != null) 'rodLength': rodLength,
+      if (waterType != null) 'waterType': waterType,
       // 编辑时一般不改天气；传了才覆盖，没传后端保留原快照
       if (weather != null) 'weather': weather.toJson(),
     });
