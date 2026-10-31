@@ -3,7 +3,7 @@
 // 用户这一轮要的是两件事，分两组钉：
 //
 // ① 间距（纯数值，最容易在未来某次「顺手美化」里被改回去）
-//    · 页边距 10、卡间距 8、瀑布流缝 8
+//    · 页边距 8、卡间距 6、瀑布流缝 6（v2.1.62 起）
 //    · 分区标题默认内边距跟着页边距走
 //    · 「我的」页封面 248 → 200（用户嫌半屏都是图）
 //
@@ -107,10 +107,15 @@ Future<void> _pumpWeather(WidgetTester tester, {required bool member}) async {
 
 void main() {
   group('间距 token', () {
-    test('页边距 10 / 卡间距 8 / 瀑布流缝 8', () {
-      expect(AppTheme.pagePad, 10);
-      expect(AppTheme.cardGap, 8);
-      expect(AppTheme.gridGap, 8);
+    test('页边距 8 / 卡间距 6 / 瀑布流缝 6', () {
+      // v2.1.62：10/8/8 → 8/6/6（用户要求首页与发现页再收紧一档）。
+      // 三者的大小关系必须保持「两侧 8 ≥ 中间 6」：反过来的话两列卡
+      // 中间的缝会比页边距还宽，看着像页面被劈成两半。
+      expect(AppTheme.pagePad, 8);
+      expect(AppTheme.cardGap, 6);
+      expect(AppTheme.gridGap, 6);
+      expect(AppTheme.pagePad, greaterThanOrEqualTo(AppTheme.gridGap),
+          reason: '两侧留白不能比两列中间的缝还窄');
     });
 
     testWidgets('分区标题默认内边距跟页边距一致（左右）', (tester) async {
