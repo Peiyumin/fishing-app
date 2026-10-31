@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_theme.dart';
 import '../models/fishing_spot.dart';
 import '../models/post.dart';
 import '../services/post_service.dart';
 import '../services/spot_service.dart';
+import '../widgets/ui_kit.dart';
 import 'post_detail_screen.dart';
 import 'spot_detail_screen.dart';
 
@@ -24,8 +26,13 @@ class _SearchScreenState extends State<SearchScreen> {
   final _ctrl = TextEditingController();
   final _focus = FocusNode();
 
-  /// 历史搜索（本次会话内保留；点击标签可直接再搜）
-  List<String> _history = const ['千岛湖', '路亚', '黑坑', '鲫鱼'];
+  /// 历史搜索：v2.1.59 起真的持久化到本机。
+  ///
+  /// 旧版这里写死 `['千岛湖','路亚','黑坑','鲫鱼']`，用户从没搜过也会看到
+  /// 四个词，点进去还真能搜 —— 看着像「别人的历史记录」。
+  List<String> _history = const [];
+  static const String _histKey = 'search_history';
+  static const List<String> _suggests = ['野钓', '水库', '长江', '垂钓技巧'];
 
   List<FishingSpot> _spots = const [];
   List<Post> _posts = const [];
@@ -33,6 +40,37 @@ class _SearchScreenState extends State<SearchScreen> {
   String _q = '';
   bool _busy = false;
   bool _searched = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
+
+  Future<void> _loadHistory() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      final list = p.getStringList(_histKey) ?? const <String>[];
+      if (mounted) setState(() => _history = list);
+    } catch (_) {}
+  }
+
+  Future<void> _saveHistory(String q) async {
+    final list = <String>[q, ..._history.where((e) => e != q)].take(8).toList();
+    setState(() => _history = list);
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setStringList(_histKey, list);
+    } catch (_) {}
+  }
+
+  Future<void> _clearHistory() async {
+    setState(() => _history = const []);
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.remove(_histKey);
+    } catch (_) {}
+  }
 
   @override
   void dispose() {
@@ -45,9 +83,7 @@ class _SearchScreenState extends State<SearchScreen> {
     final q = raw.trim();
     if (q.isEmpty) return;
     _focus.unfocus();
-    if (!_history.contains(q)) {
-      setState(() => _history = <String>[q, ..._history].take(8).toList());
-    }
+    _saveHistory(q);
     setState(() {
       _q = q;
       _busy = true;
@@ -89,9 +125,10 @@ class _SearchScreenState extends State<SearchScreen> {
         title: Container(
           height: 40,
           decoration: BoxDecoration(
-            color: AppTheme.surface,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: AppTheme.border),
+            // v2.1.59：顶栏已是白底，搜索框再用「白底+描边」会像一块补丁，
+            // 改成浅灰底无边框，与顶栏融成一片
+            color: AppTheme.primarySoft,
+            borderRadius: BorderRadius.circular(AppTheme.radiusPill),
           ),
           child: TextField(
             controller: _ctrl,
@@ -156,35 +193,42 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _historyView() {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
       children: [
-        const Text('历史搜索',
-            style: TextStyle(
-                fontSize: 13,
-                color: AppTheme.textSecondary,
-                fontWeight: FontWeight.w600)),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: _history
-              .map((h) => _chip(h, () {
-                    _ctrl.text = h;
-                    _search(h);
-                  }))
-              .toList(),
+        // 有真实历史才显示这一块（没有就只剩「试试搜这些」，不留空标题）
+        if (_history.isNotEmpty) ...[
+          UiSectionTitle(
+            '历史搜索',
+            padding: const EdgeInsets.fromLTRB(0, 12, 0, 10),
+            trailing: GestureDetector(
+              onTap: _clearHistory,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                child: Text('清空',
+                    style: TextStyle(
+                        fontSize: 12, color: AppTheme.textTertiary)),
+              ),
+            ),
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _history
+                .map((h) => _chip(h, () {
+                      _ctrl.text = h;
+                      _search(h);
+                    }))
+                .toList(),
+          ),
+        ],
+        UiSectionTitle(
+          '试试搜这些',
+          padding: EdgeInsets.fromLTRB(0, _history.isEmpty ? 12 : 24, 0, 10),
         ),
-        const SizedBox(height: 24),
-        const Text('试试搜这些',
-            style: TextStyle(
-                fontSize: 13,
-                color: AppTheme.textSecondary,
-                fontWeight: FontWeight.w600)),
-        const SizedBox(height: 10),
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: ['野钓', '水库', '长江', '垂钓技巧']
+          children: _suggests
               .map((h) => _chip(h, () {
                     _ctrl.text = h;
                     _search(h);
@@ -199,11 +243,11 @@ class _SearchScreenState extends State<SearchScreen> {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
           color: AppTheme.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppTheme.border),
+          borderRadius: BorderRadius.circular(AppTheme.radiusPill),
+          border: Border.all(color: AppTheme.primaryBorder),
         ),
         child: Text(text,
             style: const TextStyle(fontSize: 12.5, color: AppTheme.textPrimary)),
