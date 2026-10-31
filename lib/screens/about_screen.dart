@@ -17,11 +17,6 @@ class AboutScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('关于渔报'),
         elevation: 0,
-        backgroundColor: Colors.white,
-        foregroundColor: AppTheme.textPrimary,
-        titleTextStyle: const TextStyle(
-            fontSize: 17, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
-        iconTheme: const IconThemeData(color: AppTheme.textPrimary),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(12, 18, 12, 28),
