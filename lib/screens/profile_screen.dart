@@ -19,6 +19,7 @@ import '../services/profile_service.dart';
 import '../services/refresh_bus.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/ui_kit.dart';
 import '../widgets/fish_dex_card.dart';
 import '../utils/county_label.dart';
 import '../widgets/user_avatar.dart';
@@ -42,7 +43,8 @@ import '../utils/json_num.dart';
 ///   → 徽章行 → 五项数据（作品/喜欢/关注/粉丝/积分）→ 会员条
 ///   → 我的订单/卡券 → 我的服务宫格 → 智能服务条 → 两张活动卡 → 我的发布
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key, this.debugMe, this.debugRegPlace});
+  const ProfileScreen(
+      {super.key, this.debugMe, this.debugRegPlace, this.debugCover});
 
   /// 截图/测试用：直接给一份资料，省掉网络请求。
   /// 线上永远为 null，走的还是 `_loadMe()` 那条真实链路。
@@ -50,6 +52,9 @@ class ProfileScreen extends StatefulWidget {
 
   /// 截图/测试用：直接给一个注册地文案（线上为 null）
   final String? debugRegPlace;
+
+  /// 截图/测试用：直接给一张封面（线上为 null，走 CachedNetworkImage）
+  final Widget? debugCover;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -73,6 +78,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void initState() {
     super.initState();
     if (widget.debugMe != null) _me = widget.debugMe;
+    if (widget.debugMe?.badges.isNotEmpty == true) {
+      _myBadges = widget.debugMe!.badges;
+    }
     if (widget.debugRegPlace != null) _regPlace = widget.debugRegPlace!;
     // 积分兑换 / 发布渔获后刷新资料（积分余额要跟着变）
     RefreshBus.profileTick.addListener(_onProfileTick);
@@ -117,6 +125,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _loadBadges() async {
+    // 截图/测试传进来的资料自带徽章，别再让网络结果覆盖成空
+    if (widget.debugMe != null) return;
     if (!ApiConfig.enabled) return;
     final r = await ProfileService.fetchBadges();
     if (!mounted) return;
@@ -401,12 +411,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // 组件
   // ============================================================
 
-  /// 头像 + 昵称 + 会员标签 + 签名 + ID
+  /// 头像 + 昵称 + 会员标签 + 签名 + 定位 · ID
+  ///
+  /// v2.1.59 重排。旧版把「昵称 + LV + 会员胶囊 + 编辑图标」全塞在一行，
+  /// 393pt 屏上昵称只剩 5 个字就被省略号吃掉；定位和 ID 又各占一整行、
+  /// 都是 11.5 号灰字，四行小字堆在签名下面像说明书。
+  ///
+  /// 现在的几何（封面用 Stack 背景层，不占 Column 的第一行）：
+  ///   封面可见高 132 → 头像 top = 132-32 = 100（压住下沿 32）
+  ///   → 昵称/胶囊/签名/元信息 的 top 也是 100（与头像顶齐，不再掉到下方）
+  ///   → 卡片底 = 100 + max(头像 78, 文字列) + 16
+  /// 文字列左缩进 = 14 + 头像 78 + 12 = 104，昵称可用宽度 ≈ 250pt（旧版 ≈120）
   Widget _profileHeader(SessionProvider sp) {
     final vip = _me?.vip ?? MemberStyle.normal;
     final name = (sp.nickname ?? _me?.nickname ?? '钓友').trim();
     final bio = _me?.bio ?? '';
     final uid = sp.userId ?? _me?.id ?? '';
+    final cover = sp.coverUrl ?? _me?.cover;
+    final hasCover =
+        widget.debugCover != null || (cover != null && cover.isNotEmpty);
+
+    const coverH = 132.0;
+    const avatarR = 36.0;
+    final meta = _metaLine(uid);
 
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
@@ -414,227 +441,328 @@ class _ProfileScreenState extends State<ProfileScreen> {
       decoration: BoxDecoration(
         color: AppTheme.surface,
         borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-        boxShadow: AppTheme.lightShadow,
+        boxShadow: AppTheme.softShadow,
       ),
-      child: Column(
+      child: Stack(
         children: [
-          _coverBand(sp),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
-            child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          GestureDetector(
-            onTap: _openEdit,
-            child: UserAvatar(
-              url: sp.avatarUrl,
-              userId: sp.isLoggedIn ? sp.userId : null,
-              radius: 34,
-              member: vip,
+          // ① 封面：只做背景，不参与高度计算
+          if (hasCover)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: coverH,
+              child: _coverBand(sp, height: coverH),
             ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          // ② 正文：先让出「封面-压边量」，再从头像顶开始
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(height: hasCover ? coverH - 32 : 0),
+              Padding(
+                padding: EdgeInsets.fromLTRB(14, hasCover ? 0 : 14, 14, 16),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Flexible(
-                      child: Text(
-                        name.isEmpty ? '钓友' : name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.textPrimary,
-                        ),
-                      ),
-                    ),
-                    // ★ v2.1.57：等级徽章（用户要求个人主页显示等级）
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: AppTheme.primary.withOpacity(0.10),
-                        borderRadius: BorderRadius.circular(5),
-                      ),
-                      child: Text(
-                        'LV${_me?.level ?? 1}',
-                        style: const TextStyle(
-                            fontSize: 10,
-                            height: 1.5,
-                            fontWeight: FontWeight.w800,
-                            color: AppTheme.primary),
-                      ),
-                    ),
-                    if (vip.isVip) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(
-                          gradient:
-                              LinearGradient(colors: [vip.color, vip.color2]),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          '${vip.levelLabel} ${vip.name}',
-                          style: const TextStyle(
-                              fontSize: 10,
-                              height: 1.4,
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(width: 6),
-                    IconButton(
-                      onPressed: _openEdit,
-                      padding: EdgeInsets.zero,
-                      constraints:
-                          const BoxConstraints(minWidth: 26, minHeight: 26),
-                      icon: const Icon(Icons.edit_outlined,
-                          size: 15, color: AppTheme.textSecondary),
-                      tooltip: '编辑资料',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  bio.isNotEmpty ? bio : '这个人很低调，还没有留下签名~',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 12.5,
-                      height: 1.45,
-                      color: AppTheme.textSecondary),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Icon(Icons.place_outlined,
-                        size: 12, color: AppTheme.textSecondary),
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        _regPlace.isNotEmpty ? _regPlace : '定位未开启',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 11.5, color: AppTheme.textSecondary),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Icon(Icons.badge_outlined,
-                        size: 12, color: AppTheme.textSecondary),
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        _me != null && _me!.userNo > 0
-                            ? '我的ID：${_me!.userNo}'
-                            : 'ID：${uid.isEmpty ? '—' : uid}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 11.5, color: AppTheme.textSecondary),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 主页背景图（v2.1.56）
-  ///
-  /// 没设置过就保持原来的纯色卡面（不硬塞一张渐变图，避免所有用户长得一样）；
-  /// 设置过就把图铺满这一条，底部渐隐到卡片白底，头像压在图的下沿。
-  Widget _coverBand(SessionProvider sp) {
-    final cover = sp.coverUrl ?? _me?.cover;
-    final has = cover != null && cover.isNotEmpty;
-    return SizedBox(
-      height: has ? 116 : 0,
-      width: double.infinity,
-      child: !has
-          ? const SizedBox.shrink()
-          : Stack(
-              fit: StackFit.expand,
-              children: [
-                CachedNetworkImage(
-                  imageUrl: cover,
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) => const ColoredBox(
-                      color: AppTheme.primaryLight, child: SizedBox.expand()),
-                  errorWidget: (_, __, ___) => const ColoredBox(
-                      color: AppTheme.primaryLight, child: SizedBox.expand()),
-                ),
-                // 底部渐隐到卡片底色：头像和昵称压在图上也读得清
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        AppTheme.surface.withOpacity(0.15),
-                        AppTheme.surface,
-                      ],
-                      stops: const [0.45, 0.85, 1.0],
-                    ),
-                  ),
-                ),
-                Positioned(
-                  right: 8,
-                  top: 8,
-                  child: Material(
-                    color: Colors.black.withOpacity(0.32),
-                    borderRadius: BorderRadius.circular(999),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(999),
+                    // 头像（白色外圈，压在封面上也有边界）
+                    GestureDetector(
                       onTap: _openEdit,
-                      child: const Padding(
-                        padding:
-                            EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-                        child: Row(
-                          children: [
-                            Icon(Icons.wallpaper, size: 12, color: Colors.white),
-                            SizedBox(width: 4),
-                            Text('换背景',
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 10.5,
-                                    fontWeight: FontWeight.w600)),
-                          ],
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
+                        child: UserAvatar(
+                          url: sp.avatarUrl,
+                          userId: sp.isLoggedIn ? sp.userId : null,
+                          radius: avatarR,
+                          member: vip,
                         ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 昵称独占一行 + 编辑
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  name.isEmpty ? '钓友' : name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 19,
+                                    height: 1.25,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.2,
+                                    color: AppTheme.textPrimary,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              _editDot(),
+                            ],
+                          ),
+                          const SizedBox(height: 9),
+                          // 等级 / 会员（等高胶囊）
+                          Row(
+                            children: [
+                              _pill(
+                                'LV${_me?.level ?? 1}',
+                                bg: AppTheme.primary,
+                                fg: AppTheme.accent,
+                              ),
+                              if (vip.isVip) ...[
+                                const SizedBox(width: 6),
+                                _pill(
+                                  '${vip.levelLabel} ${vip.name}',
+                                  gradient: LinearGradient(
+                                      colors: [vip.color, vip.color2]),
+                                  fg: Colors.white,
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 11),
+                          Text(
+                            bio.isNotEmpty ? bio : '这个人很低调，还没有留下签名~',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              height: 1.5,
+                              color: AppTheme.textSecondary,
+                            ),
+                          ),
+                          if (meta.isNotEmpty) ...[
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                const Icon(Icons.place_outlined,
+                                    size: 13, color: AppTheme.textTertiary),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    meta,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 11.5,
+                                      color: AppTheme.textTertiary,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
-  /// 徽章行：所获徽章 (n) + 图标
-  Widget _badgeBar() {
-    final show = _myBadges.take(6).toList();
+  /// 定位 · ID 合并文案（定位拿不到就说「定位未开启」，ID 拿不到就不写）
+  String _metaLine(String uid) {
+    final place = _regPlace.isNotEmpty ? _regPlace : '定位未开启';
+    if (_me != null && _me!.userNo > 0) return '$place · ID ${_me!.userNo}';
+    if (uid.isEmpty) return place;
+    return '$place · ID $uid';
+  }
+
+  /// 28×28 的浅灰圆角编辑块（比裸铅笔图标好点，也比 IconButton 省空间）
+  Widget _editDot() {
+    return InkWell(
+      onTap: _openEdit,
+      borderRadius: BorderRadius.circular(9),
+      child: Container(
+        width: 28,
+        height: 28,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: AppTheme.primaryLight,
+          borderRadius: BorderRadius.circular(9),
+        ),
+        child: const Icon(Icons.edit_outlined,
+            size: 14, color: AppTheme.textSecondary),
+      ),
+    );
+  }
+
+  /// 等高等级胶囊：高 18、圆角 6、10 号字，保证两枚并排时基线一致
+  Widget _pill(
+    String text, {
+    Color? bg,
+    Gradient? gradient,
+    required Color fg,
+  }) {
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      height: 18,
+      padding: const EdgeInsets.symmetric(horizontal: 7),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: bg,
+        gradient: gradient,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          height: 1.0,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.2,
+          color: fg,
+        ),
+      ),
+    );
+  }
+
+  /// 主页背景图（v2.1.56，v2.1.59 改胶囊描边）
+  ///
+  /// 没设置过就保持纯白卡面（不硬塞一张渐变图，避免所有用户长得一样）；
+  /// 设置过就把图铺满这一条，底部渐隐到卡片白底，头像压在图的下沿。
+  Widget _coverBand(SessionProvider sp, {required double height}) {
+    final cover = sp.coverUrl ?? _me?.cover;
+    final has = widget.debugCover != null || (cover != null && cover.isNotEmpty);
+    if (!has || height <= 0) {
+      return const SizedBox(height: 0, width: double.infinity);
+    }
+    return SizedBox(
+      height: height,
+      width: double.infinity,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          widget.debugCover ??
+              CachedNetworkImage(
+                imageUrl: cover ?? '',
+                fit: BoxFit.cover,
+                placeholder: (_, __) => _coverFallback(),
+                errorWidget: (_, __, ___) => _coverFallback(),
+              ),
+          // 底部渐隐到卡片底色：头像和昵称压在图上也读得清
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.transparent,
+                  AppTheme.surface.withOpacity(0.18),
+                  AppTheme.surface,
+                ],
+                // v2.1.59：渐隐起点从 0.48 下移到 0.60 —— 原来封面刚过一半
+                // 就被白色吃掉，浅色封面看着像"没有封面"
+                stops: const [0.60, 0.92, 1.0],
+              ),
+            ),
+          ),
+          // 「换背景」：黑 0.30 + 白 0.28 描边 —— 亮封面、暗封面都能看清边界
+          Positioned(
+            right: 12,
+            top: 12,
+            child: Material(
+              color: Colors.black.withOpacity(0.30),
+              borderRadius: BorderRadius.circular(999),
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: Colors.white.withOpacity(0.28)),
+                ),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: _openEdit,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    child: Row(
+                      children: [
+                        Icon(Icons.wallpaper, size: 12, color: Colors.white),
+                        SizedBox(width: 4),
+                        Text('换背景',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10.5,
+                                height: 1.0,
+                                fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 封面加载中 / 加载失败时的兜底：品牌深色渐变 + 两个极淡光斑
+  ///
+  /// 原来是 `primaryLight` 一片浅灰 ——「我的」页第一眼就是一块没加载出来的
+  /// 灰。改成有意图的深色底：弱网、图挂了也像一张设计好的封面，
+  /// 而且深底上白色的「换背景」胶囊和头像白圈都更清楚。
+  Widget _coverFallback() {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              // 深色面板的两档现成 token（不新增色板外颜色）
+              colors: [AppTheme.inkSurface, AppTheme.inkLine],
+            ),
+          ),
+        ),
+        Positioned(
+          right: -34,
+          top: -46,
+          child: Container(
+            width: 180,
+            height: 180,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppTheme.accent.withOpacity(0.10),
+            ),
+          ),
+        ),
+        Positioned(
+          left: -26,
+          bottom: -64,
+          child: Container(
+            width: 150,
+            height: 150,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white.withOpacity(0.05),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 徽章条（v2.1.59）：标题 + 数量胶囊，右侧每个徽章套 28×28 浅灰底
+  ///
+  /// 旧版把 4 个 emoji 直接摊在白卡上 —— 大小不一、基线不齐，看着像没排过。
+  /// emoji 本身不能改尺寸，所以统一给它们一个容器，靠容器对齐。
+  Widget _badgeBar() {
+    final show = _myBadges.take(5).toList();
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
+      padding: const EdgeInsets.fromLTRB(14, 11, 10, 11),
       decoration: BoxDecoration(
         color: AppTheme.surface,
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
@@ -642,36 +770,66 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       child: InkWell(
         onTap: _showBadgesSheet,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         child: Row(
           children: [
             Container(
-              width: 20,
-              height: 20,
+              width: 24,
+              height: 24,
+              alignment: Alignment.center,
               decoration: BoxDecoration(
-                // 徽章入口：近黑底 + 荧光黄绿奖章（不再用紫渐变）
+                // 徽章入口：近黑底 + 荧光黄绿奖章（品牌唯一彩色）
                 gradient: const LinearGradient(
                     colors: [AppTheme.primary, AppTheme.inkLine]),
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(7),
               ),
               child: const Icon(Icons.military_tech,
-                  size: 13, color: AppTheme.accent),
+                  size: 14, color: AppTheme.accent),
             ),
             const SizedBox(width: 8),
-            Text('所获徽章 (${_myBadges.length})',
+            const Text('所获徽章',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+            const SizedBox(width: 6),
+            Container(
+              height: 18,
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppTheme.primaryLight,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                '${_myBadges.length}',
                 style: const TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w600)),
+                  fontSize: 10.5,
+                  height: 1.0,
+                  fontWeight: FontWeight.w900,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+            ),
             const Spacer(),
             if (show.isEmpty)
               const Text('还没有徽章',
-                  style: TextStyle(fontSize: 11.5, color: AppTheme.textSecondary))
+                  style: TextStyle(
+                      fontSize: 11.5, color: AppTheme.textTertiary))
             else
               ...show.map((b) => Padding(
-                    padding: const EdgeInsets.only(left: 6),
-                    child: _badgeIcon(b, 20),
+                    padding: const EdgeInsets.only(left: 5),
+                    child: Container(
+                      width: 28,
+                      height: 28,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: AppTheme.primarySoft,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: _badgeIcon(b, 19),
+                    ),
                   )),
-            const SizedBox(width: 4),
+            const SizedBox(width: 6),
             const Icon(Icons.chevron_right,
-                size: 16, color: AppTheme.textSecondary),
+                size: 16, color: AppTheme.textTertiary),
           ],
         ),
       ),
@@ -679,9 +837,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   /// 五项数据：作品 / 喜欢 / 关注 / 粉丝 / 积分
+  ///
+  /// v2.1.59：数字改**等宽数字**（tabular figures）——「1134」这种四位数
+  /// 和「1」用同一套字宽，五列的数字才会落在同一条视觉线上；列间补 1pt
+  /// 竖线（divider 色、22 高），五列从「五个数字漂着」变成一条数据栏。
   Widget _statsRow(SessionProvider sp) {
-    final likeCount = _me?.likeCount ??
-        _myPosts.fold<int>(0, (a, p) => a + p.likeCount);
+    final likeCount =
+        _me?.likeCount ?? _myPosts.fold<int>(0, (a, p) => a + p.likeCount);
     final items = <(String, String, VoidCallback?)>[
       ('作品', '${_me?.postCount ?? _myPosts.length}', () => _openMyPosts()),
       ('喜欢', '$likeCount', null),
@@ -691,51 +853,74 @@ class _ProfileScreenState extends State<ProfileScreen> {
           () => _runAction('wallet')),
     ];
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-      padding: const EdgeInsets.symmetric(vertical: 14),
+      margin: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
+      padding: const EdgeInsets.symmetric(vertical: 15),
       decoration: BoxDecoration(
         color: AppTheme.surface,
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         boxShadow: AppTheme.lightShadow,
       ),
       child: Row(
-        children: items.map((it) {
-          return Expanded(
-            child: InkWell(
-              onTap: it.$3,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(it.$2,
-                      style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.textPrimary)),
-                  const SizedBox(height: 3),
-                  Text(it.$1,
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0)
+              Container(
+                  key: ValueKey('stats-sep-$i'),
+                  width: 1,
+                  height: 22,
+                  color: AppTheme.divider),
+            Expanded(
+              child: InkWell(
+                onTap: items[i].$3,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      items[i].$2,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                          fontSize: 11.5, color: AppTheme.textSecondary)),
-                ],
+                        fontSize: 17,
+                        height: 1.1,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.textPrimary,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      items[i].$1,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 11, color: AppTheme.textTertiary),
+                    ),
+                  ],
+                ),
               ),
             ),
-          );
-        }).toList(),
+          ],
+        ],
       ),
     );
   }
 
-  /// 会员条：Lv + 等级名 + 会员中心
+  /// 会员条（v2.1.59）
+  ///
+  /// 会员态沿用后台下发的等级渐变（不新增色相）；非会员态改用品牌
+  /// 近黑 → 石墨渐变 + 荧光黄绿文字 —— 原来那条「浅灰 → 更浅灰」的
+  /// 渐变在白卡上像一块没加载出来的占位。
+  ///
+  /// 结构：圆形图标底 → Lv → 等级名 →（右侧）「会员中心」胶囊 + 箭头
   Widget _memberBar() {
     final vip = _me?.vip ?? MemberStyle.normal;
-    // 非会员：冷灰条（原来 #6E7F8D → #9AA9B5 是自造的一对灰，
-    // 和 textTertiary/primaryBorder 差一档，一眼能看出"这两种灰不一样"）
-    final c1 = vip.isVip ? vip.color : AppTheme.textTertiary;
-    final c2 = vip.isVip ? vip.color2 : AppTheme.primaryBorder;
+    final c1 = vip.isVip ? vip.color : AppTheme.primary;
+    final c2 = vip.isVip ? vip.color2 : AppTheme.inkSurface;
+    final fg = vip.isVip ? Colors.white : AppTheme.accent;
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-      height: 46,
+      margin: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
+      height: 52,
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         gradient: LinearGradient(
@@ -743,42 +928,99 @@ class _ProfileScreenState extends State<ProfileScreen> {
           end: Alignment.centerRight,
           colors: [c1, c2],
         ),
+        boxShadow: vip.isVip
+            ? [
+                BoxShadow(
+                  color: vip.color.withOpacity(0.22),
+                  blurRadius: 14,
+                  offset: const Offset(0, 6),
+                ),
+              ]
+            : null,
       ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-        onTap: () => _runAction('vip'),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          child: Row(
-            children: [
-              Text(
-                vip.isVip ? vip.levelLabel : 'Lv0',
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(width: 6),
-              Icon(Icons.workspace_premium,
-                  size: 15, color: Colors.white.withOpacity(0.95)),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  vip.isVip ? vip.name : '开通会员享专属权益',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600),
+      child: Stack(
+        children: [
+          // 顶部一道极淡高光，让整条从「一块色」变成「一块有厚度的牌」
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.white.withOpacity(0.13),
+                    Colors.transparent
+                  ],
+                  stops: const [0.0, 0.70],
                 ),
               ),
-              Text(_cfg.memberBarText,
-                  style: const TextStyle(color: Colors.white, fontSize: 12)),
-              const Icon(Icons.chevron_right, size: 16, color: Colors.white),
-            ],
+            ),
           ),
-        ),
+          Positioned.fill(
+            child: InkWell(
+              onTap: () => _runAction('vip'),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 26,
+                      height: 26,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.18),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.workspace_premium, size: 15, color: fg),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      vip.isVip ? vip.levelLabel : 'Lv0',
+                      style: TextStyle(
+                          color: fg,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        vip.isVip ? vip.name : '开通会员享专属权益',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: fg.withOpacity(0.95),
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // 右侧 CTA 收成小胶囊，和左边的等级信息分出主次
+                    Container(
+                      padding:
+                          const EdgeInsets.fromLTRB(10, 5, 6, 5),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.16),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                            color: Colors.white.withOpacity(0.18)),
+                      ),
+                      child: Row(
+                        children: [
+                          Text(_cfg.memberBarText,
+                              style: TextStyle(
+                                  color: fg,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600)),
+                          Icon(Icons.chevron_right, size: 14, color: fg),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -787,7 +1029,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _menuCard() {
     if (_cfg.menus.isEmpty) return const SizedBox.shrink();
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+      margin: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
       decoration: BoxDecoration(
         color: AppTheme.surface,
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
@@ -800,16 +1042,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const Divider(
                   height: 1, thickness: 1, indent: 14, endIndent: 14,
                   color: AppTheme.divider),
-            ListTile(
-              dense: true,
+            InkWell(
               onTap: () => _runAction(_cfg.menus[i].action),
-              leading: Icon(_iconOf(_cfg.menus[i].icon),
-                  size: 19, color: AppTheme.primary),
-              title: Text(_cfg.menus[i].title,
-                  style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w600)),
-              trailing: const Icon(Icons.chevron_right,
-                  size: 18, color: AppTheme.textSecondary),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                child: Row(
+                  children: [
+                    Icon(_iconOf(_cfg.menus[i].icon),
+                        size: 19, color: AppTheme.primary),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(_cfg.menus[i].title,
+                          style: const TextStyle(
+                              fontSize: 14, fontWeight: FontWeight.w600)),
+                    ),
+                    const Icon(Icons.chevron_right,
+                        size: 17, color: AppTheme.textTertiary),
+                  ],
+                ),
+              ),
             ),
           ],
         ],
@@ -861,7 +1113,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _servicesCard() {
     if (_cfg.services.isEmpty) return const SizedBox.shrink();
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+      margin: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
       decoration: BoxDecoration(
         color: AppTheme.surface,
@@ -878,36 +1130,50 @@ class _ProfileScreenState extends State<ProfileScreen> {
           LayoutBuilder(builder: (ctx, box) {
             const gap = 6.0;
             final n = _cfg.services.length.clamp(3, 5);
-            final cell = (box.maxWidth - gap * (n - 1)) / n;
-            return Wrap(
-              spacing: gap,
-              runSpacing: 12,
-              children: _cfg.services.map((s) {
-                return SizedBox(
-                  width: cell,
-                  child: InkWell(
-                    onTap: () => _runAction(s.action),
-                    borderRadius: BorderRadius.circular(8),
-                    child: Column(
-                      children: [
-                        Icon(_iconOf(s.icon),
-                            size: 22, color: AppTheme.primary),
-                        const SizedBox(height: 6),
-                        Text(
-                          s.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                              fontSize: 11.5, color: AppTheme.textPrimary),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }).toList(),
-            );
+            final per = n > 5 ? 5 : n;
+            final cell = (box.maxWidth - gap * (per - 1)) / per;
+            final rows = <Widget>[];
+            for (var i = 0; i < _cfg.services.length; i += per) {
+              final end = i + per > _cfg.services.length
+                  ? _cfg.services.length
+                  : i + per;
+              final slice = _cfg.services.sublist(i, end);
+              rows.add(Padding(
+                padding: EdgeInsets.only(top: i == 0 ? 0 : 14),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    for (var k = 0; k < slice.length; k++) ...[
+                      if (k > 0) const SizedBox(width: gap),
+                      SizedBox(width: cell, child: _serviceItem(slice[k])),
+                    ],
+                  ],
+                ),
+              ));
+            }
+            return Column(children: rows);
           }),
+        ],
+      ),
+    );
+  }
+
+  /// 服务宫格里的一个小格（图标 + 一行标题）
+  Widget _serviceItem(ProfileItem s) {
+    return InkWell(
+      onTap: () => _runAction(s.action),
+      borderRadius: BorderRadius.circular(8),
+      child: Column(
+        children: [
+          Icon(_iconOf(s.icon), size: 22, color: AppTheme.primary),
+          const SizedBox(height: 6),
+          Text(
+            s.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 11.5, color: AppTheme.textPrimary),
+          ),
         ],
       ),
     );
@@ -918,7 +1184,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final s = _cfg.smartBar;
     if (s.title.isEmpty) return const SizedBox.shrink();
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+      margin: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
       decoration: BoxDecoration(
         color: AppTheme.primarySoft,
@@ -966,7 +1232,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _cardsRow() {
     if (_cfg.cards.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+      padding: const EdgeInsets.fromLTRB(12, AppTheme.cardGap, 12, 0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1022,13 +1288,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 color: AppTheme.primarySoft,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Text(
-                '${c.button}  »',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w600,
-                    color: AppTheme.primary),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    c.button,
+                    style: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.primary),
+                  ),
+                  const SizedBox(width: 1),
+                  const Icon(Icons.chevron_right,
+                      size: 13, color: AppTheme.primary),
+                ],
               ),
             ),
           ],
@@ -1161,25 +1434,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (!sp.isLoggedIn && ApiConfig.enabled) {
       return Scaffold(
-        appBar: AppBar(
-          title: const Text('我的'),
-          flexibleSpace: Container(
-            decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
-          ),
-        ),
+        appBar: AppBar(title: const Text('我的')),
         body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.person_outline, size: 80, color: Colors.grey),
-              const SizedBox(height: 16),
-              const Text('登录后查看你的渔获与收藏'),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: _goLogin,
-                child: const Text('登录 / 注册'),
-              ),
-            ],
+          child: UiEmptyState(
+            icon: Icons.person_outline,
+            title: '登录后查看你的渔获与收藏',
+            desc: '渔获、徽章、关注和钓鱼档案都在这里',
+            actionLabel: '登录 / 注册',
+            onAction: _goLogin,
           ),
         ),
       );
@@ -1189,9 +1451,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       backgroundColor: AppTheme.background,
       appBar: AppBar(
         title: const Text('我的'),
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
-        ),
         actions: [
           // 顶部只留一个「设置」入口：编辑资料已经挪进「点头像/资料卡」和设置页，
           // 退出登录也挪进设置页底部（原来两个图标挤在一起容易误点）
