@@ -150,7 +150,7 @@ class _Metric extends StatelessWidget {
         Text(value,
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         const SizedBox(height: 2),
-        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+        Text(label, style: const TextStyle(fontSize: 12, color: AppTheme.textTertiary)),
       ],
     );
   }
