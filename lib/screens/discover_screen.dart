@@ -12,9 +12,12 @@ import '../services/api_config.dart';
 import '../utils/geo_names.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/app_refresh.dart';
+import '../widgets/member_gate.dart';
+import '../widgets/login_gate.dart';
 import '../widgets/ui_kit.dart';
 import '../widgets/waterfall_post_card.dart';
 import 'auth_screen.dart';
+import 'nearby_anglers_screen.dart';
 import 'post_detail_screen.dart';
 
 /// 发现页（钓友圈）：双列瀑布流
@@ -23,7 +26,10 @@ import 'post_detail_screen.dart';
 /// 下面是两列卡片 —— 图片左上角标（鱼种数）、右上评论数、图上叠鱼种名与
 /// 绿色「指数」，图下正文两行、城市、作者行（头像 + 昵称 + LV + 点赞）。
 class DiscoverScreen extends StatefulWidget {
-  const DiscoverScreen({super.key});
+  /// 仅测试/截图用：强制「是不是会员」，不传则读 [SessionProvider]
+  final bool? debugMember;
+
+  const DiscoverScreen({super.key, this.debugMember});
 
   @override
   State<DiscoverScreen> createState() => _DiscoverScreenState();
@@ -38,6 +44,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     ['最新', 'NEW', 'latest'],
     ['同城', 'LOCAL', 'city'],
     ['关注', 'FOLLOW', 'follow'],
+    // v2.1.61：用户要求导航栏加「钓友」，点开是附近钓友。
+    // 这一格不打信息流接口，内容由 _anglers() 负责（会员专享）。
+    ['钓友', 'NEARBY', 'anglers'],
   ];
 
   int _tab = 0;
@@ -92,6 +101,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   Future<void> _load({bool loadMore = false}) async {
     final tab = _tabKey;
+    // 「钓友」Tab 的内容是附近钓友列表（会员专享），不走信息流接口
+    if (tab == 'anglers') {
+      if (mounted && _loading) setState(() => _loading = false);
+      return;
+    }
     final hasData = (_cache[tab] ?? const <Post>[]).isNotEmpty;
 
     if (loadMore) {
@@ -255,25 +269,135 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         systemOverlayStyle: SystemUiOverlayStyle.dark,
         title: _header(),
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(58),
+          // 与 _tabs() 的高度保持一致
+          preferredSize: const Size.fromHeight(52),
           child: _tabs(),
         ),
       ),
-      body: _loading
-          ? const Center(
-              child: SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
+      body: _tabKey == 'anglers'
+          ? _anglers()
+          : _loading
+              ? const Center(
+                  child: SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : AppRefresh(
+                  onRefresh: _load,
+                  // 每个 tab 各记一份「最后更新」，别把热门的刷新时间
+                  // 显示在关注 tab 上
+                  memoKey: 'discover_$_tabKey',
+                  child: _posts.isEmpty ? _empty() : _grid(),
+                ),
+    );
+  }
+
+  /// 「钓友」Tab 的内容：会员 → 附近钓友列表；非会员 → 解锁引导
+  Widget _anglers() {
+    var member = widget.debugMember ?? false;
+    if (widget.debugMember == null) {
+      try {
+        member =
+            Provider.of<SessionProvider>(context, listen: false).isMember;
+      } catch (_) {
+        // 没有 provider 作用域（截图 / 裸 pump 的测试）按普通用户处理
+        member = false;
+      }
+    }
+    if (!member) return _memberLock();
+    return const NearbyAnglersScreen(embedded: true);
+  }
+
+  /// 非会员看到的解锁页（不请求定位，也不请求任何接口）
+  Widget _memberLock() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+          AppTheme.pagePad, 12, AppTheme.pagePad, 30),
+      children: [
+        UiCard(
+          padding: const EdgeInsets.fromLTRB(20, 26, 20, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: AppTheme.accentLight,
+                    borderRadius: BorderRadius.circular(22),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(Icons.people_alt_outlined,
+                      size: 30, color: AppTheme.accentDark),
+                ),
               ),
-            )
-          : AppRefresh(
-              onRefresh: _load,
-              // 每个 tab 各记一份「最后更新」，别把热门的刷新时间
-              // 显示在关注 tab 上
-              memoKey: 'discover_$_tabKey',
-              child: _posts.isEmpty ? _empty() : _grid(),
-            ),
+              const SizedBox(height: 14),
+              const Center(
+                child: Text('附近钓友',
+                    style: TextStyle(
+                        fontSize: 16.5,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.textPrimary)),
+              ),
+              const SizedBox(height: 6),
+              Center(
+                child: UiTag('会员专享', tone: UiTagTone.accent, icon: Icons.lock),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                '按距离找到 48 小时内在附近活跃的钓友，可以直接关注、私信约钓。',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.6,
+                    color: AppTheme.textSecondary),
+              ),
+              const SizedBox(height: 16),
+              const _LockPoint(icon: Icons.near_me_outlined, text: '由近到远，看见身边的钓友'),
+              const _LockPoint(
+                  icon: Icons.chat_bubble_outline, text: '一键关注 · 私信约钓'),
+              const _LockPoint(
+                  icon: Icons.verified_outlined, text: '会员不限查看次数'),
+              const SizedBox(height: 20),
+              SizedBox(
+                height: 44,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(AppTheme.radiusPill)),
+                  ),
+                  // 字号/字重写在 Text 上而不是 styleFrom(textStyle:)：
+                  // 后者会整体替掉主题里的 textStyle，连字体一起丢，
+                  // 中文在测试渲染里就会变成方块（真机不可见，但截图对不了）。
+                  onPressed: () async {
+                    // 未登录先去登录：会员中心要靠账号才能查到会员状态
+                    if (!await ensureLogin(context, hint: '登录后即可开通会员')) return;
+                    if (!mounted) return;
+                    final ok = await ensureMemberFeature(
+                      context,
+                      title: '开通会员',
+                      desc: '附近钓友是会员功能。开通后可以按距离浏览身边钓友，'
+                          '关注、私信约钓，还能解锁 7 天天气预报与全部鱼种图鉴。',
+                      confirmLabel: '开通会员查看',
+                    );
+                    if (ok && mounted) setState(() {});
+                  },
+                  child: const Text('开通会员查看',
+                      style: TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -325,12 +449,14 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   /// 纯黑大色块，视线自然落上去；黄绿只在黑底上用，白底上它是看不见的。
   Widget _tabs() {
     return SizedBox(
-      height: 58,
+      // v2.1.61：58 → 52（胶囊 36 高，上下各 8 的留白就够）
+      height: 52,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+        padding:
+            const EdgeInsets.fromLTRB(AppTheme.pagePad, 2, AppTheme.pagePad, 8),
         itemCount: _tabDefs.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (_, __) => const SizedBox(width: 6),
         itemBuilder: (_, i) {
           final on = _tab == i;
           return GestureDetector(
@@ -340,7 +466,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
               // 否则会先按新 tab 的空缓存渲染一帧「暂无内容」，再切成转圈
               setState(() {
                 _tab = i;
-                _loading = (_cache[_tabDefs[i][2]] ?? const <Post>[]).isEmpty;
+                final key = _tabDefs[i][2];
+                // 钓友 Tab 不转圈：它要么直接出列表，要么直接出解锁页
+                _loading = key == 'anglers'
+                    ? false
+                    : (_cache[key] ?? const <Post>[]).isEmpty;
                 _emptyHint = null;
               });
               _load();
@@ -410,7 +540,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             posts: _posts,
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 90),
+            // v2.1.61：左右 12 → pagePad，上 12 → 8（页边距统一收窄）
+            padding: const EdgeInsets.fromLTRB(
+                AppTheme.pagePad, 8, AppTheme.pagePad, 90),
             onTap: (p) => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => PostDetailScreen(post: p)),
             ),
@@ -484,4 +616,32 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     );
   }
 
+}
+
+/// 解锁页里的一条权益说明（图标 + 一行字）
+class _LockPoint extends StatelessWidget {
+  final IconData icon;
+  final String text;
+
+  const _LockPoint({required this.icon, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: AppTheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                  fontSize: 12.5, height: 1.4, color: AppTheme.textSecondary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
