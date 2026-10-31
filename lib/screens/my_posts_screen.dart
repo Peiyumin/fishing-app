@@ -4,6 +4,7 @@ import '../models/post.dart';
 import '../services/post_service.dart';
 import '../services/refresh_bus.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/ui_kit.dart';
 import '../widgets/post_card.dart';
 import 'publish_catch_screen.dart';
 import '../widgets/app_refresh.dart';
@@ -101,11 +102,19 @@ class _MyPostsScreenState extends State<MyPostsScreen> {
               )
             : _posts.isEmpty
                 ? ListView(
-                    children: const [
-                      SizedBox(height: 120),
-                      Center(
-                        child: Text('还没有发布，去首页点「+」发布吧',
-                            style: TextStyle(fontSize: 13, color: Colors.grey)),
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    // v2.1.59：原来是一个 120pt 留白 + 一行灰字，整页空得像加载失败；
+                    // 换成统一空状态（图标 + 标题 + 一句怎么做的说明），并垂直居中
+                    children: [
+                      SizedBox(
+                        height: MediaQuery.of(context).size.height * 0.55,
+                        child: const Center(
+                          child: UiEmptyState(
+                            icon: Icons.edit_note_outlined,
+                            title: '还没有发布',
+                            desc: '去首页点底部「+」，发布你的第一条渔获或动态',
+                          ),
+                        ),
                       ),
                     ],
                   )
