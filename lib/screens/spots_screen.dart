@@ -320,6 +320,9 @@ class _SpotsScreenState extends State<SpotsScreen>
   /// 缩略图固定 96 高，却被六行文字撑到 150 多，图和字完全不成比例。
   /// 现在压成四行 —— 名称+评分 / 标签 / 地址+距离 / 门票+评论数，
   /// 图标一律用 Material 线性图标（textTertiary），描述留给详情页。
+  ///
+  /// v2.1.60：缩略图改回**固定 96×96**（v2.1.59 用按内容撑高，结果一卡一个
+  /// 图高），行距从 7/9/5 压到 3/3/2 —— 一屏能多露小半张卡。
   Widget _venueCard(FishingSpot s) {
     final tags = s.tags
         .split(',')
@@ -342,17 +345,17 @@ class _SpotsScreenState extends State<SpotsScreen>
           onTap: () => _openDetail(s),
           child: Padding(
             padding: const EdgeInsets.all(12),
-            // IntrinsicHeight + stretch：缩略图高度**跟着文字列走**，
-            // 不再固定 96 —— 否则标签换行时卡片被文字撑高、图下方留一块空白
-            child: IntrinsicHeight(
-              child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+            // 固定 96×96 的缩略图：四张卡的图必须一样大
+            //（之前那套「按内容撑高」会让图跟着文字高度伸缩，一卡一个高度）
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // 封面：与右侧内容等高
+                // 封面：固定 96×96 —— 所有卡片的图一样大，不再跟着文字高度伸缩
                 ClipRRect(
                   borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   child: SizedBox(
                     width: 96,
+                    height: 96,
                     child: s.coverUrl != null
                         ? Image.network(
                             s.coverUrl!,
@@ -397,7 +400,7 @@ class _SpotsScreenState extends State<SpotsScreen>
                       ),
                       // ② 标签：推荐走淡黄绿，其余中性灰 —— 一屏最多一个强调色
                       if (tags.isNotEmpty) ...[
-                        const SizedBox(height: 7),
+                        const SizedBox(height: 3),
                         Wrap(
                           spacing: 5,
                           runSpacing: 4,
@@ -409,7 +412,7 @@ class _SpotsScreenState extends State<SpotsScreen>
                               .toList(),
                         ),
                       ],
-                      const SizedBox(height: 9),
+                      const SizedBox(height: 3),
                       // ③ 地址 + 距离
                       Row(
                         children: [
@@ -434,7 +437,7 @@ class _SpotsScreenState extends State<SpotsScreen>
                           ],
                         ],
                       ),
-                      const SizedBox(height: 5),
+                      const SizedBox(height: 2),
                       // ④ 门票 + 评论数
                       Row(
                         children: [
@@ -462,7 +465,6 @@ class _SpotsScreenState extends State<SpotsScreen>
                   ),
                 ),
               ],
-              ),
             ),
           ),
         ),
