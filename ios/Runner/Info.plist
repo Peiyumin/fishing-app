@@ -35,6 +35,12 @@
 	<string>用于把带水印的打卡照片保存到你的相册</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>用于获取当前位置显示天气、筛选同城内容和标记钓点坐标</string>
+	<!-- 本地网络（v2.1.63 补）：当前后端是公网 IP，访问时不会触发这个权限；
+	     但一旦换成局域网地址（内网调试、自建服务器、路由器给的内网域名），
+	     iOS 14+ 会要求「本地网络」授权，**缺这个 key 会被系统直接终止**，
+	     表现为用户点开 App 就闪退，且没有任何提示。宁可有备无患。 -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>用于连接钓点和天气服务（仅在服务器位于本地局域网时需要）</string>
 	<!-- 后端是 http://IP:8801，ATS 必须放行明文 HTTP -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
