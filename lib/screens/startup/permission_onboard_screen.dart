@@ -1,11 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../app_theme.dart';
+import '../../services/net_diag.dart';
 import '../../widgets/center_toast.dart';
+import '../../widgets/net_fix_steps.dart';
 
-/// 首次启动的权限引导（v2.1.46）
+/// 首次启动的权限引导（v2.1.46，v2.1.63 起含「网络」项）
 ///
 /// 用户反馈：「装好后打开 App 应该把所有权限都问一遍，确认完系统里也要真的开上」。
 ///
@@ -17,11 +22,50 @@ import '../../widgets/center_toast.dart';
 ///
 /// 状态一律**回读系统**（`permission.status`），不拿 request 的返回值当真：
 /// 用户在系统弹窗上点「仅本次允许」或「拒绝」时，返回值与最终设置并不总一致。
+///
+/// ── 关于「网络」这一项（v2.1.63）────────────────────────────────
+/// 用户报：「权限全通过后，登录注册还是提示连接失败，清单里少了个网络权限」。
+///
+/// 事实是：**两个平台都没有可申请的「网络权限」**
+///   · Android 的 `INTERNET` 是安装时自动授予的普通权限，没有弹窗，清单里也
+///     不该出现（已用 aapt2 核对过安装包，INTERNET / ACCESS_NETWORK_STATE
+///     都在，`usesCleartextTraffic=true` 也在 —— 不是打包丢了权限）；
+///   · iOS 更没有「网络权限」这个条目，明文 HTTP 由 Info.plist 的 ATS 放行
+///     （也核对过成品 ipa，`NSAllowsArbitraryLoads=true` 在）。
+///
+/// 真正卡住用户的是 **iOS 的「是否允许使用无线数据」系统弹窗**：它只在 App
+/// 第一次真的发起网络请求时由系统弹出，**不在任何权限清单里**，也没法用
+/// permission_handler 主动请求。老流程里第一个请求发生在「引导页点完 → 进首页」
+/// 之后，用户根本不知道还有这么一个框，一旦错过或点错，之后每次登录都只看到
+/// 一句「连不上服务器」—— 表现就是「少了网络权限」。
+///
+/// 所以这里把网络做成**第一项自检**：
+///   1. 进页面就主动探一次（这一下就是触发那个系统弹窗的钩子，在引导页内消化掉）；
+///   2. 结果如实展示：已连通 / 连不上 / 网络通但服务器接口异常；
+///   3. 连不上就**不让流程自动往下走**，把用户按在这一页给出分平台的修复指引，
+///      而不是放他去登录页撞「连接失败」。
 class PermissionOnboardScreen extends StatefulWidget {
-  const PermissionOnboardScreen({super.key, required this.onDone});
+  const PermissionOnboardScreen({
+    super.key,
+    required this.onDone,
+    this.probeNet,
+    this.debugGrantPerms,
+  });
 
   /// 全部处理完（或用户点「以后再说」）后回调
   final VoidCallback onDone;
+
+  /// 网络探测实现，默认走 [NetDiag.run]（TCP 连端口 + 取一次接口）。
+  /// 抽成可注入是为了测试能给出确定结果，不打真实网络。
+  final Future<NetDiagResult> Function()? probeNet;
+
+  /// 测试用：强制五项系统权限的状态。
+  ///
+  /// null（默认）= 走系统回读，生产路径永远是它；
+  /// true = 全当已授予；false = 全当被拒。
+  /// 必须在测试里能注入，是因为 `permission_handler` 走平台通道，
+  /// 在宿主机上跑 widget 测试时那个 Future 不会返回，页面会永远停在读取中。
+  final bool? debugGrantPerms;
 
   @override
   State<PermissionOnboardScreen> createState() =>
@@ -35,6 +79,24 @@ class _PermRow {
   final String desc;
 
   const _PermRow(this.perm, this.icon, this.title, this.desc);
+}
+
+/// 网络自检的四种状态
+enum _NetState {
+  /// 还没开始
+  idle,
+
+  /// 正在探测
+  checking,
+
+  /// 端口通、接口回 200 —— 真的能上网
+  ok,
+
+  /// 端口通，但接口不是 200：网络没问题，是服务端的事
+  serverIssue,
+
+  /// 端口都连不上：没有出口 / 被系统禁止联网 / 端口被拦
+  offline,
 }
 
 class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
@@ -62,15 +124,73 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
   /// 「全部已开启 → 自动进首页」只排一次
   bool _autoExit = false;
 
+  /// 网络自检状态
+  _NetState _net = _NetState.idle;
+  NetDiagResult? _netResult;
+
+  /// 探测只跑一次，重复调用复用同一个 Future（避免连点弹出多次请求）
+  Future<void>? _probeFuture;
+
   @override
   void initState() {
     super.initState();
+    // ★ 顺序很重要：先探网络。这是 App 生命周期里第一次真正发请求，
+    //   iOS 的「是否允许使用无线数据」系统弹窗就在这一下弹出来 ——
+    //   把它留在引导页里，用户当场就能看到结果并处理，
+    //   而不是等进了登录页才发现「点了登录没反应」。
+    _ensureProbed();
     _refresh();
+  }
+
+  /// 网络探测（结果缓存在 [_net] / [_netResult]）
+  Future<void> _ensureProbed() =>
+      _probeFuture ??= _doProbe();
+
+  Future<void> _doProbe() async {
+    if (mounted) setState(() => _net = _NetState.checking);
+    NetDiagResult r;
+    try {
+      r = await (widget.probeNet ?? NetDiag.run)();
+    } catch (e) {
+      r = NetDiagResult(
+        tcpOk: false,
+        tcpMs: 0,
+        tcpError: '探测本身出错：$e',
+        httpStatus: 0,
+        httpMs: 0,
+        httpError: '',
+      );
+    }
+    if (!mounted) return;
+    setState(() {
+      _netResult = r;
+      // 三态而不是两态：端口通但接口没回 200 是「服务器的问题」，
+      // 让用户去折腾 WiFi 只会白费功夫，必须分开说。
+      if (!r.tcpOk) {
+        _net = _NetState.offline;
+      } else if (r.httpStatus == 200) {
+        _net = _NetState.ok;
+      } else {
+        _net = _NetState.serverIssue;
+      }
+    });
+    _maybeAutoExit();
+  }
+
+  /// 重新探测（用户点「重新检测」时用，强制重跑）
+  Future<void> _reprobe() async {
+    _probeFuture = null;
+    await _ensureProbed();
   }
 
   Future<void> _refresh() async {
     final map = <Permission, PermissionStatus>{};
+    final forced = widget.debugGrantPerms;
     for (final r in _rows) {
+      if (forced != null) {
+        map[r.perm] = forced ? PermissionStatus.granted : PermissionStatus.denied;
+        continue;
+      }
       try {
         map[r.perm] = await r.perm.status;
       } catch (_) {
@@ -84,16 +204,27 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
         ..addAll(map);
       _reading = false;
     });
+    _maybeAutoExit();
+  }
 
-    // 进页面时（或从系统设置回来时）发现已经全开了 → 稍等一下直接进首页，
-    // 不让用户对着一个「没什么可做」的清单页发呆
-    final all = _rows.every((r) => map[r.perm]?.isGranted == true);
-    if (all && !_autoExit && !_finished) {
-      _autoExit = true;
-      Future.delayed(const Duration(milliseconds: 450), () {
-        if (mounted && !_finished) _done();
-      });
-    }
+  /// 权限全开 **且** 网络没问题 → 稍等一下自动进首页。
+  ///
+  /// 原来只看权限，所以「网络没通」也会被自动放行到登录页，
+  /// 用户在那儿撞一句「连不上服务器」，回头还以为权限没给够。
+  void _maybeAutoExit() {
+    if (_finished || _autoExit) return;
+    if (_reading) return;
+    if (_status.length < _rows.length) return;
+    final permsAll = _rows.every((r) => _status[r.perm]?.isGranted == true);
+    if (!permsAll) return;
+    // 网络还在检测中就再等等（探测完会再调一次本函数）
+    if (_net == _NetState.idle || _net == _NetState.checking) return;
+    // 明确连不上 → 停在本页，让用户先修网络
+    if (_net == _NetState.offline) return;
+    _autoExit = true;
+    Future.delayed(const Duration(milliseconds: 450), () {
+      if (mounted && !_finished) _done();
+    });
   }
 
   /// 逐项申请（串行）。每一项都回读系统状态再继续。
@@ -130,8 +261,20 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
     }).toList();
     if (!mounted) return;
     if (denied.isEmpty) {
-      // ★ 全部开启 → 自动关闭引导页进首页（用户明确要求：给完权限就自动进）
-      CenterToast.show(context, '全部权限已开启，正在进入渔报', icon: Icons.check_circle);
+      // ★ 权限都给了，再确认一次网络 —— 网络没通就直接把人放到登录页，
+      //   用户只会看到「连不上服务器」，还以为权限没生效。
+      await _ensureProbed();
+      if (!mounted) return;
+      if (_net == _NetState.offline) {
+        CenterToast.show(
+          context,
+          '权限都开好了，但手机连不上服务器，点第一项查看怎么修',
+          icon: Icons.wifi_off,
+        );
+        return;
+      }
+      CenterToast.show(context, '全部权限已开启，正在进入渔报',
+          icon: Icons.check_circle);
       await Future.delayed(const Duration(milliseconds: 700));
       if (!mounted) return;
       await _done();
@@ -162,10 +305,17 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final grantedCount = _rows
-        .where((r) => _status[r.perm]?.isGranted == true)
-        .length;
-    final allDone = grantedCount == _rows.length;
+    final grantedPerms =
+        _rows.where((r) => _status[r.perm]?.isGranted == true).length;
+    // 「网络」也计入总数：它虽然不用点系统弹窗，但对用户来说就是一项能力，
+    // 不计进去会出现「6 项全能用了却显示 5/5」的怪事。
+    final netOk = _net == _NetState.ok;
+    final total = _rows.length + 1;
+    final grantedCount = grantedPerms + (netOk ? 1 : 0);
+    final permsAll = grantedPerms == _rows.length;
+    final allDone = permsAll && netOk;
+    // 权限齐了但网络确实连不上 → 主按钮改成「去修」，别让用户空着点
+    final netBlocked = permsAll && _net == _NetState.offline;
 
     return Scaffold(
       backgroundColor: AppTheme.background,
@@ -206,7 +356,7 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                   const SizedBox(height: 14),
                   Row(
                     children: [
-                      Text('$grantedCount/${_rows.length}',
+                      Text('$grantedCount/$total',
                           style: const TextStyle(
                               color: AppTheme.star,
                               fontSize: 17,
@@ -230,13 +380,17 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                   : ListView(
                       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
                       children: [
+                        // 网络放第一项：它是登录/注册的前提，也是 iOS 那个
+                        // 「是否允许使用无线数据」弹窗唯一能被触发的时机
+                        _netTile(),
                         ..._rows.map(_tile),
                         const SizedBox(height: 4),
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 4),
                           child: Text(
-                            '说明：显示「已拒绝」表示系统里没有开启，点这一项会跳到本机系统的「渔报」权限页，'
-                            '手动打开后返回即可。所有权限都可以稍后在「我的 → 通知设置 → 权限自检」里再改。',
+                            '说明：「网络」由系统自动授予，不用点；显示「连不上」时点它看修复方法。\n'
+                            '其余项显示「已拒绝」表示系统里没开，点这一项会跳到本机的'
+                            '「渔报」权限页，打开后返回即可。',
                             style: const TextStyle(
                                 fontSize: 11.5,
                                 height: 1.65,
@@ -258,9 +412,12 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                     child: ElevatedButton(
                       onPressed: _running
                           ? null
-                          : (allDone ? _done : _requestAll),
+                          : (allDone
+                              ? _done
+                              : (netBlocked ? _showNetHelp : _requestAll)),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primary,
+                        backgroundColor:
+                            netBlocked ? AppTheme.danger : AppTheme.primary,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                             borderRadius:
@@ -272,7 +429,12 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                               height: 20,
                               child: CircularProgressIndicator(
                                   color: Colors.white, strokeWidth: 2.2))
-                          : Text(allDone ? '进入渔报' : '一键开启全部权限',
+                          : Text(
+                              allDone
+                                  ? '进入渔报'
+                                  : (netBlocked
+                                      ? '网络未通，点这里修复'
+                                      : '一键开启全部权限'),
                               style: const TextStyle(
                                   fontSize: 15, fontWeight: FontWeight.w700)),
                     ),
@@ -288,8 +450,12 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                       ),
                       Expanded(
                         child: TextButton(
+                          // 网络确实不通时，文案改成「仍要先进入」：
+                          // 不能因为网络问题把用户永久关在引导页里
                           onPressed: _done,
-                          child: Text(allDone ? '完成' : '以后再说'),
+                          child: Text(allDone
+                              ? '完成'
+                              : (netBlocked ? '仍要先进入' : '以后再说')),
                         ),
                       ),
                     ],
@@ -299,6 +465,273 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // ── 网络这一行 ────────────────────────────────────────────────
+
+  /// 把底层英文异常压成半句话（完整堆栈留给修复弹窗里的「诊断详情」）
+  String _shortNetReason() {
+    final e = (_netResult?.tcpError ?? '').toLowerCase();
+    if (e.contains('timed out') || e.contains('timeout')) {
+      return '连接超时，多半是当前网络拦了端口';
+    }
+    if (e.contains('unreachable') || e.contains('no route')) {
+      return '手机没有可用网络';
+    }
+    if (e.contains('refused')) return '服务器端口拒绝连接';
+    if (e.contains('permission denied')) return '系统禁止了本 App 联网';
+    if (e.contains('failed host lookup')) return '服务器地址解析失败';
+    return '连不上服务器';
+  }
+
+  Widget _netTile() {
+    final s = _net;
+    final ok = s == _NetState.ok;
+    final bad = s == _NetState.offline;
+    final warn = s == _NetState.serverIssue;
+    final busy = s == _NetState.idle || s == _NetState.checking;
+
+    final Color tone = ok
+        ? AppTheme.primary
+        : bad
+            ? AppTheme.danger
+            : warn
+                ? AppTheme.warning
+                : AppTheme.textSecondary;
+    final Color toneBg = ok
+        ? AppTheme.primaryLight
+        : bad
+            ? AppTheme.dangerLight
+            : warn
+                ? AppTheme.warningLight
+                : AppTheme.primarySoft;
+    final Color tileBg = bad
+        ? AppTheme.dangerLight
+        : warn
+            ? AppTheme.warningLight
+            : AppTheme.surface;
+    final Color tileBorder = bad
+        ? AppTheme.danger.withOpacity(0.35)
+        : warn
+            ? AppTheme.warning.withOpacity(0.35)
+            : AppTheme.border;
+    final IconData icon = ok
+        ? Icons.wifi
+        : bad
+            ? Icons.wifi_off
+            : warn
+                ? Icons.dns_outlined
+                : Icons.wifi_find_outlined;
+
+    final String sub;
+    if (busy) {
+      sub = '正在检测能否连上服务器…';
+    } else if (ok) {
+      sub = '已连通 · ${_netResult?.tcpMs ?? 0} ms · 登录、钓点、天气都靠它';
+    } else if (bad) {
+      sub = _shortNetReason();
+    } else {
+      sub = '网络已通，服务器接口异常（HTTP ${_netResult?.httpStatus ?? 0}）';
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 9),
+      decoration: BoxDecoration(
+        color: tileBg,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        border: Border.all(color: tileBorder),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          onTap: busy ? null : (ok ? _reprobe : _showNetHelp),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: toneBg,
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: Icon(icon, size: 20, color: tone),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Text('网络',
+                              style: TextStyle(
+                                  fontSize: 14.5, fontWeight: FontWeight.w700)),
+                          if (bad || warn) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: tone.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(bad ? '未连通' : '服务异常',
+                                  style: TextStyle(
+                                      fontSize: 9.5,
+                                      fontWeight: FontWeight.w700,
+                                      color: tone)),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(sub,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 11.5,
+                              height: 1.35,
+                              color: bad || warn ? tone : AppTheme.textSecondary)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (busy)
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 1.8, color: AppTheme.textSecondary),
+                  )
+                else if (ok)
+                  const Icon(Icons.check_circle,
+                      color: AppTheme.primary, size: 21)
+                else
+                  TextButton(
+                    onPressed: _showNetHelp,
+                    style: TextButton.styleFrom(
+                      foregroundColor: tone,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text('去修复',
+                        style: TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w700)),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 网络连不上时给**能照着做**的路径，而不是一句「请检查网络」。
+  ///
+  /// iOS 的「无线数据」开关根本不在 App 自己的设置页里，所以必须把
+  /// 「设置 → 蜂窝网络 → 渔报」这条路径写死在界面上。
+  Future<void> _showNetHelp() async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
+        titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+        contentPadding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+        actionsPadding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+        title: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: AppTheme.dangerLight,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.wifi_off,
+                  size: 18, color: AppTheme.danger),
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text('网络连不上怎么办',
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.textPrimary)),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _net == _NetState.offline
+                    ? '手机现在连不到服务器。按下面三步处理，多半能好：'
+                    : '手机能上网，但服务器没正常回数据 —— 这不是你这边的网络问题，'
+                        '可以先进入 App，稍后再试。',
+                style: const TextStyle(
+                    fontSize: 12.5, height: 1.6, color: AppTheme.textPrimary),
+              ),
+              const SizedBox(height: 12),
+              const NetFixSteps(),
+              // 诊断详情：折叠在下面，用户要发我截图时能直接复制
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppTheme.primarySoft,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.border),
+                ),
+                child: SelectableText(
+                  _netResult?.summary ?? '尚未检测',
+                  style: const TextStyle(
+                      fontSize: 10.5, height: 1.5, color: AppTheme.textSecondary),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(
+                  ClipboardData(text: _netResult?.summary ?? '尚未检测'));
+              Navigator.of(ctx).pop();
+              CenterToast.show(context, '诊断详情已复制');
+            },
+            child: const Text('复制诊断',
+                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              await _openSettings();
+              await _reprobe();
+            },
+            child: const Text('打开设置',
+                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              await _reprobe();
+            },
+            child: const Text('重新检测',
+                style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w700)),
+          ),
+        ],
       ),
     );
   }
@@ -382,7 +815,14 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
 ///
 /// 判定用 SharedPreferences 的布尔标记 —— 卸载重装会清掉，正好符合
 /// 「每次安装后都要重新确认一遍权限」的预期。
-const String kPermOnboardDone = 'perm_onboard_done_v1';
+///
+/// ★ v2（v2.1.63）：key 从 `perm_onboard_done_v1` 升到 v2，**故意换名**。
+///   原因是这一版才把「网络」加进清单，而已经在用 v2.1.62 的用户本地
+///   早就写了 v1 标记 —— 不换名的话他们升级后根本看不到新的一项，
+///   也就永远不知道连不上是「无线数据」被禁了。
+///   代价是老用户升级后会再看一次这个页；但页面逻辑里「权限已全开 + 网络正常
+///   → 450ms 自动跳过」，他们基本无感，代价可以接受。
+const String kPermOnboardDone = 'perm_onboard_done_v2';
 
 class FirstRunPermissionGate extends StatefulWidget {
   const FirstRunPermissionGate({super.key, required this.child});
