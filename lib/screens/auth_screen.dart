@@ -13,6 +13,7 @@ import '../services/session_provider.dart';
 import '../utils/net_error_text.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/debug_code_hint.dart';
+import '../widgets/net_fix_steps.dart';
 import 'legal_doc_screen.dart';
 
 /// 登录页（v2.1.48 按设计稿重做：深色 + 荧光绿）
@@ -31,7 +32,13 @@ import 'legal_doc_screen.dart';
 ///
 /// 手机号走「验证码」而不是密码：**没注册过的号码输完验证码就直接建号并登录**。
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key, this.hint, this.onSkip, this.barrier = false});
+  const AuthScreen({
+    super.key,
+    this.hint,
+    this.onSkip,
+    this.barrier = false,
+    this.debugNetBad = false,
+  });
 
   /// 从长按快捷入口等地方进来时，可以带一句「登录后继续…」
   final String? hint;
@@ -43,6 +50,10 @@ class AuthScreen extends StatefulWidget {
 
   /// 作为浮层压在内容上时（true）不画「随便看看」，只留关闭
   final bool barrier;
+
+  /// 测试/截图用：直接让「连不上服务器」横幅处于显示状态。
+  /// 正常路径下它只在 [_AuthScreenState._showErr] 捕获到网络类错误后才出现。
+  final bool debugNetBad;
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -77,6 +88,13 @@ class _AuthScreenState extends State<AuthScreen>
   /// 网络自检进行中（防止连点长按弹出两个框）
   bool _diagRunning = false;
 
+  /// 已经确认「连不上服务器」→ 顶部常驻一条修复入口。
+  ///
+  /// 为什么要它：长按图标做网络自检是个隐藏入口，用户撞到「连接失败」时
+  /// 根本不知道有这回事，只能反复点登录。这条横幅把同一个自检暴露出来，
+  /// 并且只在**真的出过网络错**之后才出现，不占正常用户的地方。
+  bool _netBad = false;
+
   bool _busy = false;
   bool _agree = false;
   int _countdown = 0;
@@ -89,6 +107,7 @@ class _AuthScreenState extends State<AuthScreen>
   @override
   void initState() {
     super.initState();
+    _netBad = widget.debugNetBad;
     _shake = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 380),
@@ -201,7 +220,12 @@ class _AuthScreenState extends State<AuthScreen>
   /// 把 [_errText] 的结果弹出来的统一入口
   void _showErr(Object e) {
     if (!mounted) return;
-    CenterToast.show(context, _errText(e));
+    final d = describeError(e);
+    // 网络类失败才亮横幅：验证码错了、会员过期这类业务错误不该挂个「网络故障」
+    if (d.isNet && !_netBad) {
+      setState(() => _netBad = true);
+    }
+    CenterToast.show(context, d.text);
   }
 
   /// 长按图标 → 网络自检。
@@ -228,6 +252,10 @@ class _AuthScreenState extends State<AuthScreen>
     }
     _diagRunning = false;
     if (!mounted) return;
+    // 自检确实通了就把横幅收掉，别让用户以为还坏着
+    if (r.tcpOk && r.httpStatus == 200 && _netBad) {
+      setState(() => _netBad = false);
+    }
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -235,9 +263,30 @@ class _AuthScreenState extends State<AuthScreen>
         title: const Text('网络自检',
             style: TextStyle(fontSize: 16, color: _hi)),
         content: SingleChildScrollView(
-          child: SelectableText(
-            r.summary,
-            style: const TextStyle(fontSize: 12.5, color: _hi, height: 1.6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SelectableText(
+                r.summary,
+                style: const TextStyle(fontSize: 12.5, color: _hi, height: 1.6),
+              ),
+              // 端口都不通 = 手机根本没出去，这时候诊断结论只是「什么坏了」，
+              // 用户要的是「我该点哪里」。v2.1.63 起把分平台步骤直接摆在这里，
+              // 不用再让用户去猜「设置里到底改哪一项」。
+              if (!r.tcpOk) ...[
+                const SizedBox(height: 16),
+                Container(height: 1, color: _line),
+                const SizedBox(height: 14),
+                const Text('按下面三步处理',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: _hi)),
+                const SizedBox(height: 10),
+                const NetFixSteps(dark: true),
+              ],
+            ],
           ),
         ),
         actions: [
@@ -248,6 +297,14 @@ class _AuthScreenState extends State<AuthScreen>
               CenterToast.show(context, '自检结果已复制');
             },
             child: const Text('复制', style: TextStyle(color: AppTheme.accent)),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _runNetDiag();
+            },
+            child: const Text('再测一次',
+                style: TextStyle(color: AppTheme.accent)),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
@@ -455,6 +512,7 @@ class _AuthScreenState extends State<AuthScreen>
             Column(
               children: [
                 _topBar(),
+                if (_netBad) _netBanner(),
                 Expanded(
                   child: _cfgLoading
                       ? const Center(
@@ -497,6 +555,56 @@ class _AuthScreenState extends State<AuthScreen>
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// 「连不上服务器」横幅：把长按图标才能碰到的网络自检，变成一眼可见的入口。
+  ///
+  /// 只在真的抛过网络错误后出现；点它直接跑一遍自检（TCP + 接口），
+  /// 结果框里带着分平台的修复步骤。
+  Widget _netBanner() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+          onTap: _diagRunning ? null : _runNetDiag,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppTheme.danger.withOpacity(0.14),
+              borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+              border: Border.all(color: AppTheme.danger.withOpacity(0.42)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.wifi_off, size: 15, color: AppTheme.danger),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '手机连不上服务器，登录会一直失败',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white.withOpacity(0.88)),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                const Text('怎么修',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.accent)),
+                const Icon(Icons.chevron_right,
+                    size: 15, color: AppTheme.accent),
+              ],
+            ),
+          ),
         ),
       ),
     );
