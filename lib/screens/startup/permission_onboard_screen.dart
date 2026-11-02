@@ -39,11 +39,15 @@ import '../../widgets/net_fix_steps.dart';
 /// 之后，用户根本不知道还有这么一个框，一旦错过或点错，之后每次登录都只看到
 /// 一句「连不上服务器」—— 表现就是「少了网络权限」。
 ///
-/// 所以这里把网络做成**第一项自检**：
-///   1. 进页面就主动探一次（这一下就是触发那个系统弹窗的钩子，在引导页内消化掉）；
-///   2. 结果如实展示：已连通 / 连不上 / 网络通但服务器接口异常；
-///   3. 连不上就**不让流程自动往下走**，把用户按在这一页给出分平台的修复指引，
-///      而不是放他去登录页撞「连接失败」。
+/// 所以这里把网络做成**清单里的第一项**，并且和其余五项**同一个样式、同一套
+/// 交互**（v2.1.64 调整）：
+///   1. 进页面时它是中性的「允许」态 —— 不再一进来就自动探测、然后红着脸
+///      显示「未连通 / 去修复」。用户看到的是一张和下面完全一样的白卡；
+///   2. 点「一键开启全部权限」→ 网络排**队列第一位**，先探一次：这一下就是
+///      触发 iOS「是否允许使用无线数据」系统弹窗的钩子，把它在引导页内消化掉，
+///      用户当场就能看到结果，而不是进登录页才发现点登录没反应；
+///   3. 探测结果如实展示：已连通（绿勾）/ 连不上（红，带分平台修复指引）/
+///      网络通但服务器接口异常（橙）。连不上时**不自动放行进首页**。
 class PermissionOnboardScreen extends StatefulWidget {
   const PermissionOnboardScreen({
     super.key,
@@ -128,17 +132,27 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
   _NetState _net = _NetState.idle;
   NetDiagResult? _netResult;
 
+  /// 「一键开启」队列里正在弹系统框的那一项（用来高亮，让逐项申请看得见）
+  Permission? _activePerm;
+
   /// 探测只跑一次，重复调用复用同一个 Future（避免连点弹出多次请求）
   Future<void>? _probeFuture;
 
   @override
   void initState() {
     super.initState();
-    // ★ 顺序很重要：先探网络。这是 App 生命周期里第一次真正发请求，
-    //   iOS 的「是否允许使用无线数据」系统弹窗就在这一下弹出来 ——
-    //   把它留在引导页里，用户当场就能看到结果并处理，
-    //   而不是等进了登录页才发现「点了登录没反应」。
-    _ensureProbed();
+    // ★ 这里**故意不自动探测网络**。
+    //
+    // v2.1.63 是在 initState 里就 `_ensureProbed()`，结果是页面一打开，
+    // 网络那一项 1 秒内就变成红底的「未连通 / 去修复」，而下面五项还是
+    // 干干净净的「允许」—— 用户会觉得「怎么一上来就说我有毛病」。
+    //
+    // 而且 iOS 的「是否允许使用无线数据」弹窗跟着这一下一起弹出来，
+    // 时机比权限清单还早，用户根本不知道那是在干嘛。
+    //
+    // 现在改成：网络项初始是中性「允许」态，等用户点「一键开启全部权限」
+    // 时作为队列第一位去探测 —— 那时候用户的心理预期就是
+    // 「点了会一个一个问我」，弹出来正合预期。
     _refresh();
   }
 
@@ -209,16 +223,25 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
 
   /// 权限全开 **且** 网络没问题 → 稍等一下自动进首页。
   ///
-  /// 原来只看权限，所以「网络没通」也会被自动放行到登录页，
-  /// 用户在那儿撞一句「连不上服务器」，回头还以为权限没给够。
+  /// 这里要同时照顾两种人：
+  ///   · **新装用户**：五项权限还没给，`permsAll` 为 false，本函数直接返回 ——
+  ///     页面上网络项保持中性的「允许」，不会被自动探测成红字；
+  ///   · **从旧版升级的用户**：权限本来就全开，如果这时也直接放行，
+  ///     v2.1.63 修的「网络没通却被放进去」就又回来了。所以先静默探一次
+  ///     （他们本来 0.5 秒内就跳过这一页，看不到那个菊花），通了才走。
   void _maybeAutoExit() {
     if (_finished || _autoExit) return;
     if (_reading) return;
     if (_status.length < _rows.length) return;
     final permsAll = _rows.every((r) => _status[r.perm]?.isGranted == true);
     if (!permsAll) return;
-    // 网络还在检测中就再等等（探测完会再调一次本函数）
-    if (_net == _NetState.idle || _net == _NetState.checking) return;
+    // 权限已齐但还没探过 → 探一次再决定（探测完会再进本函数）
+    if (_net == _NetState.idle) {
+      _ensureProbed();
+      return;
+    }
+    // 正在检测中就再等等
+    if (_net == _NetState.checking) return;
     // 明确连不上 → 停在本页，让用户先修网络
     if (_net == _NetState.offline) return;
     _autoExit = true;
@@ -228,9 +251,29 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
   }
 
   /// 逐项申请（串行）。每一项都回读系统状态再继续。
+  ///
+  /// ★ 队列第 1 位是**网络**（v2.1.64）：它虽然不是系统权限，但用户眼里
+  /// 它和下面五项是一类东西，点「一键开启」时理应从它开始过一遍。
+  /// 这一下刚好也是 App 生命周期里第一次真正发请求 —— iOS 的
+  /// 「是否允许使用无线数据」系统弹窗在这里弹出，正合「会一个一个问我」
+  /// 的心理预期。
   Future<void> _requestAll() async {
     if (_running) return;
     setState(() => _running = true);
+
+    // ── 第 1 项：网络 ──
+    // 已经确认连通就不重复探（省一次往返，也不重复打扰系统弹窗）；
+    // 之前失败或从没探过则重探 —— 用户可能刚去系统设置里开了无线数据。
+    if (_net != _NetState.ok) {
+      _probeFuture = null;
+      await _ensureProbed();
+      if (!mounted) return;
+      // 留一点时间把结果画出来，再弹下一个系统框
+      await Future.delayed(const Duration(milliseconds: 320));
+      if (!mounted) return;
+    }
+
+    // ── 第 2~6 项：系统权限，严格串行 ──
     for (final r in _rows) {
       if (!mounted) return;
       var st = _status[r.perm];
@@ -238,6 +281,8 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
       if (st == null) continue;
       if (st.isGranted) continue;
       if (st == PermissionStatus.permanentlyDenied) continue;
+      // 高亮当前这一项：让「一个一个问」这件事在界面上看得见
+      setState(() => _activePerm = r.perm);
       try {
         await r.perm.request();
       } catch (_) {}
@@ -248,11 +293,19 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
       try {
         final after = await r.perm.status;
         if (!mounted) return;
-        setState(() => _status[r.perm] = after);
-      } catch (_) {}
+        setState(() {
+          _status[r.perm] = after;
+          _activePerm = null;
+        });
+      } catch (_) {
+        if (mounted) setState(() => _activePerm = null);
+      }
     }
     if (!mounted) return;
-    setState(() => _running = false);
+    setState(() {
+      _running = false;
+      _activePerm = null;
+    });
     await _refresh();
 
     final denied = _rows.where((r) {
@@ -261,10 +314,7 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
     }).toList();
     if (!mounted) return;
     if (denied.isEmpty) {
-      // ★ 权限都给了，再确认一次网络 —— 网络没通就直接把人放到登录页，
-      //   用户只会看到「连不上服务器」，还以为权限没生效。
-      await _ensureProbed();
-      if (!mounted) return;
+      // 网络在队列开头已经探过，这里直接用结果判定
       if (_net == _NetState.offline) {
         CenterToast.show(
           context,
@@ -378,22 +428,22 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                   ? const Center(
                       child: CircularProgressIndicator(color: AppTheme.primary))
                   : ListView(
-                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
                       children: [
                         // 网络放第一项：它是登录/注册的前提，也是 iOS 那个
                         // 「是否允许使用无线数据」弹窗唯一能被触发的时机
                         _netTile(),
                         ..._rows.map(_tile),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 2),
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 4),
                           child: Text(
-                            '说明：「网络」由系统自动授予，不用点；显示「连不上」时点它看修复方法。\n'
-                            '其余项显示「已拒绝」表示系统里没开，点这一项会跳到本机的'
-                            '「渔报」权限页，打开后返回即可。',
+                            '说明：点「一键开启全部权限」会从上往下一项一项问，'
+                            '「网络」排在第一个。某行显示「去设置」表示之前拒绝过，'
+                            '点它会跳到系统的「渔报」权限页。',
                             style: const TextStyle(
                                 fontSize: 11.5,
-                                height: 1.65,
+                                height: 1.6,
                                 color: AppTheme.textSecondary),
                           ),
                         ),
@@ -424,11 +474,11 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                                 BorderRadius.circular(AppTheme.radiusMd)),
                       ),
                       child: _running
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                  color: Colors.white, strokeWidth: 2.2))
+                          // 用文字而不是转圈：这个按钮在「一键开启」期间要一直
+                          // 显示进度，写清楚「正在开启第几项」比一个转圈更有用
+                          ? const Text('正在开启…',
+                              style: TextStyle(
+                                  fontSize: 15, fontWeight: FontWeight.w700))
                           : Text(
                               allDone
                                   ? '进入渔报'
@@ -491,7 +541,10 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
     final ok = s == _NetState.ok;
     final bad = s == _NetState.offline;
     final warn = s == _NetState.serverIssue;
-    final busy = s == _NetState.idle || s == _NetState.checking;
+    // idle 与 checking 都属于「还没结论」，视觉上必须和下面的权限项一模一样，
+    // 不能一进页面就红着脸说用户网络有问题。
+    final quiet = s == _NetState.idle || s == _NetState.checking;
+    final checking = s == _NetState.checking;
 
     final Color tone = ok
         ? AppTheme.primary
@@ -507,33 +560,38 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
             : warn
                 ? AppTheme.warningLight
                 : AppTheme.primarySoft;
+    // 只有「探过且确实有问题」才换底色/描边，其余一律用和权限项相同的白卡
     final Color tileBg = bad
         ? AppTheme.dangerLight
         : warn
             ? AppTheme.warningLight
             : AppTheme.surface;
-    final Color tileBorder = bad
-        ? AppTheme.danger.withOpacity(0.35)
-        : warn
-            ? AppTheme.warning.withOpacity(0.35)
-            : AppTheme.border;
+    final Color tileBorder = checking
+        ? AppTheme.primary.withOpacity(0.45)
+        : bad
+            ? AppTheme.danger.withOpacity(0.35)
+            : warn
+                ? AppTheme.warning.withOpacity(0.35)
+                : AppTheme.border;
     final IconData icon = ok
         ? Icons.wifi
         : bad
             ? Icons.wifi_off
             : warn
                 ? Icons.dns_outlined
-                : Icons.wifi_find_outlined;
+                : Icons.wifi;
 
     final String sub;
-    if (busy) {
+    if (checking) {
       sub = '正在检测能否连上服务器…';
     } else if (ok) {
       sub = '已连通 · ${_netResult?.tcpMs ?? 0} ms · 登录、钓点、天气都靠它';
     } else if (bad) {
       sub = _shortNetReason();
-    } else {
+    } else if (warn) {
       sub = '网络已通，服务器接口异常（HTTP ${_netResult?.httpStatus ?? 0}）';
+    } else {
+      sub = '用于登录、注册、查看钓点与天气';
     }
 
     return Container(
@@ -547,7 +605,10 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-          onTap: busy ? null : (ok ? _reprobe : _showNetHelp),
+          // 空闲时整行也能点：等同点右侧「允许」
+          onTap: checking
+              ? null
+              : (ok ? _reprobe : (quiet ? _requestNetOnly : _showNetHelp)),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
             child: Row(
@@ -601,16 +662,32 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                if (busy)
-                  const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 1.8, color: AppTheme.textSecondary),
-                  )
-                else if (ok)
+                // 右侧三态与权限项保持同一套语言：允许 → 检测中 → 打勾。
+                // 这里用文字而不是小菊花：14px 的转圈在真机上一闪而过，
+                // 静态截图里更是只剩一个点，用户根本看不出「正在检测」。
+                if (checking)
+                  const Text('检测中',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.primary))
+                else if (ok && !_running)
                   const Icon(Icons.check_circle,
                       color: AppTheme.primary, size: 21)
+                else if (quiet)
+                  TextButton(
+                    onPressed: _running ? null : _requestNetOnly,
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppTheme.primary,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text('允许',
+                        style: TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w700)),
+                  )
                 else
                   TextButton(
                     onPressed: _showNetHelp,
@@ -631,6 +708,16 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
         ),
       ),
     );
+  }
+
+  /// 只处理网络这一项（用户单独点「允许」时用），不动其余权限
+  Future<void> _requestNetOnly() async {
+    if (_running) return;
+    setState(() => _running = true);
+    _probeFuture = null;
+    await _ensureProbed();
+    if (!mounted) return;
+    setState(() => _running = false);
   }
 
   /// 网络连不上时给**能照着做**的路径，而不是一句「请检查网络」。
@@ -740,13 +827,18 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
     final st = _status[r.perm];
     final granted = st?.isGranted ?? false;
     final blocked = st == PermissionStatus.permanentlyDenied;
+    // 队列正轮到这一项：淡主色底 + 主色描边，右侧换成菊花
+    final active = _activePerm == r.perm;
     return Container(
       margin: const EdgeInsets.only(bottom: 9),
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
       decoration: BoxDecoration(
-        color: AppTheme.surface,
+        color: active ? AppTheme.primarySoft : AppTheme.surface,
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-        border: Border.all(color: AppTheme.border),
+        border: Border.all(
+            color: active
+                ? AppTheme.primary.withOpacity(0.45)
+                : AppTheme.border),
       ),
       child: Row(
         children: [
@@ -777,34 +869,41 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
             ),
           ),
           const SizedBox(width: 8),
-          granted
-              ? const Icon(Icons.check_circle,
-                  color: AppTheme.primary, size: 21)
-              : TextButton(
-                  onPressed: (_running || _reading)
-                      ? null
-                      : () async {
-                          if (blocked) {
-                            await _openSettings();
-                            return;
-                          }
-                          try {
-                            await r.perm.request();
-                          } catch (_) {}
-                          if (mounted) await _refresh();
-                        },
-                  style: TextButton.styleFrom(
-                    foregroundColor:
-                        blocked ? AppTheme.danger : AppTheme.primary,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: Text(blocked ? '去设置' : '允许',
-                      style: const TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w700)),
+          if (active)
+            const Text('设置中',
+                style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.primary))
+          else if (granted)
+            const Icon(Icons.check_circle,
+                color: AppTheme.primary, size: 21)
+          else
+            TextButton(
+                onPressed: (_running || _reading)
+                    ? null
+                    : () async {
+                        if (blocked) {
+                          await _openSettings();
+                          return;
+                        }
+                        try {
+                          await r.perm.request();
+                        } catch (_) {}
+                        if (mounted) await _refresh();
+                      },
+                style: TextButton.styleFrom(
+                  foregroundColor:
+                      blocked ? AppTheme.danger : AppTheme.primary,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
+                child: Text(blocked ? '去设置' : '允许',
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w700)),
+              ),
         ],
       ),
     );
