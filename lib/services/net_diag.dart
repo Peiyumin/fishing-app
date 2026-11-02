@@ -67,8 +67,14 @@ class NetDiagResult {
             '（WiFi 换移动数据，或反过来）再试。';
       }
       if (e.contains('unreachable') || e.contains('no route')) {
-        return '判断：手机没有可用出口网络。请确认移动数据/WiFi 已开，\n'
-            '并在「设置 → 蜂窝网络」里确认允许本 App 使用无线数据。';
+        // iOS 把 App 的「无线数据」关掉时，socket 直接 ENETUNREACH ——
+        // 这不是「手机没网」，说成没网会让用户去重启路由器白折腾。
+        return Platform.isIOS
+            ? '判断：请求没能离开手机 —— iOS 关掉本 App 的「无线数据」时\n'
+                '就是这个表现。打开 设置 → 渔报 → 无线数据，选「无线\n'
+                '局域网与蜂窝网络」，回来重新检测。'
+            : '判断：手机没有可用出口网络。请确认移动数据/WiFi 已开，\n'
+                '并在「设置 → 应用 → 渔报 → 流量使用」里允许联网。';
       }
       if (e.contains('refused')) {
         return '判断：服务器端口拒绝连接（服务没起或被防火墙拦）。\n'
@@ -89,7 +95,17 @@ class NetDiagResult {
 /// 真跑一遍：TCP 连接 + HTTP 取配置
 class NetDiag {
   /// 与 ApiClient 保持同一套主机/端口，避免两边结论不一致
-  static Future<NetDiagResult> run() async {
+  ///
+  /// [tcpTimeout] 可调的原因（v2.1.66）：首次启动的权限引导页里，这一次连接
+  /// **就是** iOS 弹出「是否允许使用无线数据」系统框的钩子。弹窗是模态的，
+  /// 用户不点，请求就一直挂在 `connect()` 里 —— 6 秒的默认值根本不够用户
+  /// 看清弹窗再点「允许」，结果是用户刚点完，这边已经超时判成「网络不通」，
+  /// 之后也不会自己恢复。引导页因此传 15 秒。
+  /// 首页静默自检没有弹窗要等，仍然用 6 秒，免得升级用户白等。
+  static Future<NetDiagResult> run({
+    Duration tcpTimeout = const Duration(seconds: 6),
+    Duration httpTimeout = const Duration(seconds: 8),
+  }) async {
     final base = Uri.parse(ApiConfig.baseUrl);
     final host = base.host;
     final port = base.hasPort ? base.port : 80;
@@ -100,8 +116,7 @@ class NetDiag {
     var tcpErr = '';
     Socket? sock;
     try {
-      sock = await Socket.connect(host, port,
-          timeout: const Duration(seconds: 6));
+      sock = await Socket.connect(host, port, timeout: tcpTimeout);
       tcpOk = true;
     } catch (e) {
       tcpErr = _brief(e);
@@ -118,15 +133,15 @@ class NetDiag {
     var status = 0;
     var httpErr = '';
     try {
-      final c = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+      final c = HttpClient()..connectionTimeout = httpTimeout;
       final req = await c.getUrl(
           Uri.parse('${ApiConfig.baseUrl}/index.php?r=/auth/config'));
       req.persistentConnection = false;
-      final res = await req.close().timeout(const Duration(seconds: 8));
+      final res = await req.close().timeout(httpTimeout);
       final body = await res
           .transform(const Utf8Decoder(allowMalformed: true))
           .join()
-          .timeout(const Duration(seconds: 8));
+          .timeout(httpTimeout);
       status = res.statusCode;
       // 200 但正文不是 JSON（nginx 错误页）也要说清楚
       if (status == 200 && !body.trimLeft().startsWith('{')) {
