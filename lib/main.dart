@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_theme.dart';
 import 'models/app_bootstrap.dart';
@@ -406,10 +407,30 @@ class _StartupGateState extends State<StartupGate> {
   /// 服务器慢 / 断网时不能让用户一直干等在启动页（表现为「白屏过一会才进」）。
   static const _bootTimeout = Duration(milliseconds: 2500);
 
+  /// 本机还没走过权限引导（首次安装，或刚升级到带新引导标记的版本）。
+  ///
+  /// ★ 这个标记决定了「启动页期间能不能联网」，不是可有可无的优化：
+  ///   iOS 的「允许使用无线数据」系统弹窗由 App **第一次真正发起请求**
+  ///   时触发，且不在任何权限清单里。原来的顺序是启动页一边转圈一边
+  ///   拉 `/app/bootstrap`，于是系统弹窗在**用户还没看到权限清单之前**
+  ///   就盖在启动图上（用户报的就是这个 bug）。首次安装时把首个请求
+  ///   压到「点一键开启全部权限」那一刻，弹窗才会落在正确的位置。
+  bool _firstRun = false;
+
   @override
   void initState() {
     super.initState();
     _prepare();
+  }
+
+  /// 本机是否还需要走一遍权限引导（读不到偏好时按「老用户」处理，不阻塞启动）
+  Future<bool> _needsPermOnboard() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return !(prefs.getBool(kPermOnboardDone) ?? false);
+    } catch (_) {
+      return false;
+    }
   }
 
   /// 启动前要做的全部准备（v2.1.44：并行 + 不阻塞 runApp）
@@ -425,10 +446,21 @@ class _StartupGateState extends State<StartupGate> {
     // ① 根证书（本地资源，几十毫秒）
     await _injectRootCerts();
 
-    // ② 启动配置接口：先发出去，和下面几件事并行跑
-    final bootF = AppService.bootstrap()
-        .timeout(_bootTimeout)
-        .catchError((_) => const AppBootstrap());
+    // ② 先判断是不是「首次安装、还没走过权限引导」
+    _firstRun = await _needsPermOnboard();
+    if (!mounted) return;
+
+    // ③ 启动配置接口：先发出去，和下面几件事并行跑
+    //
+    // ★ 首次安装**不发**：这是 App 生命周期里第一个网络请求，一发出去
+    //   iOS 的「允许使用无线数据」弹窗就弹了，而此刻用户还停在启动图上，
+    //   根本不知道那是什么。首次安装直接给空配置，走「启动页 → 权限引导
+    //   → 登录注册页」这条直线；启动广告/预览对刚装 App 的人本来也该跳过。
+    final bootF = _firstRun
+        ? Future<AppBootstrap>.value(const AppBootstrap())
+        : AppService.bootstrap()
+            .timeout(_bootTimeout)
+            .catchError((_) => const AppBootstrap());
 
     await Future.wait<void>([
       // 本机偏好：字体大小 / 个性化推荐 / 鱼获隐私默认值。
@@ -462,7 +494,9 @@ class _StartupGateState extends State<StartupGate> {
     });
 
     // 启动后检查热更新（有新版本才弹窗；强制更新不可跳过）
-    UpdateDialog.checkAndShow(context);
+    // ★ 首次安装不查：这也是一次网络请求，同样会把「无线数据」系统弹窗
+    //   提前到权限引导页之前。等走完引导、进了登录页，下一次启动再查。
+    if (!_firstRun) UpdateDialog.checkAndShow(context);
   }
 
   /// 推送初始化 + 挂点击回调（失败不影响启动）
@@ -583,7 +617,11 @@ class _StartupGateState extends State<StartupGate> {
       WidgetsBinding.instance.addPostFrameCallback((_) => _handlePendingNav());
       // 本机第一次装好打开时，先过一遍「所有权限都问一遍」的引导；
       // 权限给完自动关闭，然后没登录的直接进登录页（可「随便看看」）
-      return const FirstRunPermissionGate(child: LoginOrApp());
+      return FirstRunPermissionGate(
+        // 上层已经判定过需要引导时直接给答案，省掉那一两帧的纯底色
+        knownNeedOnboard: _firstRun ? true : null,
+        child: const LoginOrApp(),
+      );
     }
     if (boot.ads.isNotEmpty) {
       return StartupAdScreen(
