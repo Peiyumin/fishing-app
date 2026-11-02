@@ -54,6 +54,7 @@ class PermissionOnboardScreen extends StatefulWidget {
     required this.onDone,
     this.probeNet,
     this.debugGrantPerms,
+    this.debugSkipAutoExit = false,
   });
 
   /// 全部处理完（或用户点「以后再说」）后回调
@@ -70,6 +71,13 @@ class PermissionOnboardScreen extends StatefulWidget {
   /// 必须在测试里能注入，是因为 `permission_handler` 走平台通道，
   /// 在宿主机上跑 widget 测试时那个 Future 不会返回，页面会永远停在读取中。
   final bool? debugGrantPerms;
+
+  /// 测试用：关掉「权限齐了就自动放行」。
+  ///
+  /// 「设置完成」那一页只有在队列真正跑完时才会出现，而 `debugGrantPerms`
+  /// 全授予的瞬间就会触发自动放行 —— 两者撞在一起，那一页根本来不及被断言。
+  /// 生产路径永远传默认值 false。
+  final bool debugSkipAutoExit;
 
   @override
   State<PermissionOnboardScreen> createState() =>
@@ -134,6 +142,13 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
 
   /// 「一键开启」队列里正在弹系统框的那一项（用来高亮，让逐项申请看得见）
   Permission? _activePerm;
+
+  /// 六项全部就绪 → 整页切到「设置完成」，让用户看清结果再进下一步。
+  ///
+  /// 原来只弹一个 700ms 的 toast「全部权限已开启，正在进入渔报」，
+  /// 用户刚在系统弹窗之间来回切，回来只看到页面已经被换掉，
+  /// 感受上像「跳了一下」而不是「设置好了」。现在给一个明确的落点。
+  bool _allSet = false;
 
   /// 探测只跑一次，重复调用复用同一个 Future（避免连点弹出多次请求）
   Future<void>? _probeFuture;
@@ -230,7 +245,11 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
   ///     v2.1.63 修的「网络没通却被放进去」就又回来了。所以先静默探一次
   ///     （他们本来 0.5 秒内就跳过这一页，看不到那个菊花），通了才走。
   void _maybeAutoExit() {
+    if (widget.debugSkipAutoExit) return;
     if (_finished || _autoExit) return;
+    // 一键开启进行中 / 已经进了完成态：收尾交给 _requestAll，
+    // 这条「静默放行」的路不能再插一脚，否则完成页会被顶掉。
+    if (_running || _allSet) return;
     if (_reading) return;
     if (_status.length < _rows.length) return;
     final permsAll = _rows.every((r) => _status[r.perm]?.isGranted == true);
@@ -302,32 +321,48 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
       }
     }
     if (!mounted) return;
+
+    // 队列跑完，先算出还差哪几项（状态在循环里已经逐个回读过，是最新的）
+    final denied = _rows.where((r) {
+      final s = _status[r.perm];
+      return s != null && !s.isGranted;
+    }).toList();
+
+    // ★ 全部就绪 → 先立「设置完成」态，**再** refresh。
+    //
+    //   顺序不能反：`_refresh()` 内部会调 `_maybeAutoExit()`，那条路径会在
+    //   450ms 后直接 `_done()`，把刚画出来的完成页顶掉 —— 用户只会看到
+    //   页面闪一下就被换成登录页。先立 `_allSet`，自动退出那条路就自动让位。
+    if (denied.isEmpty && _net != _NetState.offline) {
+      setState(() {
+        _running = false;
+        _activePerm = null;
+        _allSet = true;
+      });
+      await _refresh();
+      if (!mounted) return;
+      // 停一下再进登录/首页：用户刚连续点完五六个系统弹窗，需要一个明确的
+      // 「办完了」的落点，而不是页面直接跳走。
+      await Future.delayed(const Duration(milliseconds: 1200));
+      if (!mounted) return;
+      await _done();
+      return;
+    }
+
     setState(() {
       _running = false;
       _activePerm = null;
     });
     await _refresh();
-
-    final denied = _rows.where((r) {
-      final s = _status[r.perm];
-      return s != null && !s.isGranted;
-    }).toList();
     if (!mounted) return;
+
     if (denied.isEmpty) {
-      // 网络在队列开头已经探过，这里直接用结果判定
-      if (_net == _NetState.offline) {
-        CenterToast.show(
-          context,
-          '权限都开好了，但手机连不上服务器，点第一项查看怎么修',
-          icon: Icons.wifi_off,
-        );
-        return;
-      }
-      CenterToast.show(context, '全部权限已开启，正在进入渔报',
-          icon: Icons.check_circle);
-      await Future.delayed(const Duration(milliseconds: 700));
-      if (!mounted) return;
-      await _done();
+      // 只剩「权限都开了但网络确实连不上」这一种
+      CenterToast.show(
+        context,
+        '权限都开好了，但手机连不上服务器，点第一项查看怎么修',
+        icon: Icons.wifi_off,
+      );
     } else {
       CenterToast.show(
         context,
@@ -355,6 +390,9 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 六项全部就绪 → 「设置完成」整页态（停 1.2 秒再进登录/首页）
+    if (_allSet) return _doneView();
+
     final grantedPerms =
         _rows.where((r) => _status[r.perm]?.isGranted == true).length;
     // 「网络」也计入总数：它虽然不用点系统弹窗，但对用户来说就是一项能力，
@@ -514,6 +552,70 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  // ── 设置完成态 ────────────────────────────────────────────────
+
+  /// 六项全部开启后的落点页。
+  ///
+  /// 用户要求的完整顺序是：启动页 → 权限清单 → 点「一键开启全部权限」→
+  /// 一项项弹系统框 → **显示设置完成** → 进登录注册页。这一页就是那个
+  /// 「设置完成」，它必须自己占满一屏、有明显的成功标志，不能只是一条
+  /// 一闪而过的 toast。
+  Widget _doneView() {
+    return Scaffold(
+      backgroundColor: AppTheme.background,
+      body: SafeArea(
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 用品牌青柠色打底、黑勾，和启动页那张「鱼跃」是同一套色：
+              // 这是整条流程里唯一的成功态，值得让它一眼就「亮」起来，
+              // 而不是一张灰白圆片上画一个近黑的勾（截图里几乎看不出是绿的）。
+              Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  color: AppTheme.accent,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.accent.withOpacity(.45),
+                      blurRadius: 26,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: const Icon(Icons.check_rounded,
+                    size: 54, color: AppTheme.primary),
+              ),
+              const SizedBox(height: 26),
+              const Text('设置完成',
+                  style: TextStyle(
+                      fontSize: 23,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.textPrimary)),
+              const SizedBox(height: 12),
+              Text(
+                '${_rows.length + 1} 项权限已全部开启',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 13.5,
+                    height: 1.7,
+                    color: AppTheme.textSecondary),
+              ),
+              const SizedBox(height: 10),
+              // 不用转圈：这一页只停 1.2 秒，转圈既看不清，还会在
+              // widget 测试收尾时留下一个仍在跑的 ticker（测试直接失败）。
+              const Text('正在进入渔报…',
+                  style: TextStyle(
+                      fontSize: 12.5, color: AppTheme.textSecondary)),
+            ],
+          ),
         ),
       ),
     );
@@ -924,9 +1026,19 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
 const String kPermOnboardDone = 'perm_onboard_done_v2';
 
 class FirstRunPermissionGate extends StatefulWidget {
-  const FirstRunPermissionGate({super.key, required this.child});
+  const FirstRunPermissionGate({
+    super.key,
+    required this.child,
+    this.knownNeedOnboard,
+  });
 
   final Widget child;
+
+  /// 上层（启动门）已经读过偏好并判定「确实要引导」时传 true。
+  ///
+  /// 有了它就能跳过 [_checking] 那一两帧的纯底色 —— 启动页刚淡出、
+  /// 引导页立刻接上，中间不闪一块空白。
+  final bool? knownNeedOnboard;
 
   @override
   State<FirstRunPermissionGate> createState() => _FirstRunPermissionGateState();
@@ -939,7 +1051,13 @@ class _FirstRunPermissionGateState extends State<FirstRunPermissionGate> {
   @override
   void initState() {
     super.initState();
-    _check();
+    final known = widget.knownNeedOnboard;
+    if (known != null) {
+      _needOnboard = known;
+      _checking = false;
+    } else {
+      _check();
+    }
   }
 
   /// 注意：必须等主界面挂载之后（postFrame）才读偏好，
