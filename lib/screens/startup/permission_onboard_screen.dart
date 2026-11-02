@@ -357,12 +357,20 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
           _runningLabel = '正在开启 1/${_rows.length + 1}：网络');
       await _probeWithRetry(timeout: _probeTimeout);
       if (!mounted) return;
-      // 留一点时间把结果画出来，再弹下一个系统框。
-      // 失败时停久一点：这一项没有系统弹窗可以「看见」，如果一闪而过，
-      // 用户只会觉得「网络被跳过了」。
-      await Future.delayed(Duration(
-          milliseconds: _net == _NetState.offline ? 1000 : 320));
+      // 留一点时间把结果画出来，再走下一步。
+      await Future.delayed(const Duration(milliseconds: 320));
       if (!mounted) return;
+      if (_net == _NetState.offline) {
+        // ★ 用户原话：「通知会弹系统框，网络不弹就跳过了」。
+        //
+        //   iOS 的「无线数据」没有 API 可申请，也不在权限清单里 —— 一个 App
+        //   只由系统问一次；系统已经记成「不允许」之后，App 里点多少次「允许」
+        //   都不会再弹。系统弹不出来，就用 App 自己的框把这一步显性化：
+        //   至少用户知道「第 1 项网络没过，要不要现在去打开」，而不是看着
+        //   它一秒变红、然后界面自顾自开始弹通知框。
+        await _promptNetBlocked();
+        if (!mounted) return;
+      }
     }
 
     // ── 第 2~6 项：系统权限，严格串行 ──
@@ -933,6 +941,78 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
       _running = false;
       _runningLabel = _idleRunningLabel;
     });
+  }
+
+  /// 「一键开启」走到网络这一项、而系统确实没让联网时，给一个**看得见**的框。
+  ///
+  /// 为什么不用系统框：iOS 的「允许使用无线数据」由系统在 App 第一次联网时
+  /// 自己决定要不要问，一个 App **只问一次**；问过并被记成「不允许」之后，
+  /// App 没有任何 API 能让它再弹一次。安卓的联网权限是安装即授予、没有弹窗。
+  /// 所以这一步只能用 App 自己的框，把「第 1 项没过」摆在用户眼前，
+  /// 而不是让它一秒变红、界面自顾自往下弹通知框。
+  Future<void> _promptNetBlocked() async {
+    final bool waiting = _netMaybeWaiting;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
+        titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+        contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+        actionsPadding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+        title: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: AppTheme.dangerLight,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.wifi_off,
+                  size: 18, color: AppTheme.danger),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(waiting ? '网络还没连上' : '网络被系统挡住了',
+                  style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.textPrimary)),
+            ),
+          ],
+        ),
+        content: Text(
+          waiting
+              ? '第 1 项「网络」没通过：请求一直没等到回应。可以现在重试一次，'
+                  '也可以先继续开启剩下的权限。'
+              : '第 1 项「网络」没通过：手机的「无线数据 / 流量」开关把「渔报」'
+                  '关掉了。系统不会再自己弹窗，需要去设置里打开 —— '
+                  '也可以先继续开启剩下的权限。',
+          style: const TextStyle(
+              fontSize: 12.5, height: 1.65, color: AppTheme.textPrimary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('继续开启其他权限',
+                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              await _openSettings();
+              await _reprobe();
+            },
+            child: const Text('去打开设置',
+                style:
+                    TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 网络连不上时给**能照着做**的路径，而不是一句「请检查网络」。
