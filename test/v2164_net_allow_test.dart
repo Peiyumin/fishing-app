@@ -142,11 +142,18 @@ void main() {
 
       await t.tap(find.text('允许').first);
       await settle(t);
+      // v2.1.66：超时类失败先停在「请求中」等补探（可能系统弹窗刚被点完），
+      // 补探仍失败才转红。
+      await t.pump(const Duration(milliseconds: 1200));
+      await settle(t);
 
       expect(find.text('未连通'), findsOneWidget);
       expect(find.text('去修复'), findsOneWidget);
       // 超时要翻译成人话，不能把英文异常直接铺给用户
       expect(find.textContaining('连接超时'), findsOneWidget);
+
+      // 补探那一拍必须走完，否则收尾时留下 pending timer
+      await t.pump(const Duration(seconds: 2));
     });
 
     testWidgets('权限本来就全开（升级来的）→ 自动探一次；不通过就停住并转红', (t) async {
@@ -258,9 +265,10 @@ void main() {
         src.indexOf('Future<void> _requestAll()'),
         src.indexOf('Future<void> _openSettings()'),
       );
-      final probeAt = body.indexOf('_ensureProbed()');
+      final probeAt = body.indexOf('_probeWithRetry(');
       final loopAt = body.indexOf('for (final r in _rows)');
-      expect(probeAt, greaterThan(-1), reason: '_requestAll 里必须探测网络');
+      expect(probeAt, greaterThan(-1),
+          reason: '_requestAll 里必须探测网络（v2.1.66 起走 _probeWithRetry）');
       expect(loopAt, greaterThan(-1));
       expect(probeAt, lessThan(loopAt),
           reason: '网络探测必须在五项系统权限之前，否则顺序就不对');
@@ -343,6 +351,9 @@ void main() {
       ));
       await settle(t);
       await t.tap(find.text('允许').first);
+      await settle(t);
+      // 等补探那一拍走完，页面才落到「未连通」
+      await t.pump(const Duration(milliseconds: 1200));
       await settle(t);
 
       await t.tap(find.text('去修复'));
