@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
@@ -153,6 +154,21 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
   /// 探测只跑一次，重复调用复用同一个 Future（避免连点弹出多次请求）
   Future<void>? _probeFuture;
 
+  /// 引导页里一次网络探测最多等多久。
+  ///
+  /// ★ 这个值本身就是 v2.1.66 修的那个 bug：这一次连接就是 iOS 弹出
+  /// 「是否允许使用无线数据」的钩子，弹窗不点，`connect()` 就一直挂着。
+  /// NetDiag 默认 6 秒 —— 用户还没看清弹窗，这边已经超时判成「未连通」，
+  /// 之后也不会自己恢复，于是「权限还没弹就显示网络不通」。
+  static const Duration _probeTimeout = Duration(seconds: 15);
+
+  /// 第一次没通、且失败原因是「等回应超时」时，隔这么久补探一次
+  static const Duration _probeRetryGap = Duration(milliseconds: 900);
+
+  /// 按钮上「正在开启第几项」的文案（null 用 [_idleRunningLabel]）
+  static const String _idleRunningLabel = '正在开启…';
+  String _runningLabel = _idleRunningLabel;
+
   @override
   void initState() {
     super.initState();
@@ -172,14 +188,28 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
   }
 
   /// 网络探测（结果缓存在 [_net] / [_netResult]）
-  Future<void> _ensureProbed() =>
-      _probeFuture ??= _doProbe();
+  ///
+  /// [timeout] 为空时用 NetDiag 的默认 6 秒（静默自检、权限已全开的升级用户）；
+  /// 用户主动点「允许 / 一键开启」时传 [_probeTimeout]，给系统弹窗留出被点的时间。
+  /// [holdOnTimeout] 见 [_probeWithRetry]：超时先不下结论，免得红一下又变绿。
+  Future<void> _ensureProbed({Duration? timeout, bool holdOnTimeout = false}) =>
+      _probeFuture ??= _doProbe(timeout, holdOnTimeout: holdOnTimeout);
 
-  Future<void> _doProbe() async {
+  static bool _isTimeoutError(String e) {
+    final s = e.toLowerCase();
+    return s.contains('timed out') || s.contains('timeout');
+  }
+
+  Future<void> _doProbe(Duration? timeout, {bool holdOnTimeout = false}) async {
     if (mounted) setState(() => _net = _NetState.checking);
     NetDiagResult r;
     try {
-      r = await (widget.probeNet ?? NetDiag.run)();
+      final t = timeout;
+      r = await (widget.probeNet ??
+          () => t == null ? NetDiag.run() : NetDiag.run(
+                tcpTimeout: t,
+                httpTimeout: t,
+              ))();
     } catch (e) {
       r = NetDiagResult(
         tcpOk: false,
@@ -196,7 +226,12 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
       // 三态而不是两态：端口通但接口没回 200 是「服务器的问题」，
       // 让用户去折腾 WiFi 只会白费功夫，必须分开说。
       if (!r.tcpOk) {
-        _net = _NetState.offline;
+        // 超时大概率是「系统弹窗还挂着，用户正在看」：先留在「请求中」，
+        // 等 [_probeWithRetry] 补探一次再下结论。直接挂红脸会出现
+        // 「红 1 秒 → 绿」的闪动，用户还以为刚才那次失败是要自己处理的。
+        _net = holdOnTimeout && _isTimeoutError(r.tcpError)
+            ? _NetState.checking
+            : _NetState.offline;
       } else if (r.httpStatus == 200) {
         _net = _NetState.ok;
       } else {
@@ -209,7 +244,37 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
   /// 重新探测（用户点「重新检测」时用，强制重跑）
   Future<void> _reprobe() async {
     _probeFuture = null;
-    await _ensureProbed();
+    await _probeWithRetry(timeout: _probeTimeout);
+  }
+
+  /// 这次失败是不是「系统弹窗还挂在那儿等着用户点」——
+  /// 只有这种失败补探一次才有意义。
+  bool get _netMaybeWaiting => _isTimeoutError(_netResult?.tcpError ?? '');
+
+  /// 探测 + 必要的一次补探。
+  ///
+  /// 为什么必须补：[_probeTimeout] 到了还没回包，最常见的两种情形是
+  ///   ① iOS 的「允许使用无线数据」弹窗刚弹出来，用户还在看；
+  ///   ② 用户刚从系统设置里把开关打开、切回 App，链路还没重建。
+  /// 两种情形下第一次都会超时，而第二次请求发出时授权已经生效，
+  /// 通常几百毫秒就通 —— 不补探的话，用户明明点了「允许」，
+  /// 页面上却一直红着「未连通」，只能再手点一次「重新检测」。
+  ///
+  /// 反过来，「Network is unreachable / no route」这类是系统直接禁网，
+  /// 补探一百次也是同一个结果，立刻收手，把引导切到「去设置」。
+  Future<void> _probeWithRetry({Duration? timeout}) async {
+    await _ensureProbed(timeout: timeout, holdOnTimeout: true);
+    if (!mounted) return;
+    // 通了 / 服务异常：没有可重试的
+    if (_net == _NetState.ok || _net == _NetState.serverIssue) return;
+    // checking = 超时被 hold 住（等弹窗）；offline = 直接失败（系统禁网等）。
+    // 后者重试一百次也是同一个结果，立刻收手，把引导切到「去设置」。
+    if (_net != _NetState.checking && !_netMaybeWaiting) return;
+    await Future<void>.delayed(_probeRetryGap);
+    if (!mounted) return;
+    // 补探时弹窗已经处理完，不需要再等 15 秒
+    _probeFuture = null;
+    await _ensureProbed(timeout: const Duration(seconds: 8));
   }
 
   Future<void> _refresh() async {
@@ -278,17 +343,25 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
   /// 的心理预期。
   Future<void> _requestAll() async {
     if (_running) return;
-    setState(() => _running = true);
+    setState(() {
+      _running = true;
+      _runningLabel = _idleRunningLabel;
+    });
 
     // ── 第 1 项：网络 ──
     // 已经确认连通就不重复探（省一次往返，也不重复打扰系统弹窗）；
     // 之前失败或从没探过则重探 —— 用户可能刚去系统设置里开了无线数据。
     if (_net != _NetState.ok) {
       _probeFuture = null;
-      await _ensureProbed();
+      setState(() =>
+          _runningLabel = '正在开启 1/${_rows.length + 1}：网络');
+      await _probeWithRetry(timeout: _probeTimeout);
       if (!mounted) return;
-      // 留一点时间把结果画出来，再弹下一个系统框
-      await Future.delayed(const Duration(milliseconds: 320));
+      // 留一点时间把结果画出来，再弹下一个系统框。
+      // 失败时停久一点：这一项没有系统弹窗可以「看见」，如果一闪而过，
+      // 用户只会觉得「网络被跳过了」。
+      await Future.delayed(Duration(
+          milliseconds: _net == _NetState.offline ? 1000 : 320));
       if (!mounted) return;
     }
 
@@ -301,7 +374,12 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
       if (st.isGranted) continue;
       if (st == PermissionStatus.permanentlyDenied) continue;
       // 高亮当前这一项：让「一个一个问」这件事在界面上看得见
-      setState(() => _activePerm = r.perm);
+      setState(() {
+        _activePerm = r.perm;
+        final i = _rows.indexOf(r);
+        _runningLabel =
+            '正在开启 ${i + 2}/${_rows.length + 1}：${r.title}';
+      });
       try {
         await r.perm.request();
       } catch (_) {}
@@ -337,6 +415,7 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
       setState(() {
         _running = false;
         _activePerm = null;
+        _runningLabel = _idleRunningLabel;
         _allSet = true;
       });
       await _refresh();
@@ -352,6 +431,7 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
     setState(() {
       _running = false;
       _activePerm = null;
+      _runningLabel = _idleRunningLabel;
     });
     await _refresh();
     if (!mounted) return;
@@ -360,7 +440,9 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
       // 只剩「权限都开了但网络确实连不上」这一种
       CenterToast.show(
         context,
-        '权限都开好了，但手机连不上服务器，点第一项查看怎么修',
+        _netMaybeWaiting
+            ? '权限都开好了，但手机连不上服务器，点第一项查看怎么修'
+            : '权限都开好了，但系统挡住了本 App 联网，点第一项去打开',
         icon: Icons.wifi_off,
       );
     } else {
@@ -477,8 +559,9 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                           padding: const EdgeInsets.symmetric(horizontal: 4),
                           child: Text(
                             '说明：点「一键开启全部权限」会从上往下一项一项问，'
-                            '「网络」排在第一个。某行显示「去设置」表示之前拒绝过，'
-                            '点它会跳到系统的「渔报」权限页。',
+                            '「网络」排在第一个 —— iOS 的「允许使用无线数据」弹窗'
+                            '就在那一下弹出，记得点允许。某行显示「去设置」表示'
+                            '之前拒绝过，点它会跳到系统的「渔报」权限页。',
                             style: const TextStyle(
                                 fontSize: 11.5,
                                 height: 1.6,
@@ -507,15 +590,23 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                         backgroundColor:
                             netBlocked ? AppTheme.danger : AppTheme.primary,
                         foregroundColor: Colors.white,
+                        // 「正在开启 2/6：通知」这类进度文本必须看得清：
+                        // 默认的 disabled 前景是灰的，压在深底上几乎读不出来。
+                        disabledBackgroundColor: (netBlocked
+                                ? AppTheme.danger
+                                : AppTheme.primary)
+                            .withOpacity(0.72),
+                        disabledForegroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                             borderRadius:
                                 BorderRadius.circular(AppTheme.radiusMd)),
                       ),
                       child: _running
                           // 用文字而不是转圈：这个按钮在「一键开启」期间要一直
-                          // 显示进度，写清楚「正在开启第几项」比一个转圈更有用
-                          ? const Text('正在开启…',
-                              style: TextStyle(
+                          // 显示进度，写清「正在开启第几项 · 哪一项」比一个转圈
+                          // 有用得多 —— 用户就知道此刻弹出来的框是第几项。
+                          ? Text(_runningLabel,
+                              style: const TextStyle(
                                   fontSize: 15, fontWeight: FontWeight.w700))
                           : Text(
                               allDone
@@ -626,16 +717,23 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
   /// 把底层英文异常压成半句话（完整堆栈留给修复弹窗里的「诊断详情」）
   String _shortNetReason() {
     final e = (_netResult?.tcpError ?? '').toLowerCase();
-    if (e.contains('timed out') || e.contains('timeout')) {
-      return '连接超时，多半是当前网络拦了端口';
+    // ENETUNREACH / no route：iOS 关掉本 App 的「无线数据」就是这个表现。
+    // 说成「手机没有可用网络」会把人指去重启路由器 —— 全错。
+    if (e.contains('unreachable') ||
+        e.contains('no route') ||
+        e.contains('permission denied')) {
+      // ★ 这里的路径必须分平台：iOS 那个开关在 App 自己的设置页里叫
+      //   「无线数据」，安卓叫「流量使用」，写错一条就等于把人指进死胡同。
+      return Platform.isIOS
+          ? '被系统禁网：设置 → 渔报 → 无线数据'
+          : '被系统限网：设置 → 应用 → 渔报';
     }
-    if (e.contains('unreachable') || e.contains('no route')) {
-      return '手机没有可用网络';
+    if (e.contains('timed out') || e.contains('timeout')) {
+      return '连接超时，当前网络可能拦了端口';
     }
     if (e.contains('refused')) return '服务器端口拒绝连接';
-    if (e.contains('permission denied')) return '系统禁止了本 App 联网';
     if (e.contains('failed host lookup')) return '服务器地址解析失败';
-    return '连不上服务器';
+    return '连不上服务器，点右侧「去修复」';
   }
 
   Widget _netTile() {
@@ -685,7 +783,12 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
 
     final String sub;
     if (checking) {
-      sub = '正在检测能否连上服务器…';
+      // ★ 用户主动点「一键开启 / 允许」时，这一下就是 iOS 弹「是否允许使用
+      //   无线数据」的时刻。必须在这里把话说出来 —— 否则弹窗被点掉了，
+      //   用户也不知道刚才那是网络授权，只会看到下面紧接着弹通知框。
+      sub = _running
+          ? '正在联网请求授权：弹出「允许使用无线数据」请点允许'
+          : '正在检测能否连上服务器…';
     } else if (ok) {
       sub = '已连通 · ${_netResult?.tcpMs ?? 0} ms · 登录、钓点、天气都靠它';
     } else if (bad) {
@@ -707,8 +810,9 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-          // 空闲时整行也能点：等同点右侧「允许」
-          onTap: checking
+          // 空闲时整行也能点：等同点右侧「允许」。
+          // 一键开启进行中一律锁住，否则会在队列外插一次探测。
+          onTap: (_running || checking)
               ? null
               : (ok ? _reprobe : (quiet ? _requestNetOnly : _showNetHelp)),
           child: Padding(
@@ -768,12 +872,15 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                 // 这里用文字而不是小菊花：14px 的转圈在真机上一闪而过，
                 // 静态截图里更是只剩一个点，用户根本看不出「正在检测」。
                 if (checking)
-                  const Text('检测中',
-                      style: TextStyle(
+                  Text(_running ? '请求中' : '检测中',
+                      style: const TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w700,
                           color: AppTheme.primary))
-                else if (ok && !_running)
+                else if (ok)
+                  // 已连通就一律打勾 —— 包括「一键开启」正进行到后面几项时。
+                  // 原来这里带 !_running，导致网络已经通了、右侧却还写着
+                  // 「去修复」（截图核对时发现的），像在报错。
                   const Icon(Icons.check_circle,
                       color: AppTheme.primary, size: 21)
                 else if (quiet)
@@ -815,11 +922,17 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
   /// 只处理网络这一项（用户单独点「允许」时用），不动其余权限
   Future<void> _requestNetOnly() async {
     if (_running) return;
-    setState(() => _running = true);
+    setState(() {
+      _running = true;
+      _runningLabel = '正在请求网络权限…';
+    });
     _probeFuture = null;
-    await _ensureProbed();
+    await _probeWithRetry(timeout: _probeTimeout);
     if (!mounted) return;
-    setState(() => _running = false);
+    setState(() {
+      _running = false;
+      _runningLabel = _idleRunningLabel;
+    });
   }
 
   /// 网络连不上时给**能照着做**的路径，而不是一句「请检查网络」。
@@ -827,6 +940,10 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
   /// iOS 的「无线数据」开关根本不在 App 自己的设置页里，所以必须把
   /// 「设置 → 蜂窝网络 → 渔报」这条路径写死在界面上。
   Future<void> _showNetHelp() async {
+    final bool waiting = _netMaybeWaiting;
+    final String title = _net == _NetState.offline
+        ? (waiting ? '网络连不上怎么办' : '网络被系统挡住了')
+        : '服务器没有回数据';
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -849,9 +966,9 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                   size: 18, color: AppTheme.danger),
             ),
             const SizedBox(width: 10),
-            const Expanded(
-              child: Text('网络连不上怎么办',
-                  style: TextStyle(
+            Expanded(
+              child: Text(title,
+                  style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w800,
                       color: AppTheme.textPrimary)),
@@ -865,7 +982,14 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
             children: [
               Text(
                 _net == _NetState.offline
-                    ? '手机现在连不到服务器。按下面三步处理，多半能好：'
+                    ? (waiting
+                        ? '刚才的授权可能还没处理完。如果弹出过「允许使用无线数据」'
+                            '而你没点，按下面几步再走一遍：'
+                        // ★ 用户最需要的一句真话：这类授权弹窗一个 App 只会问
+                        //   一次，点过「不允许」就再也不弹 —— 在 App 里点一万次
+                        //   「允许」也弹不出来，只能去系统设置里打开。
+                        : 'App 第一次联网时系统会问一次是否允许。点过「不允许」之后'
+                            '系统不会再弹，只能在这里手动打开：')
                     : '手机能上网，但服务器没正常回数据 —— 这不是你这边的网络问题，'
                         '可以先进入 App，稍后再试。',
                 style: const TextStyle(
@@ -908,8 +1032,9 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
               await _openSettings();
               await _reprobe();
             },
-            child: const Text('打开设置',
-                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+            child: const Text('去系统设置',
+                style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w700)),
           ),
           TextButton(
             onPressed: () async {
