@@ -169,6 +169,9 @@ void main() {
       await t.pump(const Duration(milliseconds: 500));
 
       expect(find.text('设置完成'), findsNothing);
+      // v2.1.66：超时类失败会先停在「请求中」补探一次（900ms），
+      // 补探仍不通才转红 —— 否则会出现「红一下又变绿」的闪动。
+      await t.pump(const Duration(milliseconds: 1600));
       expect(find.text('未连通'), findsOneWidget);
       await t.pump(const Duration(seconds: 2));
     });
