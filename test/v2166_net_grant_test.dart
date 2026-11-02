@@ -145,6 +145,35 @@ void main() {
       expect(find.textContaining('→ 渔报'), findsOneWidget);
     });
 
+    testWidgets('一键开启时网络被禁 → 弹自己的框，而不是静默跳过', (t) async {
+      await t.pumpWidget(MaterialApp(
+        home: PermissionOnboardScreen(
+          onDone: () {},
+          debugGrantPerms: false,
+          probeNet: () async => fail('SocketException: Network is unreachable'),
+        ),
+      ));
+      await settle(t);
+
+      await t.tap(find.text('一键开启全部权限'));
+      await t.pump();
+      await t.pump(const Duration(milliseconds: 600));
+
+      // ★ 用户原话：「通知会弹系统框，网络不弹就跳过了」。系统那个框弹不出来
+      //   （一个 App 只问一次），至少要用 App 自己的框把它显性化。
+      expect(find.text('网络被系统挡住了'), findsOneWidget);
+      expect(find.text('继续开启其他权限'), findsOneWidget);
+      expect(find.text('去打开设置'), findsOneWidget);
+
+      // 点「继续」后队列接着走，通知那一项照样会去请求
+      await t.tap(find.text('继续开启其他权限'));
+      await t.pump();
+      await t.pump(const Duration(milliseconds: 400));
+      expect(find.text('网络被系统挡住了'), findsNothing);
+      await t.pump(const Duration(seconds: 3));
+      await t.pump(const Duration(seconds: 2));
+    });
+
     testWidgets('点「去修复」→ 标题直指系统挡网，并给「去系统设置」', (t) async {
       await t.pumpWidget(MaterialApp(
         home: PermissionOnboardScreen(
