@@ -154,6 +154,11 @@ void main() {
       await t.pump(const Duration(milliseconds: 500));
       await settle(t);
       expect(find.text('未连通'), findsOneWidget);
+      // v2.1.68：系统没弹授权框时，单点「允许」也会先给 App 的授权框，关掉它
+      await t.tap(find.text('继续开启其他权限'));
+      await settle(t);
+      await t.pump(const Duration(milliseconds: 300));
+      await settle(t);
       final before = probes;
 
       // 用户在设置里打开了「无线数据」，切回 App
@@ -171,18 +176,26 @@ void main() {
   });
 
   group('源码护栏', () {
-    test('网络失败不许在队列中间弹框（要等五项权限都问完）', () {
+    test('App 的授权框只能在「系统确实没弹」时出现，且不能在队列中间瞎弹', () {
       final src = File('lib/screens/startup/permission_onboard_screen.dart')
           .readAsStringSync();
       final body = src.substring(
         src.indexOf('Future<void> _requestAll()'),
         src.indexOf('Future<void> _openSettings()'),
       );
+      // ★ v2.1.68：允许在队列中间给「授权框」（系统不弹时必须有界面顶上），
+      //   但**必须**用 _promptSeen 把关 —— 系统框正在屏幕上时插嘴就是冤枉人。
+      final askAt = body.indexOf('_askNetAuthorize()');
+      expect(askAt, greaterThan(-1), reason: '系统不弹时必须有一个 App 侧授权框');
+      expect(body.substring(0, askAt), contains('!_promptSeen'),
+          reason: '没见过系统弹窗才能插 App 的框');
+
+      // 那条「其余 N 项都开好了」的收尾框仍然只能在队列末尾
       final loopAt = body.indexOf('for (final r in _rows)');
-      final promptAt = body.indexOf('_promptNetBlocked()');
+      final promptAt = body.indexOf('await _promptNetBlocked()');
       expect(loopAt, greaterThan(-1));
       expect(promptAt, greaterThan(loopAt),
-          reason: '用户在系统弹窗上点「允许」的过程中，不能被一句「网络被挡住了」打断');
+          reason: '用户还在点系统弹窗时，不能被一句「网络被挡住了」打断');
     });
 
     test('失败要停在「请求中」重试，不能直接落红', () {
@@ -195,6 +208,11 @@ void main() {
       expect(body, contains('_net = _NetState.checking'),
           reason: '失败后要回到「请求中」继续等，而不是 _net = offline');
       expect(body, contains('debugNetWait'), reason: '预算可调，测试不用真等 40 秒');
+      // ★ v2.1.68：系统没弹框时必须能自己收手，别让用户对着「请求中」干等
+      expect(body, contains('_promptSeen'),
+          reason: '要用「系统弹没弹」来决定等还是收手');
+      expect(body, contains('_isTimeoutError'),
+          reason: '卡满超时的失败要继续等（可能弹窗正攥着连接），秒失败才收手');
     });
   });
 }
