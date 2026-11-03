@@ -10,6 +10,7 @@ import '../services/map_config_service.dart';
 import '../services/session_provider.dart';
 import '../services/spot_service.dart';
 import '../utils/coord_transform.dart';
+import '../utils/spot_sort.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/location_prompt.dart';
 import 'auth_screen.dart';
@@ -166,10 +167,22 @@ class _SpotsScreenState extends State<SpotsScreen>
   }
 
   /// 本地钓场 Tab 展示：只放钓场（kind=venue），渔具店已独立成 Tab
+  ///
+  /// ★ v2.1.69：列表必须「距我由近到远」
+  ///   之前直接把接口顺序铺上去，而后端只有 `ORDER BY created_at DESC`
+  ///   —— 批量导入的 51 个钓场全在 4 毫秒内入库（created_at 只有 18 个不同值），
+  ///   并列行的顺序由 MySQL 决定，于是页面看起来就是「随便排的」。
+  ///   距离文案本来就是这里按 CoordTransform 算的，排序放在同一处才不会打架。
   List<FishingSpot> get _visibleVenues {
-    if (_type == '全部') return _venues;
-    return _venues.where((s) => s.type == _type).toList();
+    final list = _type == '全部'
+        ? _venues
+        : _venues.where((s) => s.type == _type).toList();
+    return sortSpotsByDistance(list, _myLat, _myLng);
   }
+
+  /// 渔具店 Tab 展示：同样按距离由近到远
+  List<FishingSpot> get _visibleShops =>
+      sortSpotsByDistance(_shops, _myLat, _myLng);
 
   @override
   Widget build(BuildContext context) {
@@ -626,9 +639,10 @@ class _SpotsScreenState extends State<SpotsScreen>
     if (_loading && _shops.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
+    final shops = _visibleShops;
     return AppRefresh(
       onRefresh: _load,
-      child: _shops.isEmpty
+      child: shops.isEmpty
           ? ListView(children: const [
               SizedBox(height: 84),
               Center(
@@ -648,9 +662,9 @@ class _SpotsScreenState extends State<SpotsScreen>
             ])
           : ListView.separated(
               padding: const EdgeInsets.fromLTRB(0, 6, 0, 16),
-              itemCount: _shops.length,
+              itemCount: shops.length,
               separatorBuilder: (_, __) => const SizedBox(height: 6),
-              itemBuilder: (_, i) => _shopCard(_shops[i]),
+              itemBuilder: (_, i) => _shopCard(shops[i]),
             ),
     );
   }
