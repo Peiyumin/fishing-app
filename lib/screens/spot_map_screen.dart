@@ -1413,7 +1413,11 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => SpotDetailScreen(spot: s))),
             // 颜色按身份区分：绿=野钓 / 红=收费钓场 / 蓝=渔具店
-            child: SpotPin(color: SpotMarkerStyle.colorOf(s)),
+            // 图形只有渔具店是小房子，其余保持原小鱼
+            child: SpotPin(
+              color: SpotMarkerStyle.colorOf(s),
+              glyph: SpotMarkerStyle.glyphOf(s),
+            ),
           ),
         ));
       }
