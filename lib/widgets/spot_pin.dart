@@ -2,21 +2,24 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 
-/// 钓点标记：红色定位针 + 白色鱼形
+/// 钓点标记：定位针 + 白色小房子（v2.1.69 起）
 ///
 /// 两套地图内核共用同一份画法：
 ///   · 原生 MapLibre 内核 —— 画进 PNG 交给原生层当 symbol icon（`addImage`）；
 ///   · flutter_map 兜底内核 —— 直接当 Widget 用。
-/// 之前两边的钓点样式是各写各的（一个是 5.5px 红圆点，一个是
-/// `Icons.location_on`），既不一致也不好认，统一到这里。
+///
+/// 颜色按钓点身份区分（见 `utils/spot_marker_style.dart`）：
+///   绿 = 野钓点 / 红 = 黑坑·鱼塘·收费 / 蓝 = 渔具店。
+/// 之前所有点都是红针 + 白鱼，在同一张图上根本分不出「能免费下竿的河」和
+/// 「200 块 4 小时的坑」，所以颜色必须一眼可辨。
 class SpotPinPainter extends CustomPainter {
-  const SpotPinPainter();
+  const SpotPinPainter({this.color = AppTheme.danger});
 
   /// 定稿尺寸：所有坐标都按这个「单位画布」写，绘制时等比缩放
   static const double unitW = 120;
   static const double unitH = 156;
 
-  static const Color pinColor = AppTheme.danger;
+  final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -38,10 +41,8 @@ class SpotPinPainter extends CustomPainter {
       ..addOval(Rect.fromCircle(center: const Offset(cx, cy), radius: r));
     final tail = Path()
       ..moveTo(cx - r * 0.62, cy + r * 0.62)
-      ..quadraticBezierTo(
-          cx - r * 0.32, cy + r * 1.28, cx, tipY)
-      ..quadraticBezierTo(
-          cx + r * 0.32, cy + r * 1.28, cx + r * 0.62, cy + r * 0.62)
+      ..quadraticBezierTo(cx - r * 0.32, cy + r * 1.28, cx, tipY)
+      ..quadraticBezierTo(cx + r * 0.32, cy + r * 1.28, cx + r * 0.62, cy + r * 0.62)
       ..close();
     final pin = Path.combine(PathOperation.union, head, tail);
 
@@ -53,42 +54,70 @@ class SpotPinPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 9
           ..strokeJoin = StrokeJoin.round);
-    canvas.drawPath(pin, Paint()..color = pinColor);
+    canvas.drawPath(pin, Paint()..color = color);
 
-    // 白色鱼形：椭圆鱼身 + 三角尾鳍
-    final body = Path()
-      ..addOval(Rect.fromCenter(
-          center: const Offset(cx + 3, cy - 2), width: 42, height: 26));
-    final fin = Path()
-      ..moveTo(cx - 16, cy - 2)
-      ..lineTo(cx - 30, cy - 14)
-      ..lineTo(cx - 30, cy + 10)
+    _paintHouse(canvas, cx, cy);
+  }
+
+  /// 白色小房子：屋顶 + 墙体一体，门挖回底色
+  void _paintHouse(Canvas canvas, double cx, double cy) {
+    const double roofHalf = 26; // 屋檐半宽
+    const double wallHalf = 17; // 墙半宽
+    final double roofTop = cy - 25;
+    final double eaveY = cy + 1;
+    final double baseY = cy + 23;
+
+    final house = Path()
+      ..moveTo(cx, roofTop) // 屋脊
+      ..lineTo(cx + roofHalf, eaveY)
+      ..lineTo(cx + wallHalf, eaveY)
+      ..lineTo(cx + wallHalf, baseY)
+      ..lineTo(cx - wallHalf, baseY)
+      ..lineTo(cx - wallHalf, eaveY)
+      ..lineTo(cx - roofHalf, eaveY)
       ..close();
     canvas.drawPath(
-        Path.combine(PathOperation.union, body, fin),
-        Paint()..color = Colors.white);
-    // 鱼眼（挖回红色）
-    canvas.drawCircle(
-        const Offset(cx + 16, cy - 7), 3.4, Paint()..color = pinColor);
+      house,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.fill
+        ..strokeJoin = StrokeJoin.round,
+    );
+
+    // 门：用底色挖出来，小房子才有「可辨认的门」
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset(cx, cy + 13), width: 11, height: 20),
+        const Radius.circular(2),
+      ),
+      Paint()..color = color,
+    );
   }
 
   @override
-  bool shouldRepaint(covariant SpotPinPainter oldDelegate) => false;
+  bool shouldRepaint(covariant SpotPinPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 /// 钓点标记 Widget（flutter_map 兜底内核用）
 class SpotPin extends StatelessWidget {
-  const SpotPin({super.key, this.width = 30, this.height = 39});
+  const SpotPin({
+    super.key,
+    this.width = 30,
+    this.height = 39,
+    this.color = AppTheme.danger,
+  });
 
   final double width;
   final double height;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: width,
       height: height,
-      child: const CustomPaint(painter: SpotPinPainter()),
+      child: CustomPaint(painter: SpotPinPainter(color: color)),
     );
   }
 }
