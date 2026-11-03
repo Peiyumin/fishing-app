@@ -132,6 +132,8 @@ void main() {
         home: PermissionOnboardScreen(
           onDone: () {},
           debugGrantPerms: false, // 新装用户：权限还没给，进页面不会自动探测
+          debugNetWait: const Duration(milliseconds: 400),
+          debugNetPollGap: const Duration(milliseconds: 20),
           probeNet: () async =>
               offlineResult('SocketException: Connection timed out'),
         ),
@@ -142,8 +144,8 @@ void main() {
 
       await t.tap(find.text('允许').first);
       await settle(t);
-      // v2.1.66：超时类失败先停在「请求中」等补探（可能系统弹窗刚被点完），
-      // 补探仍失败才转红。
+      // v2.1.67：失败先停在「请求中」按预算重试（系统弹窗可能还没点），
+      // 预算用光才转红。
       await t.pump(const Duration(milliseconds: 1200));
       await settle(t);
 
@@ -238,6 +240,8 @@ void main() {
         home: PermissionOnboardScreen(
           onDone: () => exited = true,
           debugGrantPerms: false,
+          debugNetWait: const Duration(milliseconds: 400),
+          debugNetPollGap: const Duration(milliseconds: 20),
           probeNet: () async {
             probes++;
             return offlineResult('SocketException: Network is unreachable');
@@ -249,7 +253,9 @@ void main() {
       await t.tap(find.text('一键开启全部权限'));
       await t.pump();
       await t.pump(const Duration(milliseconds: 100));
-      expect(probes, 1, reason: '队列第一位必须是网络');
+      // v2.1.67 起网络这一项会按预算反复重试（系统弹窗可能还挂着），
+      // 所以这里只能断言「至少探了一次、且确实是从网络开始的」。
+      expect(probes, greaterThanOrEqualTo(1), reason: '队列第一位必须是网络');
 
       await t.pump(const Duration(seconds: 3));
       await t.pump(const Duration(seconds: 2));
@@ -265,10 +271,10 @@ void main() {
         src.indexOf('Future<void> _requestAll()'),
         src.indexOf('Future<void> _openSettings()'),
       );
-      final probeAt = body.indexOf('_probeWithRetry(');
+      final probeAt = body.indexOf('_waitNetReady(');
       final loopAt = body.indexOf('for (final r in _rows)');
       expect(probeAt, greaterThan(-1),
-          reason: '_requestAll 里必须探测网络（v2.1.66 起走 _probeWithRetry）');
+          reason: '_requestAll 里必须探测网络（v2.1.67 起走 _waitNetReady）');
       expect(loopAt, greaterThan(-1));
       expect(probeAt, lessThan(loopAt),
           reason: '网络探测必须在五项系统权限之前，否则顺序就不对');
@@ -345,6 +351,8 @@ void main() {
         home: PermissionOnboardScreen(
           onDone: () {},
           debugGrantPerms: false,
+          debugNetWait: const Duration(milliseconds: 400),
+          debugNetPollGap: const Duration(milliseconds: 20),
           probeNet: () async =>
               offlineResult('SocketException: Connection timed out'),
         ),
