@@ -1219,7 +1219,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     final c = _map;
     if (c == null || _spotIconReady) return;
     for (final role in SpotMarkerRole.values) {
-      final bytes = await _buildPinIcon(SpotMarkerStyle.colorOfRole(role));
+      final bytes = await _buildPinIcon(
+          SpotMarkerStyle.colorOfRole(role),
+          SpotMarkerStyle.glyphOfRole(role));
       if (bytes == null) continue;
       try {
         await c.addImage(SpotMarkerStyle.iconIdOfRole(role), bytes);
@@ -1426,13 +1428,13 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     unawaited(_applyLayerToggles());
   }
 
-  Future<Uint8List?> _buildPinIcon(Color color) async {
+  Future<Uint8List?> _buildPinIcon(Color color, SpotPinGlyph glyph) async {
     const w = SpotPinPainter.unitW;
     const h = SpotPinPainter.unitH;
     final rec = ui.PictureRecorder();
     final canvas = Canvas(rec, const Rect.fromLTWH(0, 0, w, h));
     // 画法与 flutter_map 兜底内核共用同一份（widgets/spot_pin.dart）
-    SpotPinPainter(color: color).paint(canvas, const Size(w, h));
+    SpotPinPainter(color: color, glyph: glyph).paint(canvas, const Size(w, h));
     final img = await rec.endRecording().toImage(w.round(), h.round());
     final bd = await img.toByteData(format: ui.ImageByteFormat.png);
     img.dispose();
