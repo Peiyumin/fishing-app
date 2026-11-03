@@ -33,6 +33,7 @@ import '../services/geo_bounds.dart';
 import '../services/spot_service.dart';
 import '../services/tile_health.dart';
 import '../widgets/spot_pin.dart';
+import '../utils/spot_marker_style.dart';
 import 'spot_detail_screen.dart';
 import 'spot_map_screen.dart' show SpotMapController, SpotMapScreen;
 
@@ -602,7 +603,11 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         // ★ 顶层 id 会成为 MapLibre 的 feature.identifier —— 点击命中时
         //   原生层只把这个值送回 Dart，没有它就取不到是哪条钓点。
         'id': n,
-        'properties': {'id': s.id},
+        'properties': {
+          'id': s.id,
+          // 颜色分类（wild/paid/shop）：symbol 层的 icon-image 按它切图
+          'role': SpotMarkerStyle.roleOf(s).name,
+        },
         'geometry': {
           'type': 'Point',
           'coordinates': [q.longitude, q.latitude]
@@ -779,8 +784,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     _rendering = true;
     try {
       // ---------------- 钓点图标 ----------------
-      // 红色定位针 + 白色鱼形，运行时用 Canvas 画成 PNG 交给原生层当 icon
-      await _ensureSpotIcon();
+      // 定位针 + 白色小房子，运行时用 Canvas 画成 PNG 交给原生层当 icon
+      // （绿=野钓 / 红=收费钓场 / 蓝=渔具店）
+      await _ensureSpotIcons();
 
       // ---------------- 在线河网：所有有名字的河 ----------------
       // ★ 为什么要有这一层：
@@ -1047,20 +1053,30 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           ),
           minzoom: 3);
 
-      // ---------------- 钓点：红色定位图标 ----------------
+      // ---------------- 钓点：定位图标（按身份上色）----------------
+      //   绿 = 野钓点 / 红 = 黑坑·鱼塘·收费 / 蓝 = 渔具店
+      //   只用一个图层，颜色靠 match 表达式换图：
+      //   `icon-image` 在 maplibre_gl 里是 dynamic，表达式会原样下发给原生层。
       await _safeSource('spots', _fc(_spotFeatures()));
+      final pinSize = _zNum([
+        4, 0.46 * _iconUnit,
+        8, 0.55 * _iconUnit,
+        11, 0.62 * _iconUnit,
+        15, 0.78 * _iconUnit,
+      ]);
       await _safeLayer(
           'spots',
           'spots-pin',
           SymbolLayerProperties(
-            iconImage: 'spot-pin',
+            iconImage: const [
+              'match',
+              ['get', 'role'],
+              'wild', 'spot-pin-wild',
+              'shop', 'spot-pin-shop',
+              'spot-pin-paid', // 兜底：其余（含 venue）都按收费钓场画
+            ],
             // 目标显示尺寸约 25×32（z11），随缩放微调
-            iconSize: _zNum([
-              4, 0.46 * _iconUnit,
-              8, 0.55 * _iconUnit,
-              11, 0.62 * _iconUnit,
-              15, 0.78 * _iconUnit,
-            ]),
+            iconSize: pinSize,
             // 针尖对准坐标点，而不是图标中心
             iconAnchor: 'bottom',
             iconAllowOverlap: true,
@@ -1068,6 +1084,24 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
             iconPadding: 0,
           ),
           minzoom: 0);
+      // 表达式万一被老版本原生 SDK 拒绝，图层会压根没建起来 ——
+      // 退回单色（红），至少点还在，而不是整层消失。
+      final afterPin =
+          (await c.getLayerIds()).map((e) => e.toString()).toSet();
+      if (!afterPin.contains('spots-pin')) {
+        await _safeLayer(
+            'spots',
+            'spots-pin',
+            SymbolLayerProperties(
+              iconImage: SpotMarkerStyle.iconIdOfRole(SpotMarkerRole.paid),
+              iconSize: pinSize,
+              iconAnchor: 'bottom',
+              iconAllowOverlap: true,
+              iconIgnorePlacement: true,
+              iconPadding: 0,
+            ),
+            minzoom: 0);
+      }
 
       // ---------------- AI 推荐钓点（点按钮后才有数据） ----------------
       // 空数据先建好图层：点「AI 找钓点」时只 setGeoJsonSource，
@@ -1171,21 +1205,27 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     return dpr > 0 ? 1.0 / dpr : 1.0;
   }
 
-  /// 把「红色定位针 + 白色鱼形」画成 PNG 交给原生层
+  /// 把「定位针 + 白色小房子」画成 PNG 交给原生层
   ///
   /// 为什么运行时画而不是放 png 资源：
   ///   1. 不用多打包一份 3x 图，省体积；
-  ///   2. 颜色跟 App 主题（红色）保持一致，改主题不用重新出图；
+  ///   2. 颜色按钓点身份取（绿/红/蓝），改色不用重新出图；
   ///   3. MapLibre 的 icon 只吃「图片像素」，画大一点再缩小显示更清晰。
-  Future<void> _ensureSpotIcon() async {
+  ///
+  /// ★ v2.1.69：一张图变三张（绿=野钓 / 红=收费钓场 / 蓝=渔具店）。
+  ///   图层仍只有 `spots-pin` 一个（命中判定、显隐开关、_bizLayers 校验
+  ///   都按这个名字走，不动它们），颜色靠 `icon-image` 的 match 表达式切换。
+  Future<void> _ensureSpotIcons() async {
     final c = _map;
     if (c == null || _spotIconReady) return;
-    final bytes = await _buildPinIcon();
-    if (bytes == null) return;
-    try {
-      await c.addImage('spot-pin', bytes);
-    } catch (_) {
-      // 同名已存在：直接用
+    for (final role in SpotMarkerRole.values) {
+      final bytes = await _buildPinIcon(SpotMarkerStyle.colorOfRole(role));
+      if (bytes == null) continue;
+      try {
+        await c.addImage(SpotMarkerStyle.iconIdOfRole(role), bytes);
+      } catch (_) {
+        // 同名已存在：直接用
+      }
     }
     _spotIconReady = true;
   }
@@ -1386,13 +1426,13 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     unawaited(_applyLayerToggles());
   }
 
-  Future<Uint8List?> _buildPinIcon() async {
+  Future<Uint8List?> _buildPinIcon(Color color) async {
     const w = SpotPinPainter.unitW;
     const h = SpotPinPainter.unitH;
     final rec = ui.PictureRecorder();
     final canvas = Canvas(rec, const Rect.fromLTWH(0, 0, w, h));
     // 画法与 flutter_map 兜底内核共用同一份（widgets/spot_pin.dart）
-    const SpotPinPainter().paint(canvas, const Size(w, h));
+    SpotPinPainter(color: color).paint(canvas, const Size(w, h));
     final img = await rec.endRecording().toImage(w.round(), h.round());
     final bd = await img.toByteData(format: ui.ImageByteFormat.png);
     img.dispose();
