@@ -364,6 +364,14 @@ void main() {
       await t.pump(const Duration(milliseconds: 1200));
       await settle(t);
 
+      // v2.1.68：系统没弹授权框 → 先用 App 自己的框把这一步补上。
+      // 这个框用完即走，关掉它再看「去修复」那条路。
+      expect(find.text('无线数据还没有授权'), findsOneWidget);
+      await t.tap(find.text('继续开启其他权限'));
+      await settle(t);
+      await t.pump(const Duration(milliseconds: 400));
+      await settle(t);
+
       await t.tap(find.text('去修复'));
       await t.pump();
       await t.pump(const Duration(milliseconds: 300));
