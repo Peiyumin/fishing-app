@@ -15,6 +15,7 @@ import '../services/session_provider.dart';
 import '../services/spot_service.dart';
 import '../services/weather_service.dart';
 import '../utils/coord_transform.dart';
+import '../utils/spot_sort.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/login_gate.dart';
 import '../widgets/grid_nav.dart';
@@ -382,15 +383,9 @@ class _HomeScreenState extends State<HomeScreen>
     if (mounted) setState(() => _spots = _sortedByDistance(spots));
   }
 
-  List<FishingSpot> _sortedByDistance(List<FishingSpot> list) {
-    final lat = _myLat;
-    final lng = _myLng;
-    if (lat == null || lng == null || list.length < 2) return list;
-    final copy = List<FishingSpot>.from(list);
-    copy.sort((a, b) => CoordTransform.distanceMeters(lat, lng, a.lat, a.lng)
-        .compareTo(CoordTransform.distanceMeters(lat, lng, b.lat, b.lng)));
-    return copy;
-  }
+  List<FishingSpot> _sortedByDistance(List<FishingSpot> list) =>
+      // v2.1.69：与「钓点」页共用同一个排序口径（无坐标沉底、同距按名称定序）
+      sortSpotsByDistance(list, _myLat, _myLng);
 
   /// 某个钓点距我的距离（米）；未定位时返回 null
   double? _distanceOf(FishingSpot s) {
