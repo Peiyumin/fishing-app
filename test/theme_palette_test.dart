@@ -28,6 +28,10 @@ const _paintWhitelist = <String>{
   'lib/screens/pond_screen.dart',
   // 第三方导航 App 的品牌色（高德蓝/微信绿/苹果蓝），用户靠颜色认 App
   'lib/services/map_launcher.dart',
+  // 登录页的「微信登录」按钮：微信官方品牌绿 #07C160 是微信开放平台的
+  // 品牌识别规范（用户在别处看到的微信按钮就是这个绿），换成 AppTheme
+  // 的 accent 会让用户认不出这是微信登录。整个文件只有这三处用它。
+  'lib/screens/auth_screen.dart',
   // 首页样张预览脚本，不进产品流程
   'lib/main_stamp_preview.dart',
   // 启动页：底色是设计稿（渔报海报）本身，胶囊由 Flutter 重绘以承载进度，
@@ -56,6 +60,10 @@ Map<String, Color> get _palette => {
       'sky': AppTheme.sky,
       'skyDeep': AppTheme.skyDeep,
       'danger': AppTheme.danger,
+      // 地图标记三色（v2.1.69）：只给地图上的钓点标记用
+      'spotWild': AppTheme.spotWild,
+      'spotPaid': AppTheme.spotPaid,
+      'spotShop': AppTheme.spotShop,
       'dangerDark': AppTheme.dangerDark,
       'dangerLight': AppTheme.dangerLight,
       'warning': AppTheme.warning,
@@ -154,7 +162,7 @@ void main() {
     }
   });
 
-  test('色板只允许 5 个色相族（黑灰 / 黄绿 / 蓝 / 红 / 琥珀）', () {
+  test('色板只允许 5 个色相族（黑灰 / 黄绿 / 蓝 / 红 / 琥珀）+ 地图标记三色', () {
     // 这一条不是数"有几个彩色"，而是看**色相**：
     //   · 黄绿 60~100°（accent 系）
     //   · 蓝   185~240°（water / sky 系）
@@ -171,8 +179,14 @@ void main() {
       (18, 55),
     ];
 
+    // 地图标记三色（v2.1.69）单独放行：野钓=绿 / 收费=红 / 渔具店=蓝，
+    // 是**语义色**（用户要靠色相一眼分出钓点身份），不参与 UI 配色体系。
+    // 只放行这三个 token —— 别处再写一个绿仍然会被抓。
+    const mapMarkerTokens = {'spotWild', 'spotPaid', 'spotShop'};
+
     final bad = <String>[];
     _palette.forEach((name, c) {
+      if (mapMarkerTokens.contains(name)) return;
       final hsl = HSLColor.fromColor(c);
       // 近黑/近白/纯灰不参与色相判定：它们的色相是算出来的噪声
       if (hsl.saturation < .15 || hsl.lightness < .10 || hsl.lightness > .95) {
