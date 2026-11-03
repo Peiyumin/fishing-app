@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import '../models/fishing_spot.dart';
+import '../widgets/spot_pin.dart' show SpotPinGlyph;
 
 /// 钓点标记的三类身份 —— 地图上用颜色区分（v2.1.69）
 ///
@@ -46,6 +47,12 @@ class SpotMarkerStyle {
 
   /// 原生地图内核里每类一张 PNG（`addImage` 的名字）
   static String iconIdOfRole(SpotMarkerRole role) => 'spot-pin-${role.name}';
+
+  /// 标记里的白色图形：**只有渔具店**换小房子，野钓/收费仍是原来的小鱼
+  static SpotPinGlyph glyphOfRole(SpotMarkerRole role) =>
+      role == SpotMarkerRole.shop ? SpotPinGlyph.house : SpotPinGlyph.fish;
+
+  static SpotPinGlyph glyphOf(FishingSpot s) => glyphOfRole(roleOf(s));
 
   /// 图例 / 无障碍文案
   static String labelOfRole(SpotMarkerRole role) {
