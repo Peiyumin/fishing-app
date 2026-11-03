@@ -20,6 +20,7 @@ import '../services/map_tile_source.dart';
 import '../services/spot_service.dart';
 import '../services/weather_service.dart';
 import '../utils/coord_transform.dart';
+import '../utils/spot_marker_style.dart';
 import '../widgets/spot_pin.dart';
 import 'spot_detail_screen.dart';
 
@@ -1411,7 +1412,8 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
           child: GestureDetector(
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => SpotDetailScreen(spot: s))),
-            child: const SpotPin(),
+            // 颜色按身份区分：绿=野钓 / 红=收费钓场 / 蓝=渔具店
+            child: SpotPin(color: SpotMarkerStyle.colorOf(s)),
           ),
         ));
       }
