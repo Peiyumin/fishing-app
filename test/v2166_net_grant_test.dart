@@ -83,7 +83,7 @@ void main() {
       await t.pump(const Duration(seconds: 2));
     });
 
-    testWidgets('超时失败 → 自动补探一次，第二次通了就显示已连通', (t) async {
+    testWidgets('失败后自动重试，用户点了「允许」→ 显示已连通', (t) async {
       var probes = 0;
       await t.pumpWidget(MaterialApp(
         home: PermissionOnboardScreen(
@@ -93,6 +93,7 @@ void main() {
             probes++;
             // 第一次：用户还在看系统弹窗，请求挂着直到超时
             if (probes == 1) return fail('SocketException: Connection timed out');
+            // v2.1.67：失败会按预算一直重试，第二拍就代表「用户点了允许」
             // 第二次：用户点了「允许」，链路已可用
             return okResult();
           },
@@ -103,14 +104,14 @@ void main() {
       await t.tap(find.text('一键开启全部权限'));
       await t.pump();
       await t.pump(const Duration(milliseconds: 100));
-      // 第一轮失败后要等 900ms 才补探
+      // 第一轮失败后要等一个轮询间隔才重试
       expect(find.text('未连通'), findsNothing,
-          reason: '补探之前不该先把红脸挂出来再收回');
+          reason: '重试之前不该先把红脸挂出来再收回');
 
       await t.pump(const Duration(milliseconds: 1200));
       await settle(t);
 
-      expect(probes, 2, reason: '超时类失败必须自动补探一次');
+      expect(probes, greaterThanOrEqualTo(2), reason: '失败必须自己重试');
       expect(find.textContaining('已连通'), findsOneWidget);
       expect(find.text('未连通'), findsNothing);
 
@@ -118,12 +119,14 @@ void main() {
       await t.pump(const Duration(seconds: 2));
     });
 
-    testWidgets('系统禁网（no route）→ 不瞎补探，直接说清是被系统关了', (t) async {
+    testWidgets('系统禁网（no route）→ 预算用光才判红，且说清是被系统关了', (t) async {
       var probes = 0;
       await t.pumpWidget(MaterialApp(
         home: PermissionOnboardScreen(
           onDone: () {},
           debugGrantPerms: false,
+          debugNetWait: const Duration(milliseconds: 300),
+          debugNetPollGap: const Duration(milliseconds: 20),
           probeNet: () async {
             probes++;
             return fail('SocketException: Network is unreachable');
@@ -137,7 +140,9 @@ void main() {
       await t.pump(const Duration(seconds: 2));
       await settle(t);
 
-      expect(probes, 1, reason: '系统禁网补探多少次都是同一个结果，立刻收手');
+      // v2.1.67：ENETUNREACH 既可能是「真被禁」也可能是「系统弹窗还挂着」，
+      // 两者用异常分不开，只能靠重试到预算用光来区分。
+      expect(probes, greaterThan(2), reason: '重试到最后才下结论');
       expect(find.text('未连通'), findsOneWidget);
       // ★ 不能再说「手机没有可用网络」—— 手机明明上着网，是 App 被禁
       expect(find.textContaining('手机没有可用网络'), findsNothing);
@@ -145,11 +150,14 @@ void main() {
       expect(find.textContaining('→ 渔报'), findsOneWidget);
     });
 
-    testWidgets('一键开启时网络被禁 → 弹自己的框，而不是静默跳过', (t) async {
+    testWidgets('网络始终不通 → 五项权限问完之后才提示（不打断队列）', (t) async {
       await t.pumpWidget(MaterialApp(
         home: PermissionOnboardScreen(
           onDone: () {},
-          debugGrantPerms: false,
+          debugGrantPerms: true, // 五项系统权限都给了，只剩网络
+          debugSkipAutoExit: true,
+          debugNetWait: const Duration(milliseconds: 300),
+          debugNetPollGap: const Duration(milliseconds: 20),
           probeNet: () async => fail('SocketException: Network is unreachable'),
         ),
       ));
@@ -157,21 +165,22 @@ void main() {
 
       await t.tap(find.text('一键开启全部权限'));
       await t.pump();
-      await t.pump(const Duration(milliseconds: 600));
+      await t.pump(const Duration(milliseconds: 200));
 
-      // ★ 用户原话：「通知会弹系统框，网络不弹就跳过了」。系统那个框弹不出来
-      //   （一个 App 只问一次），至少要用 App 自己的框把它显性化。
-      expect(find.text('网络被系统挡住了'), findsOneWidget);
-      expect(find.text('继续开启其他权限'), findsOneWidget);
-      expect(find.text('去打开设置'), findsOneWidget);
+      // ★ v2.1.67：网络那一步失败时**不许**弹这个框。用户可能正盯着系统
+      //   「允许使用无线数据」弹窗，这时候甩一句「被系统挡住了」就是冤枉人。
+      expect(find.text('网络被系统挡住了'), findsNothing,
+          reason: '网络失败不能抢在系统弹窗前面下结论');
 
-      // 点「继续」后队列接着走，通知那一项照样会去请求
-      await t.tap(find.text('继续开启其他权限'));
-      await t.pump();
-      await t.pump(const Duration(milliseconds: 400));
-      expect(find.text('网络被系统挡住了'), findsNothing);
-      await t.pump(const Duration(seconds: 3));
       await t.pump(const Duration(seconds: 2));
+      await t.pump(const Duration(milliseconds: 300));
+      expect(find.text('网络被系统挡住了'), findsOneWidget);
+      expect(find.text('去打开设置'), findsOneWidget);
+      expect(find.text('重新检测'), findsOneWidget);
+
+      await t.tap(find.text('重新检测'));
+      await t.pump();
+      await t.pump(const Duration(seconds: 1));
     });
 
     testWidgets('点「去修复」→ 标题直指系统挡网，并给「去系统设置」', (t) async {
@@ -179,6 +188,8 @@ void main() {
         home: PermissionOnboardScreen(
           onDone: () {},
           debugGrantPerms: false,
+          debugNetWait: const Duration(milliseconds: 300),
+          debugNetPollGap: const Duration(milliseconds: 20),
           probeNet: () async => fail('SocketException: Network is unreachable'),
         ),
       ));
@@ -205,13 +216,17 @@ void main() {
   });
 
   group('源码护栏', () {
-    test('引导页探测必须给系统弹窗留够时间（≥15s），且失败要补探', () {
+    test('网络这一项必须「重试到有结果」，不能一次失败就判死', () {
       final src = _read('lib/screens/startup/permission_onboard_screen.dart');
-      expect(src, contains('Duration(seconds: 15)'),
-          reason: '6 秒的默认超时比用户点弹窗还快，会误判成网络不通');
-      expect(src, contains('_probeWithRetry'), reason: '必须有补探路径');
-      expect(src, contains('_netMaybeWaiting'),
-          reason: '补探只该针对「等回应超时」，系统禁网补也没用');
+      // ★ v2.1.67 的教训：iOS 弹窗挂着时 socket 立刻 ENETUNREACH，
+      //   不是超时 —— 所以单次超时设多长都没用，必须轮询重试。
+      expect(src, contains('_waitNetReady'), reason: '必须有轮询重试的路径');
+      expect(src, contains('Duration(seconds: 40)'),
+          reason: '整个网络步骤的预算要足够用户看清并点掉系统弹窗');
+      expect(src, contains('_pollGap'),
+          reason: '两次重试之间要留间隔，且要能被「切回前台」打断');
+      expect(src, contains('WidgetsBindingObserver'),
+          reason: '从系统设置切回来要立刻补探，而不是干等下一拍');
     });
 
     test('NetDiag 的超时必须可传入（否则引导页没法单独放宽）', () {
