@@ -15,6 +15,10 @@ class SpotService {
   // ---------- 演示模式本地存储（不持久化，仅预览） ----------
   static final List<FishingSpot> _userSpots = [];
   static final Map<String, int> _reportCounts = {};
+
+  /// 仅测试用：注入一批固定钓点（null = 走真实接口 / 演示数据）
+  @visibleForTesting
+  static List<FishingSpot>? testSpotsOverride;
   static final List<SpotReport> _demoReports = [
     SpotReport(
       id: 'r1',
@@ -36,6 +40,20 @@ class SpotService {
 
   /// 返回全部钓点（演示模式会把报错数合并进对象）
   static Future<List<FishingSpot>> fetchSpots({String keyword = ''}) async {
+    // 仅测试用：注入固定数据，绕开网络与演示数据（v2.1.69 排序回归用）
+    final injected = testSpotsOverride;
+    if (injected != null) {
+      var all = List<FishingSpot>.from(injected);
+      if (keyword.isNotEmpty) {
+        all = all
+            .where((s) =>
+                s.name.contains(keyword) ||
+                s.address.contains(keyword) ||
+                s.description.contains(keyword))
+            .toList();
+      }
+      return all;
+    }
     if (!ApiConfig.enabled) {
       await Future.delayed(const Duration(milliseconds: 200));
       var all = [..._userSpots, ...demoSpots];
