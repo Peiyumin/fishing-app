@@ -56,6 +56,8 @@ class PermissionOnboardScreen extends StatefulWidget {
     this.probeNet,
     this.debugGrantPerms,
     this.debugSkipAutoExit = false,
+    this.debugNetWait = const Duration(seconds: 40),
+    this.debugNetPollGap = const Duration(milliseconds: 1000),
   });
 
   /// 全部处理完（或用户点「以后再说」）后回调
@@ -79,6 +81,18 @@ class PermissionOnboardScreen extends StatefulWidget {
   /// 全授予的瞬间就会触发自动放行 —— 两者撞在一起，那一页根本来不及被断言。
   /// 生产路径永远传默认值 false。
   final bool debugSkipAutoExit;
+
+  /// 「网络」这一项一次最多等多久（默认 40 秒）。
+  ///
+  /// ★ 这不是「一次请求的超时」，而是**整个网络步骤的预算**：
+  ///   iOS 的「无线数据」弹窗挂着的时候，socket 并不会傻等，而是**立刻**
+  ///   返回 `Network is unreachable` —— 所以「等一下再判」这件事只能靠
+  ///   反复重试来做，单次超时设多长都没用（v2.1.67 的真实教训）。
+  ///   测试里把它调小，才不用真的等 40 秒。
+  final Duration debugNetWait;
+
+  /// 每次重试之间隔多久（默认 1 秒）。同上，只为测试可调。
+  final Duration debugNetPollGap;
 
   @override
   State<PermissionOnboardScreen> createState() =>
@@ -112,7 +126,8 @@ enum _NetState {
   offline,
 }
 
-class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
+class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
+    with WidgetsBindingObserver {
   /// 顺序即展示/申请顺序：通知 → 定位 → 相机 → 麦克风 → 相册
   static const List<_PermRow> _rows = [
     _PermRow(Permission.notification, Icons.notifications_active_outlined,
@@ -154,24 +169,28 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
   /// 探测只跑一次，重复调用复用同一个 Future（避免连点弹出多次请求）
   Future<void>? _probeFuture;
 
-  /// 引导页里一次网络探测最多等多久。
+  /// 引导页里每一次网络探测最多等多久。
   ///
-  /// ★ 这个值本身就是 v2.1.66 修的那个 bug：这一次连接就是 iOS 弹出
-  /// 「是否允许使用无线数据」的钩子，弹窗不点，`connect()` 就一直挂着。
-  /// NetDiag 默认 6 秒 —— 用户还没看清弹窗，这边已经超时判成「未连通」，
-  /// 之后也不会自己恢复，于是「权限还没弹就显示网络不通」。
-  static const Duration _probeTimeout = Duration(seconds: 15);
-
-  /// 第一次没通、且失败原因是「等回应超时」时，隔这么久补探一次
-  static const Duration _probeRetryGap = Duration(milliseconds: 900);
+  /// ★ v2.1.66 曾把这里从 6 秒加到 15 秒，以为「等久一点用户就点得到」——
+  /// 实测不成立：iOS 的「是否允许使用无线数据」弹窗挂着时，`Socket.connect`
+  /// **不会挂住**，而是立刻抛 `Network is unreachable`。所以真正要改的不是
+  /// 单次超时，而是「失败之后继续重试，直到拿到结果」。
+  static const Duration _probeAttemptTimeout = Duration(seconds: 6);
 
   /// 按钮上「正在开启第几项」的文案（null 用 [_idleRunningLabel]）
   static const String _idleRunningLabel = '正在开启…';
   String _runningLabel = _idleRunningLabel;
 
+  /// 本轮网络步骤已经重试了几次（只用于把说法从「请点允许」切到「还在等」）
+  int _netAttempts = 0;
+
+  /// 用来「立刻打断两次重试之间的等待」：用户从系统设置切回来时不必再等一秒
+  Completer<void>? _pollKick;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // ★ 这里**故意不自动探测网络**。
     //
     // v2.1.63 是在 initState 里就 `_ensureProbed()`，结果是页面一打开，
@@ -187,11 +206,39 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
     _refresh();
   }
 
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    if (!(_pollKick?.isCompleted ?? true)) _pollKick!.complete();
+    _pollKick = null;
+    super.dispose();
+  }
+
+  /// 从系统设置 / 系统弹窗切回来时立刻补探一次，不用再干等下一拍。
+  ///
+  /// 典型路径：网络项红了 → 点「去打开设置」→ 在设置里把「无线数据」打开 →
+  /// 切回 App。没有这一下，要等满 1 秒的轮询间隔才动；有了它，回来即刷新。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    if (!mounted) return;
+    final c = _pollKick;
+    if (c != null && !c.isCompleted) {
+      c.complete();
+      return;
+    }
+    if (_running) return;
+    if (_net == _NetState.offline) {
+      // 只是回来看一眼：不去抢「一键开启」的队列，只安静地重探一次
+      _reprobe();
+    }
+  }
+
   /// 网络探测（结果缓存在 [_net] / [_netResult]）
   ///
   /// [timeout] 为空时用 NetDiag 的默认 6 秒（静默自检、权限已全开的升级用户）；
-  /// 用户主动点「允许 / 一键开启」时传 [_probeTimeout]，给系统弹窗留出被点的时间。
-  /// [holdOnTimeout] 见 [_probeWithRetry]：超时先不下结论，免得红一下又变绿。
+  /// 用户主动点「允许 / 一键开启」时传 [_probeAttemptTimeout]。
+  /// [holdOnTimeout]：超时先不下结论，交给 [_waitNetReady] 决定要不要重试。
   Future<void> _ensureProbed({Duration? timeout, bool holdOnTimeout = false}) =>
       _probeFuture ??= _doProbe(timeout, holdOnTimeout: holdOnTimeout);
 
@@ -227,7 +274,7 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
       // 让用户去折腾 WiFi 只会白费功夫，必须分开说。
       if (!r.tcpOk) {
         // 超时大概率是「系统弹窗还挂着，用户正在看」：先留在「请求中」，
-        // 等 [_probeWithRetry] 补探一次再下结论。直接挂红脸会出现
+        // 等 [_waitNetReady] 重试一轮再下结论。直接挂红脸会出现
         // 「红 1 秒 → 绿」的闪动，用户还以为刚才那次失败是要自己处理的。
         _net = holdOnTimeout && _isTimeoutError(r.tcpError)
             ? _NetState.checking
@@ -241,40 +288,88 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
     _maybeAutoExit();
   }
 
-  /// 重新探测（用户点「重新检测」时用，强制重跑）
+  /// 重新探测（用户点「重新检测」/ 整行时用，强制重跑）
   Future<void> _reprobe() async {
-    _probeFuture = null;
-    await _probeWithRetry(timeout: _probeTimeout);
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _runningLabel = '正在检测网络…';
+    });
+    await _waitNetReady();
+    if (!mounted) return;
+    setState(() {
+      _running = false;
+      _runningLabel = _idleRunningLabel;
+    });
   }
 
-  /// 这次失败是不是「系统弹窗还挂在那儿等着用户点」——
-  /// 只有这种失败补探一次才有意义。
+  /// 这次失败是不是「等回应等超时」——只用于弹窗说法的措辞。
   bool get _netMaybeWaiting => _isTimeoutError(_netResult?.tcpError ?? '');
 
-  /// 探测 + 必要的一次补探。
+  /// 等到网络真的通，或者等够预算为止。**返回这一次到底通没通。**
   ///
-  /// 为什么必须补：[_probeTimeout] 到了还没回包，最常见的两种情形是
-  ///   ① iOS 的「允许使用无线数据」弹窗刚弹出来，用户还在看；
-  ///   ② 用户刚从系统设置里把开关打开、切回 App，链路还没重建。
-  /// 两种情形下第一次都会超时，而第二次请求发出时授权已经生效，
-  /// 通常几百毫秒就通 —— 不补探的话，用户明明点了「允许」，
-  /// 页面上却一直红着「未连通」，只能再手点一次「重新检测」。
+  /// ★ v2.1.67 的核心修复（用户原话：「点了无线数据之后应该显示已完成，
+  ///   然后进行下一项的权限开启，现在直接说网络被挡住了」）：
   ///
-  /// 反过来，「Network is unreachable / no route」这类是系统直接禁网，
-  /// 补探一百次也是同一个结果，立刻收手，把引导切到「去设置」。
-  Future<void> _probeWithRetry({Duration? timeout}) async {
-    await _ensureProbed(timeout: timeout, holdOnTimeout: true);
-    if (!mounted) return;
-    // 通了 / 服务异常：没有可重试的
-    if (_net == _NetState.ok || _net == _NetState.serverIssue) return;
-    // checking = 超时被 hold 住（等弹窗）；offline = 直接失败（系统禁网等）。
-    // 后者重试一百次也是同一个结果，立刻收手，把引导切到「去设置」。
-    if (_net != _NetState.checking && !_netMaybeWaiting) return;
-    await Future<void>.delayed(_probeRetryGap);
-    if (!mounted) return;
-    // 补探时弹窗已经处理完，不需要再等 15 秒
-    _probeFuture = null;
-    await _ensureProbed(timeout: const Duration(seconds: 8));
+  ///   iOS 的「允许使用无线数据」弹窗**挂着**的时候，`Socket.connect` 不会
+  ///   一直等 —— 它立刻抛 `Network is unreachable`。所以：
+  ///     · 把单次超时从 6 秒加到 15 秒（v2.1.66 的做法）**根本没用**，
+  ///       因为失败不是超时，是秒失败；
+  ///     · 「失败就补探一次」也不够，用户从看到弹窗到点下去常常超过两次重试；
+  ///
+  ///   现在的做法：失败**不下结论**，停在「请求中」按 [_netPollGap] 反复重试，
+  ///   直到通了（→ 这一项打勾「已完成」，队列自动走下一项）或者用光
+  ///   [debugNetWait] 的预算（→ 才如实标红并给修复路径）。
+  ///   这条路径对「去设置里打开开关再切回来」同样成立（resumed 会立刻打断等待）。
+  Future<bool> _waitNetReady() async {
+    final sw = Stopwatch()..start();
+    _netAttempts = 0;
+    // 预算换算成「最多重试几轮」。两个上限同时生效：
+    //   · 轮数 —— 保证界面不会无限转（也保证 widget 测试能停在确定的一拍上）；
+    //   · 墙钟 —— 防止每次都卡满单次超时（6 秒）时把 40 秒拖成好几分钟。
+    final gapMs = widget.debugNetPollGap.inMilliseconds;
+    final waitMs = widget.debugNetWait.inMilliseconds;
+    final maxAttempts =
+        gapMs <= 0 ? 1 : ((waitMs / gapMs).ceil()).clamp(1, 1000);
+    while (mounted) {
+      _netAttempts++;
+      _probeFuture = null;
+      await _ensureProbed(
+        timeout: _probeAttemptTimeout,
+        holdOnTimeout: true,
+      );
+      if (!mounted) return false;
+      // 通了（端口通就算通，接口 500 是服务端的事，不该拦用户）→ 收工
+      if (_net == _NetState.ok || _net == _NetState.serverIssue) return true;
+      // 还没通：**先别落红**。系统弹窗很可能还挂在屏幕上等着被点，
+      // 这时候把「未连通」挂出来，用户一点「允许」就会看到一张红脸 —— 那正是
+      // 他报的那个 bug。停在「请求中」，等下一拍再说。
+      setState(() => _net = _NetState.checking);
+      if (sw.elapsed >= widget.debugNetWait || _netAttempts >= maxAttempts) {
+        break;
+      }
+      await _pollGap(widget.debugNetPollGap);
+      if (!mounted) return false;
+    }
+    if (!mounted) return false;
+    // 预算用光了还是不通：这才落定「未连通」。
+    setState(() => _net = _NetState.offline);
+    return false;
+  }
+
+  /// 两次重试之间的等待，可被 [_kickPoll] 提前打断（切回前台 / 页面销毁）。
+  Future<void> _pollGap(Duration gap) async {
+    final c = Completer<void>();
+    _pollKick = c;
+    final timer = Timer(gap, () {
+      if (!c.isCompleted) c.complete();
+    });
+    try {
+      await c.future;
+    } finally {
+      timer.cancel();
+      if (identical(_pollKick, c)) _pollKick = null;
+    }
   }
 
   Future<void> _refresh() async {
@@ -351,26 +446,25 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
     // ── 第 1 项：网络 ──
     // 已经确认连通就不重复探（省一次往返，也不重复打扰系统弹窗）；
     // 之前失败或从没探过则重探 —— 用户可能刚去系统设置里开了无线数据。
+    setState(() =>
+        _runningLabel = '正在开启 1/${_rows.length + 1}：网络');
+    var netOk = true;
     if (_net != _NetState.ok) {
-      _probeFuture = null;
-      setState(() =>
-          _runningLabel = '正在开启 1/${_rows.length + 1}：网络');
-      await _probeWithRetry(timeout: _probeTimeout);
+      netOk = await _waitNetReady();
       if (!mounted) return;
-      // 留一点时间把结果画出来，再走下一步。
-      await Future.delayed(const Duration(milliseconds: 320));
+    }
+    if (netOk) {
+      // ★ 用户要的正是这一拍：「点完系统弹窗 → 这一项显示已完成 → 再问下一项」。
+      //   所以在这里把「已完成」明明白白停一下，而不是通了之后立刻跳去弹通知框。
+      setState(() => _runningLabel = '网络已完成 · 1/${_rows.length + 1}');
+      await Future.delayed(const Duration(milliseconds: 560));
       if (!mounted) return;
-      if (_net == _NetState.offline) {
-        // ★ 用户原话：「通知会弹系统框，网络不弹就跳过了」。
-        //
-        //   iOS 的「无线数据」没有 API 可申请，也不在权限清单里 —— 一个 App
-        //   只由系统问一次；系统已经记成「不允许」之后，App 里点多少次「允许」
-        //   都不会再弹。系统弹不出来，就用 App 自己的框把这一步显性化：
-        //   至少用户知道「第 1 项网络没过，要不要现在去打开」，而不是看着
-        //   它一秒变红、然后界面自顾自开始弹通知框。
-        await _promptNetBlocked();
-        if (!mounted) return;
-      }
+    } else {
+      // 等够了预算还是不通。**不在这里弹框打断队列**：这多半是用户此刻正盯着
+      // 系统弹窗（或者压根没弹出来），弹一个「网络被挡住了」只会让他更迷惑。
+      // 先把剩下五项照常问完，队列末尾再统一处理网络。
+      await Future.delayed(const Duration(milliseconds: 360));
+      if (!mounted) return;
     }
 
     // ── 第 2~6 项：系统权限，严格串行 ──
@@ -445,14 +539,10 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
     if (!mounted) return;
 
     if (denied.isEmpty) {
-      // 只剩「权限都开了但网络确实连不上」这一种
-      CenterToast.show(
-        context,
-        _netMaybeWaiting
-            ? '权限都开好了，但手机连不上服务器，点第一项查看怎么修'
-            : '权限都开好了，但系统挡住了本 App 联网，点第一项去打开',
-        icon: Icons.wifi_off,
-      );
+      // 只剩「权限都开了但网络确实连不上」这一种。
+      // 到这一步五项系统弹窗都问完了，用户交互过五六次，系统那个「无线数据」
+      // 弹窗早就收起 —— 此时再说「被挡住了」不会冤枉人，也给得出下一步。
+      await _promptNetBlocked();
     } else {
       CenterToast.show(
         context,
@@ -794,11 +884,19 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
       // ★ 用户主动点「一键开启 / 允许」时，这一下就是 iOS 弹「是否允许使用
       //   无线数据」的时刻。必须在这里把话说出来 —— 否则弹窗被点掉了，
       //   用户也不知道刚才那是网络授权，只会看到下面紧接着弹通知框。
-      sub = _running
-          ? '正在联网请求授权：弹出「允许使用无线数据」请点允许'
-          : '正在检测能否连上服务器…';
+      if (!_running) {
+        sub = '正在检测能否连上服务器…';
+      } else if (_netAttempts <= 2) {
+        sub = '正在联网请求授权：弹出「允许使用无线数据」请点允许';
+      } else {
+        // 还没点上（或弹窗压根没弹）：说明还在自动重试，别让用户以为卡死
+        sub = '还在等系统授权，点「允许」后会自动继续';
+      }
     } else if (ok) {
-      sub = '已连通 · ${_netResult?.tcpMs ?? 0} ms · 登录、钓点、天气都靠它';
+      // 通了以后只留事实（耗时）。原来还挂着「登录、钓点、天气都靠它」，
+      // 在 320dp 窄屏上会被折成「登 / 录…」这种断词，右侧又多了「已完成」，
+      // 反而更挤 —— 用途说明放在还没开启时的中性态里就够了。
+      sub = '已连通 · ${_netResult?.tcpMs ?? 0} ms';
     } else if (bad) {
       sub = _shortNetReason();
     } else if (warn) {
@@ -886,11 +984,25 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
                           fontWeight: FontWeight.w700,
                           color: AppTheme.primary))
                 else if (ok)
-                  // 已连通就一律打勾 —— 包括「一键开启」正进行到后面几项时。
+                  // 已连通就一律「已完成」—— 包括「一键开启」正进行到后面几项时。
                   // 原来这里带 !_running，导致网络已经通了、右侧却还写着
                   // 「去修复」（截图核对时发现的），像在报错。
-                  const Icon(Icons.check_circle,
-                      color: AppTheme.primary, size: 21)
+                  // v2.1.67 起把「完成」两个字写出来：用户对这一步的预期
+                  // 就是「点完系统弹窗，这一项变成已完成」，一个光秃秃的勾
+                  // 不够明确。
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(Icons.check_circle,
+                          color: AppTheme.primary, size: 19),
+                      SizedBox(width: 4),
+                      Text('已完成',
+                          style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.primary)),
+                    ],
+                  )
                 else if (quiet)
                   TextButton(
                     onPressed: _running ? null : _requestNetOnly,
@@ -934,8 +1046,7 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
       _running = true;
       _runningLabel = '正在请求网络权限…';
     });
-    _probeFuture = null;
-    await _probeWithRetry(timeout: _probeTimeout);
+    await _waitNetReady();
     if (!mounted) return;
     setState(() {
       _running = false;
@@ -943,13 +1054,17 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
     });
   }
 
-  /// 「一键开启」走到网络这一项、而系统确实没让联网时，给一个**看得见**的框。
+  /// 队列跑完、五项系统权限都过了，只剩网络没通时给的框。
   ///
   /// 为什么不用系统框：iOS 的「允许使用无线数据」由系统在 App 第一次联网时
   /// 自己决定要不要问，一个 App **只问一次**；问过并被记成「不允许」之后，
   /// App 没有任何 API 能让它再弹一次。安卓的联网权限是安装即授予、没有弹窗。
-  /// 所以这一步只能用 App 自己的框，把「第 1 项没过」摆在用户眼前，
-  /// 而不是让它一秒变红、界面自顾自往下弹通知框。
+  /// 系统弹不出来，就用 App 自己的框把这一步说清楚。
+  ///
+  /// ★ v2.1.67：这个框**只在队列末尾**出现。原来它挂在「网络那一步失败」
+  ///   的位置，于是用户刚点完系统弹窗的「允许」，就被这个框告知「被系统挡住了」
+  ///   —— 冤枉人。现在网络那一步失败只会安静地转到下一项，等到全部问完再来
+  ///   说这件事，那时系统弹窗早已收起，判断才可信。
   Future<void> _promptNetBlocked() async {
     final bool waiting = _netMaybeWaiting;
     await showDialog<void>(
@@ -986,25 +1101,27 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen> {
         ),
         content: Text(
           waiting
-              ? '第 1 项「网络」没通过：请求一直没等到回应。可以现在重试一次，'
-                  '也可以先继续开启剩下的权限。'
-              : '第 1 项「网络」没通过：手机的「无线数据 / 流量」开关把「渔报」'
-                  '关掉了。系统不会再自己弹窗，需要去设置里打开 —— '
-                  '也可以先继续开启剩下的权限。',
+              ? '其余 ${_rows.length} 项都开好了，只剩「网络」：请求一直没等到回应。'
+                  '可以再检测一次，或先去系统设置里看看。'
+              : '其余 ${_rows.length} 项都开好了，只剩「网络」：手机的「无线数据 / 流量」'
+                  '开关把「渔报」关掉了。系统不会再自己弹窗，需要去设置里手动打开。',
           style: const TextStyle(
               fontSize: 12.5, height: 1.65, color: AppTheme.textPrimary),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('继续开启其他权限',
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              await _reprobe();
+            },
+            child: const Text('重新检测',
                 style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
           ),
           TextButton(
             onPressed: () async {
               Navigator.of(ctx).pop();
               await _openSettings();
-              await _reprobe();
+              if (mounted) await _reprobe();
             },
             child: const Text('去打开设置',
                 style:
