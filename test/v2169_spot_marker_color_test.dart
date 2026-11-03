@@ -87,6 +87,15 @@ void main() {
       expect(SpotMarkerRole.values.map(SpotMarkerStyle.iconIdOfRole).toSet(),
           {'spot-pin-wild', 'spot-pin-paid', 'spot-pin-shop'});
     });
+
+    test('图形：只有渔具店是小房子，野钓/收费保持原小鱼', () {
+      expect(SpotMarkerStyle.glyphOf(spot(kind: 'shop', type: '渔具店')),
+          SpotPinGlyph.house);
+      expect(SpotMarkerStyle.glyphOf(spot()), SpotPinGlyph.fish);
+      expect(SpotMarkerStyle.glyphOf(spot(kind: 'venue', type: '黑坑')),
+          SpotPinGlyph.fish);
+      expect(SpotMarkerStyle.glyphOf(spot(fee: '50 元/天')), SpotPinGlyph.fish);
+    });
   });
 
   group('标记绘制', () {
@@ -100,6 +109,8 @@ void main() {
           .whereType<SpotPinPainter>()
           .first;
       expect(paint.color, SpotMarkerStyle.wildColor);
+      expect(paint.glyph, SpotPinGlyph.fish,
+          reason: '野钓点必须是原来的小鱼，不能跟着渔具店改成房子');
       expect(const SpotPinPainter().color, AppTheme.danger,
           reason: '默认色保持旧行为，避免别处调用变黑');
       expect(
@@ -112,13 +123,22 @@ void main() {
             .shouldRepaint(const SpotPinPainter(color: Colors.green)),
         isFalse,
       );
+      // 只换图形也必须重绘（同一颜色、不同图标）
+      expect(
+        const SpotPinPainter(color: Colors.blue)
+            .shouldRepaint(const SpotPinPainter(
+                color: Colors.blue, glyph: SpotPinGlyph.house)),
+        isTrue,
+      );
     });
   });
 
   test('源码护栏：两套内核都按分类取色', () {
     final map = File('lib/screens/spot_map_screen.dart').readAsStringSync();
-    expect(map.contains('SpotPin(color: SpotMarkerStyle.colorOf(s))'), isTrue,
+    expect(map.contains('color: SpotMarkerStyle.colorOf(s)'), isTrue,
         reason: 'flutter_map 内核的标记颜色没接上分类');
+    expect(map.contains('glyph: SpotMarkerStyle.glyphOf(s)'), isTrue,
+        reason: 'flutter_map 内核的标记图形没接上分类');
 
     final gl = File('lib/screens/spot_map_gl.dart').readAsStringSync();
     expect(gl.contains("'match'"), isTrue,
@@ -129,5 +149,11 @@ void main() {
         reason: '原生内核必须把三类针图都注册进 addImage');
     expect(gl.contains("'role': SpotMarkerStyle.roleOf(s).name"), isTrue,
         reason: '要素里必须带 role，否则表达式取不到值');
+    // 表达式里引用的图片名必须和 style 里登记的完全一致，否则「图注册了但没人用」
+    for (final id in SpotMarkerRole.values.map(SpotMarkerStyle.iconIdOfRole)) {
+      expect(gl.contains("'$id'"), isTrue, reason: '原生内核缺这张针图：$id');
+    }
+    expect(gl.contains('glyphOfRole(role)'), isTrue,
+        reason: '原生内核的三张图必须按 role 取图形（渔具店才是房子）');
   });
 }
