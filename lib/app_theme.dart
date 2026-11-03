@@ -67,6 +67,12 @@ class AppTheme {
   /// 警示 / 审核中 / 低温（降一档的橙）
   static const Color warning = Color(0xFFE8973A);
   static const Color warningLight = Color(0xFFFBF1E3);
+  /// 地图钓点标记三色（v2.1.69）—— 这三色只用于地图上的标记，
+  /// 不参与 UI 配色：用户要靠颜色一眼分出「免费野钓河」和「200/4h 的坑」。
+  ///   野钓点 绿 / 黑坑·鱼塘·收费 红 / 渔具店 蓝
+  static const Color spotWild = Color(0xFF22A45D);
+  static const Color spotPaid = Color(0xFFE03131);
+  static const Color spotShop = Color(0xFF2A72D4);
   /// 以下三档原为紫/靛/深橙的「分类装饰色」。
   /// 设计稿只有黑、白、冷灰 + 一个荧光黄绿，所以这里全部退成冷灰阶，
   /// 靠图标 + 文字区分，不再靠色相 —— 一屏四五个高饱和色是「不协调」的根源。
