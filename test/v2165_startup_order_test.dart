@@ -108,9 +108,9 @@ void main() {
       await settle(t);
 
       await t.tap(find.text('一键开启全部权限'));
-      // 队列：网络探测 → 等待 320ms → 五项都已是授予态直接跳过
+      // 队列：网络探测 → 停 560ms 让「网络已完成」被看见 → 五项已是授予态直接跳过
       await t.pump();
-      await t.pump(const Duration(milliseconds: 400));
+      await t.pump(const Duration(milliseconds: 700));
       await t.pump(const Duration(milliseconds: 50));
 
       expect(find.text('设置完成'), findsOneWidget,
@@ -135,7 +135,7 @@ void main() {
       await settle(t);
       await t.tap(find.text('一键开启全部权限'));
       await t.pump();
-      await t.pump(const Duration(milliseconds: 400));
+      await t.pump(const Duration(milliseconds: 700));
       await t.pump(const Duration(milliseconds: 50));
 
       expect(find.textContaining('6 项权限已全部开启'), findsOneWidget);
@@ -152,6 +152,8 @@ void main() {
           onDone: () {},
           debugGrantPerms: true,
           debugSkipAutoExit: true,
+          debugNetWait: const Duration(milliseconds: 300),
+          debugNetPollGap: const Duration(milliseconds: 20),
           probeNet: () async =>
               NetDiagResult(
                 tcpOk: false,
@@ -169,11 +171,12 @@ void main() {
       await t.pump(const Duration(milliseconds: 500));
 
       expect(find.text('设置完成'), findsNothing);
-      // v2.1.66：超时类失败会先停在「请求中」补探一次（900ms），
-      // 补探仍不通才转红 —— 否则会出现「红一下又变绿」的闪动。
-      await t.pump(const Duration(milliseconds: 1600));
+      // v2.1.67：失败先停「请求中」按预算重试，预算用光才转红
+      await t.pump(const Duration(milliseconds: 1200));
+      await t.pump(const Duration(milliseconds: 400));
       expect(find.text('未连通'), findsOneWidget);
       await t.pump(const Duration(seconds: 2));
+      await t.pump(const Duration(seconds: 1));
     });
 
     test('收尾顺序护栏：必须先立 _allSet 再 refresh', () {
