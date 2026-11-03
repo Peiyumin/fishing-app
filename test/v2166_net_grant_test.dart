@@ -146,11 +146,12 @@ void main() {
       expect(find.text('未连通'), findsOneWidget);
       // ★ 不能再说「手机没有可用网络」—— 手机明明上着网，是 App 被禁
       expect(find.textContaining('手机没有可用网络'), findsNothing);
-      // 路径按平台分叉（iOS「无线数据」/ 安卓「流量」），都指向 app 的设置页
-      expect(find.textContaining('→ 渔报'), findsOneWidget);
+      // 路径按平台分叉（iOS「无线数据」/ 安卓「流量」），都指向 app 的设置页。
+      // v2.1.68 起会同时出现在两处：行内副标题 + App 的授权框，所以是 findsWidgets。
+      expect(find.textContaining('→ 渔报'), findsWidgets);
     });
 
-    testWidgets('网络始终不通 → 五项权限问完之后才提示（不打断队列）', (t) async {
+    testWidgets('系统没弹授权框 → 立刻用 App 的框补上（不能一直「请求中」）', (t) async {
       await t.pumpWidget(MaterialApp(
         home: PermissionOnboardScreen(
           onDone: () {},
@@ -167,20 +168,25 @@ void main() {
       await t.pump();
       await t.pump(const Duration(milliseconds: 200));
 
-      // ★ v2.1.67：网络那一步失败时**不许**弹这个框。用户可能正盯着系统
-      //   「允许使用无线数据」弹窗，这时候甩一句「被系统挡住了」就是冤枉人。
-      expect(find.text('网络被系统挡住了'), findsNothing,
-          reason: '网络失败不能抢在系统弹窗前面下结论');
+      // ★ v2.1.67 的老框不许再出现：它说的是「其余 5 项都开好了」，
+      //   而这一步是队列第一步，五项根本还没问过。
+      expect(find.text('网络被系统挡住了'), findsNothing);
 
-      await t.pump(const Duration(seconds: 2));
-      await t.pump(const Duration(milliseconds: 300));
-      expect(find.text('网络被系统挡住了'), findsOneWidget);
+      // 预算跑完、系统一次都没弹 → App 的授权框必须顶上来
+      await t.pump(const Duration(milliseconds: 400));
+      await t.pump(const Duration(milliseconds: 60));
+      expect(find.text('无线数据还没有授权'), findsOneWidget,
+          reason: '系统不弹框时，App 必须有一个授权界面，不能让用户干等');
       expect(find.text('去打开设置'), findsOneWidget);
-      expect(find.text('重新检测'), findsOneWidget);
+      expect(find.text('继续开启其他权限'), findsOneWidget);
+      // 唯一能解决问题的路径必须写死在框里
+      expect(find.textContaining('渔报 →'), findsOneWidget);
 
-      await t.tap(find.text('重新检测'));
+      // 选择「先继续」→ 框收起，队列照常往下走，不卡在这一步
+      await t.tap(find.text('继续开启其他权限'));
       await t.pump();
       await t.pump(const Duration(seconds: 1));
+      expect(find.text('无线数据还没有授权'), findsNothing);
     });
 
     testWidgets('点「去修复」→ 标题直指系统挡网，并给「去系统设置」', (t) async {
@@ -197,6 +203,11 @@ void main() {
       await t.tap(find.text('允许').first);
       await settle(t);
       await t.pump(const Duration(seconds: 2));
+      await settle(t);
+      // v2.1.68：单点「允许」失败后同样会先给 App 的授权框，先关掉它
+      await t.tap(find.text('继续开启其他权限'));
+      await settle(t);
+      await t.pump(const Duration(milliseconds: 400));
       await settle(t);
 
       await t.tap(find.text('去修复'));
