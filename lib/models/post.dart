@@ -41,6 +41,10 @@ class Post {
   /// 老后端不下发这个字段时按 false 处理，不影响任何旧逻辑。
   final bool authorOfficial;
 
+  /// 这条是官方公告（v40）：notice=1 的帖子。前端在标题前加红色「公告」标，
+  /// 并且不再按普通渔获去展示鱼种 / 尺寸这类模块。
+  final bool isNotice;
+
   /// 渔获页「钓到了什么」：[{'name':'鲫鱼','count':2}]（其他类别为空）
   final List<Map<String, dynamic>> fish;
 
@@ -105,6 +109,7 @@ class Post {
     this.isMe = false,
     this.authorVip = 0,
     this.authorOfficial = false,
+    this.isNotice = false,
     this.fish = const [],
     this.locPublic = true,
     this.lengthCm,
@@ -166,6 +171,7 @@ class Post {
       isMe: truthy(json['is_me']),
       authorVip: jsonInt(json['user_vip']) ?? 0,
       authorOfficial: truthy(json['user_official']),
+      isNotice: (jsonInt(json['notice']) ?? 0) != 0,
       fish: parseFish(json['fish']),
       locPublic: json['loc_public'] == null
           ? true
@@ -333,6 +339,7 @@ class Post {
     bool? isMe,
     int? authorVip,
     bool? authorOfficial,
+    bool? isNotice,
     List<Map<String, dynamic>>? fish,
     bool? locPublic,
     double? lengthCm,
@@ -369,6 +376,7 @@ class Post {
       isMe: isMe ?? this.isMe,
       authorVip: authorVip ?? this.authorVip,
       authorOfficial: authorOfficial ?? this.authorOfficial,
+      isNotice: isNotice ?? this.isNotice,
       fish: fish ?? this.fish,
       locPublic: locPublic ?? this.locPublic,
       lengthCm: lengthCm ?? this.lengthCm,
