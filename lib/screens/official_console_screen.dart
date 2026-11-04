@@ -9,14 +9,17 @@ import '../widgets/center_toast.dart';
 import '../widgets/official_badge.dart';
 import 'notice_editor_screen.dart';
 import 'official_posts_screen.dart';
+import 'official_spots_screen.dart';
 import 'official_users_screen.dart';
 
-/// 官方工作台（v40）
+/// 官方工作台（v40 起，v41 加了钓点管理）
 ///
-/// 只有被后台设为「官方」的账号能从「我的」页进来。进来之后三件事都在这里：
-///   ① 发公告 —— 写完自动置顶，信息流第一条就是它；
+/// 只有被后台设为「官方」的账号能从「我的」页进来。进来之后四件事都在这里：
+///   ① 发公告 —— 进「消息 → 系统通知」，不再占信息流，可配 9 张图；
 ///   ② 管帖子 —— 删除 / 恢复 / 置顶别人的动态；
-///   ③ 封账号 —— 1 天 / 7 天 / 30 天 / 永久，必须写原因。
+///   ③ 管钓点 —— 全站钓点都能改：名称、类型、简介、地址、鱼种、标签、电话、
+///              经纬度（地图重选）、封面与图集、上架/下架；
+///   ④ 封账号 —— 1 天 / 7 天 / 30 天 / 永久，必须写原因。
 ///
 /// 权限全部由后端判定，这里只负责「把不能做的按钮画灰」——
 /// 就算有人改了包，接口那一层也会拒。
@@ -145,6 +148,8 @@ class _OfficialConsoleScreenState extends State<OfficialConsoleScreen> {
                   _publishCard(),
                   const SizedBox(height: 10),
                   _entryRow(),
+                  const SizedBox(height: 10),
+                  _spotEntry(),
                   const SizedBox(height: 10),
                   _noticeSection(),
                   const SizedBox(height: 10),
@@ -275,12 +280,63 @@ class _OfficialConsoleScreenState extends State<OfficialConsoleScreen> {
                           fontWeight: FontWeight.w700,
                           color: Colors.white)),
                   SizedBox(height: 2),
-                  Text('写完自动置顶，所有用户打开 App 第一条就是它',
+                  Text('发到「消息-系统通知」，不进钓友动态；可配 9 张图',
                       style: TextStyle(fontSize: 11, color: Colors.white70)),
                 ],
               ),
             ),
             const Icon(Icons.chevron_right, size: 18, color: Colors.white54),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 钓点管理入口（v41）
+  ///
+  /// 单独一整行而不是挤进上面那两格：批量导入的钓点量最大（线上 155 条），
+  /// 官方最常要改的就是它 —— 名字打错、定位偏了、一张图都没有。
+  Widget _spotEntry() {
+    return InkWell(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const OfficialSpotsScreen()),
+      ),
+      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+        decoration: BoxDecoration(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          boxShadow: AppTheme.lightShadow,
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: AppTheme.primaryLight,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.place_outlined,
+                  size: 19, color: AppTheme.primary),
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('钓点管理',
+                      style: TextStyle(
+                          fontSize: 13.5, fontWeight: FontWeight.w700)),
+                  SizedBox(height: 2),
+                  Text('改名称 · 加图片 · 重新定位 · 上架下架',
+                      style: TextStyle(
+                          fontSize: 10.5, color: AppTheme.textSecondary)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, size: 17, color: AppTheme.textTertiary),
           ],
         ),
       ),
@@ -432,8 +488,26 @@ class _OfficialConsoleScreenState extends State<OfficialConsoleScreen> {
             ],
           ),
           const SizedBox(height: 2),
-          Text('${n.authorName} · ${officialTimeOf(n.createdAt)}',
-              style: const TextStyle(fontSize: 10.5, color: AppTheme.textTertiary)),
+          Row(
+            children: [
+              Flexible(
+                child: Text('${n.authorName} · ${officialTimeOf(n.createdAt)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 10.5, color: AppTheme.textTertiary)),
+              ),
+              if (n.images.isNotEmpty) ...[
+                const SizedBox(width: 6),
+                const Icon(Icons.image_outlined,
+                    size: 11, color: AppTheme.textTertiary),
+                const SizedBox(width: 2),
+                Text('${n.images.length}',
+                    style: const TextStyle(
+                        fontSize: 10.5, color: AppTheme.textTertiary)),
+              ],
+            ],
+          ),
         ],
       ),
     );
