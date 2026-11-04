@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../app_theme.dart';
 import '../models/post.dart';
 import '../services/api_config.dart';
+import 'official_badge.dart';
 import 'user_avatar.dart';
 
 /// 双列瀑布流里的一张「渔获卡」
@@ -165,6 +166,7 @@ class WaterfallPostCard extends StatelessWidget {
           userId: post.userId,
           radius: 9,
           vipLevel: post.authorVip,
+          official: post.authorOfficial,
         ),
         const SizedBox(width: 4),
         Flexible(
@@ -178,6 +180,12 @@ class WaterfallPostCard extends StatelessWidget {
                 color: AppTheme.textSecondary),
           ),
         ),
+        // 官方账号：窄卡片只挂一个金色对勾，不给「官方」二字留位置
+        if (post.authorOfficial)
+          const Padding(
+            padding: EdgeInsets.only(left: 3),
+            child: OfficialBadge(height: 11, iconOnly: true),
+          ),
         const SizedBox(width: 3),
         // LV 角标：参考图是纯黑小胶囊 + 白字
         Container(
