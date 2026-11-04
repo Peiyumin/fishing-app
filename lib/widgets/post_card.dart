@@ -502,6 +502,13 @@ class _PostCardState extends State<PostCard> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // 公告标在最前：红色「公告」比分类更需要注意
+                  if (_post.isNotice) ...[
+                    const Padding(
+                      padding: EdgeInsets.only(top: 2, right: 6),
+                      child: NoticeTag(height: 17),
+                    ),
+                  ],
                   if (_post.category != 'post') ...[
                     Container(
                       margin: const EdgeInsets.only(top: 2, right: 6),
