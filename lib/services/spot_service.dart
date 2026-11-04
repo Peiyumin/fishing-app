@@ -75,12 +75,11 @@ class SpotService {
           keyword.isEmpty ? null : {'keyword': keyword}));
       return data.map((row) => _fromApi(row as Map)).toList();
     } catch (_) {
-      // 后端不可达：回落演示数据
-      var all = [..._userSpots, ...demoSpots];
-      if (keyword.isNotEmpty) {
-        all = all.where((s) => s.name.contains(keyword)).toList();
-      }
-      return all
+      // 后端不可达：列表页回落到演示数据（让用户还能看到界面）；
+      // 但**带关键词的搜索**必须返回空 —— 否则用户搜「许昌」会看到
+      // 千岛湖、青山湖这些演示钓点，误以为库里就这些数据。
+      if (keyword.isNotEmpty) return const <FishingSpot>[];
+      return [..._userSpots, ...demoSpots]
           .map((s) => s.copyWith(reportCount: _reportCounts[s.id] ?? 0))
           .toList();
     }
