@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
+import 'official_badge.dart';
 import '../models/badge.dart';
 import '../models/post.dart';
 import '../services/api_config.dart';
@@ -460,6 +461,7 @@ class _PostCardState extends State<PostCard> {
                       url: _post.avatarUrl,
                       userId: _post.userId,
                       radius: 16,
+                      official: _post.authorOfficial,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -478,6 +480,11 @@ class _PostCardState extends State<PostCard> {
                                   const TextStyle(fontWeight: FontWeight.w600),
                             ),
                           ),
+                          if (_post.authorOfficial)
+                            const Padding(
+                              padding: EdgeInsets.only(left: 4),
+                              child: OfficialBadge(height: 14),
+                            ),
                           _authorBadges(),
                         ],
                       ),
