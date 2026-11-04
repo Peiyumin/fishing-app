@@ -63,6 +63,42 @@ class OfficialBadge extends StatelessWidget {
   }
 }
 
+/// 公告角标（v40）
+///
+/// 官方公告和普通帖子必须一眼分得开：金色留给「官方」这个身份，
+/// 公告用红色 —— 用户在信息流里扫一眼就知道「这条是平台在说话」。
+class NoticeTag extends StatelessWidget {
+  final double height;
+
+  const NoticeTag({super.key, this.height = 15});
+
+  @override
+  Widget build(BuildContext context) {
+    final h = height;
+    return Semantics(
+      label: '官方公告',
+      child: Container(
+        height: h,
+        alignment: Alignment.center,
+        padding: EdgeInsets.symmetric(horizontal: h * 0.36),
+        decoration: BoxDecoration(
+          color: AppTheme.danger,
+          borderRadius: BorderRadius.circular(h * 0.28),
+        ),
+        child: Text(
+          '公告',
+          style: TextStyle(
+            fontSize: h * 0.62,
+            height: 1.0,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 官方账号的默认头像（没上传头像时用，金色圆底 + 白色认证对勾）
 class OfficialAvatarGlyph extends StatelessWidget {
   final double size;
