@@ -127,7 +127,11 @@ class ChatSendException implements Exception {
   String toString() => msg;
 }
 
-/// 通知（系统 / 评论 / 回复 / 点赞）
+/// 通知（系统 / 评论 / 回复 / 点赞 / 官方公告）
+///
+/// v41 起多了一种 type = official：官方在 App 工作台发布的公告不再进信息流，
+/// 而是作为「系统通知」里的一类出现。它没有 refId（不指向帖子），
+/// 而是带 officialId，点开是公告详情页。
 class NoticeItem {
   final String id;
   final String type;
@@ -135,6 +139,13 @@ class NoticeItem {
   final String title;
   final String content;
   final String refId;
+
+  /// 官方公告 id（type=official 时有值）
+  final String officialId;
+  final bool pinned;
+  final int imageCount;
+  final String fromName;
+  final String fromAvatar;
   final bool isRead;
   final String createdAt;
 
@@ -145,9 +156,17 @@ class NoticeItem {
     this.title = '',
     this.content = '',
     this.refId = '',
+    this.officialId = '',
+    this.pinned = false,
+    this.imageCount = 0,
+    this.fromName = '',
+    this.fromAvatar = '',
     this.isRead = false,
     this.createdAt = '',
   });
+
+  /// 是不是官方公告
+  bool get isOfficial => type == 'official' || officialId.isNotEmpty;
 
   factory NoticeItem.fromJson(Map<String, dynamic> j) => NoticeItem(
         id: (j['id'] ?? '').toString(),
@@ -156,8 +175,30 @@ class NoticeItem {
         title: (j['title'] ?? '').toString(),
         content: (j['content'] ?? '').toString(),
         refId: (j['refId'] ?? '').toString(),
+        officialId: (j['officialId'] ?? '').toString(),
+        pinned: jsonInt(j['pinned']) == 1 || j['pinned'] == true,
+        imageCount: jsonInt(j['imageCount']) ?? 0,
+        fromName: (j['fromName'] ?? '').toString(),
+        fromAvatar: (j['fromAvatar'] ?? '').toString(),
         isRead: jsonBool(j['isRead'], fallback: false),
         createdAt: (j['createdAt'] ?? '').toString(),
+      );
+
+  /// 复制并改已读状态（列表里点过之后本地先消红点）
+  NoticeItem copyWithRead(bool read) => NoticeItem(
+        id: id,
+        type: type,
+        typeTitle: typeTitle,
+        title: title,
+        content: content,
+        refId: refId,
+        officialId: officialId,
+        pinned: pinned,
+        imageCount: imageCount,
+        fromName: fromName,
+        fromAvatar: fromAvatar,
+        isRead: read,
+        createdAt: createdAt,
       );
 }
 
