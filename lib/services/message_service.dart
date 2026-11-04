@@ -1,11 +1,23 @@
+import 'package:flutter/foundation.dart';
+
 import '../models/message.dart';
 import 'api_client.dart';
 import '../utils/json_num.dart';
 
 /// 消息中心：私信 + 通知
 class MessageService {
+  /// 仅测试用：注入固定通知列表，绕开网络（widget 回归 / 截图）
+  @visibleForTesting
+  static List<NoticeItem>? testNotices;
+
+  /// 仅测试用：注入未读汇总
+  @visibleForTesting
+  static MsgSummary? testSummary;
+
   /// 未读汇总
   static Future<MsgSummary> summary() async {
+    final injected = testSummary;
+    if (injected != null) return injected;
     final data = jsonMap(await ApiClient.get('/messages/summary'));
     return MsgSummary.fromJson(data.cast<String, dynamic>());
   }
@@ -40,6 +52,8 @@ class MessageService {
 
   /// 通知列表（type 空 = 全部）
   static Future<List<NoticeItem>> notices({String type = '', int page = 1}) async {
+    final injected = testNotices;
+    if (injected != null) return injected;
     final data = jsonList(await ApiClient.get('/messages/notices', {
       'page': '$page',
       if (type.isNotEmpty) 'type': type,
@@ -50,8 +64,14 @@ class MessageService {
   }
 
   /// 标记已读（id 空 = 全部已读）
-  static Future<void> markRead({String id = ''}) async {
-    await ApiClient.post('/messages/notices/read', {'id': id});
+  ///
+  /// [type] 传 'official' 表示这条是官方公告 —— 它的已读状态存在另一张表里，
+  /// 后端据此分流；不传就是普通通知。
+  static Future<void> markRead({String id = '', String type = ''}) async {
+    await ApiClient.post('/messages/notices/read', {
+      'id': id,
+      if (type.isNotEmpty) 'type': type,
+    });
   }
 
   /// 会话列表
