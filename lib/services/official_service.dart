@@ -39,19 +39,34 @@ class OfficialService {
   }
 
   /// 发公告（[id] 为空 = 新建；有值 = 改自己发过的那条）
+  ///
+  /// [images] 传**最终可用的地址**（远程 URL）：编辑器在提交前已经把本机
+  /// 选中的图片上传成 URL 了，这里不再碰文件 —— 发布页/公告页两条链路的上传
+  /// 逻辑各管各的，服务层只负责发 JSON。
   static Future<String> saveNotice({
     String id = '',
     required String title,
     required String content,
+    List<String> images = const [],
     bool pinned = true,
   }) async {
     final data = jsonMap(await ApiClient.post('/official/notice', {
       'id': id,
       'title': title,
       'content': content,
+      'images': images,
       'pinned': pinned,
     }));
     return (data['id'] ?? '').toString();
+  }
+
+  /// 公告详情（普通用户视角，从「消息 → 系统通知」点进来）
+  ///
+  /// 走的是 /messages/official-notice 而不是 /official/notice：
+  /// 后者是工作台接口，只有官方能调，普通用户点公告会被 403。
+  static Future<OfficialNotice> noticeDetail(String id) async {
+    final data = jsonMap(await ApiClient.get('/messages/official-notice', {'id': id}));
+    return OfficialNotice.fromJson(data);
   }
 
   /// 撤回自己的公告
@@ -104,5 +119,43 @@ class OfficialService {
     if (injected != null) return injected;
     final raw = await ApiClient.get('/official/logs');
     return jsonList(raw).map((e) => OfficialLog.fromJson(jsonMap(e))).toList();
+  }
+
+  // ══════════════ 钓点管理（v41）══════════════
+
+  @visibleForTesting
+  static List<OfficialSpot>? testSpots;
+  @visibleForTesting
+  static OfficialSpotDraft? testSpotDraft;
+
+  /// 钓点列表：[show] = normal（已上架）/ pending（待审核）/ hidden（已下架）
+  static Future<List<OfficialSpot>> spots({
+    String keyword = '',
+    String kind = '',
+    String show = 'normal',
+    int page = 1,
+  }) async {
+    final injected = testSpots;
+    if (injected != null) return injected;
+    final raw = await ApiClient.get('/official/spots', {
+      'kw': keyword,
+      'kind': kind,
+      'show': show,
+      'page': '$page',
+    });
+    return jsonList(raw).map((e) => OfficialSpot.fromJson(jsonMap(e))).toList();
+  }
+
+  /// 单个钓点全字段（含未上架的 —— 待审核的也得能改）
+  static Future<OfficialSpotDraft> spot(String id) async {
+    final injected = testSpotDraft;
+    if (injected != null) return injected;
+    final data = await ApiClient.get('/official/spot', {'id': id});
+    return OfficialSpotDraft.fromJson(jsonMap(data));
+  }
+
+  /// 保存钓点（全字段覆盖）
+  static Future<void> saveSpot(OfficialSpotDraft draft) async {
+    await ApiClient.post('/official/spot', draft.toJson());
   }
 }
