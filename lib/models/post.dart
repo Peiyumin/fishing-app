@@ -37,6 +37,10 @@ class Post {
   final bool isMe; // 作者是不是我自己
   final int authorVip; // 作者会员等级（0=普通，头像会员框用）
 
+  /// 作者是官方账号（v39）：昵称旁画金色「官方」徽标、头像换成官方图标。
+  /// 老后端不下发这个字段时按 false 处理，不影响任何旧逻辑。
+  final bool authorOfficial;
+
   /// 渔获页「钓到了什么」：[{'name':'鲫鱼','count':2}]（其他类别为空）
   final List<Map<String, dynamic>> fish;
 
@@ -100,6 +104,7 @@ class Post {
     this.isFollowing = false,
     this.isMe = false,
     this.authorVip = 0,
+    this.authorOfficial = false,
     this.fish = const [],
     this.locPublic = true,
     this.lengthCm,
@@ -160,6 +165,7 @@ class Post {
       isFollowing: truthy(json['is_following']),
       isMe: truthy(json['is_me']),
       authorVip: jsonInt(json['user_vip']) ?? 0,
+      authorOfficial: truthy(json['user_official']),
       fish: parseFish(json['fish']),
       locPublic: json['loc_public'] == null
           ? true
@@ -326,6 +332,7 @@ class Post {
     bool? isFollowing,
     bool? isMe,
     int? authorVip,
+    bool? authorOfficial,
     List<Map<String, dynamic>>? fish,
     bool? locPublic,
     double? lengthCm,
@@ -361,6 +368,7 @@ class Post {
       isFollowing: isFollowing ?? this.isFollowing,
       isMe: isMe ?? this.isMe,
       authorVip: authorVip ?? this.authorVip,
+      authorOfficial: authorOfficial ?? this.authorOfficial,
       fish: fish ?? this.fish,
       locPublic: locPublic ?? this.locPublic,
       lengthCm: lengthCm ?? this.lengthCm,
