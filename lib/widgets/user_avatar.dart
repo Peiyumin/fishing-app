@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../app_theme.dart';
 import '../models/member.dart';
 import '../services/session_provider.dart';
+import 'official_badge.dart';
 import 'package:provider/provider.dart';
 
 /// 统一的圆形头像（带会员等级框）
@@ -27,6 +28,9 @@ class UserAvatar extends StatelessWidget {
   /// 完整会员样式（后台下发的名称与配色，优先级高于 vipLevel）
   final MemberStyle? member;
 
+  /// 官方账号（v39）：没头像时直接画内置官方图标；有头像时右下角挂金色角标。
+  final bool official;
+
   const UserAvatar({
     super.key,
     required this.url,
@@ -34,6 +38,7 @@ class UserAvatar extends StatelessWidget {
     this.radius = 16,
     this.vipLevel,
     this.member,
+    this.official = false,
   });
 
   @override
@@ -59,11 +64,20 @@ class UserAvatar extends StatelessWidget {
     final style = effectiveMember;
     final isVip = style.isVip;
     final size = radius * 2;
+    final hasImage = src != null && src.isNotEmpty;
 
-    final core = ClipOval(child: _content(src, size));
+    // 官方账号没上传头像 → 头像本身就是官方图标，不再重复挂角标；
+    // 有头像 → 右下角挂一个小金标（和皇冠同位置，官方优先）。
+    final showGlyph = official && !hasImage;
+    final showMark = official && hasImage;
 
+    final core = ClipOval(
+      child: showGlyph ? OfficialAvatarGlyph(size: size) : _content(src, size),
+    );
+
+    final Widget body;
     if (!isVip) {
-      return Container(
+      body = Container(
         width: size,
         height: size,
         decoration: BoxDecoration(
@@ -72,66 +86,80 @@ class UserAvatar extends StatelessWidget {
         ),
         child: core,
       );
+    } else {
+      // 会员框：外圈渐变 + 内白边 + 头像（皇冠/官方角标统一在外层画）
+      body = Container(
+        width: size,
+        height: size,
+        padding: const EdgeInsets.all(2.2),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [style.color, style.color2],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: style.color.withOpacity(0.35),
+              blurRadius: 6,
+              spreadRadius: 0.4,
+            ),
+          ],
+        ),
+        child: Container(
+          padding: const EdgeInsets.all(1.6),
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.white,
+          ),
+          child: core,
+        ),
+      );
     }
 
-    // 会员框：外圈渐变 + 内白边 + 头像，右下角一颗小皇冠
-    final crown = (radius * 0.62).clamp(12.0, 18.0);
+    if (!showMark && !isVip) return body;
+
+    // 右下角一颗小角标；官方把右下占了，会员皇冠就让到左下
+    final corner = (radius * 0.62).clamp(12.0, 18.0);
     return SizedBox(
       width: size,
       height: size,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          Container(
-            width: size,
-            height: size,
-            padding: const EdgeInsets.all(2.2),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [style.color, style.color2],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: style.color.withOpacity(0.35),
-                  blurRadius: 6,
-                  spreadRadius: 0.4,
+          body,
+          if (showMark)
+            Positioned(
+              right: -1,
+              bottom: -1,
+              child: OfficialAvatarMark(size: corner),
+            ),
+          if (isVip)
+            Positioned(
+              left: showMark ? -1 : null,
+              top: showMark ? -1 : null,
+              right: showMark ? null : -1,
+              bottom: showMark ? null : -1,
+              child: Container(
+                width: corner,
+                height: corner,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [style.color, style.color2],
+                  ),
+                  border: Border.all(color: Colors.white, width: 1.2),
                 ),
-              ],
-            ),
-            child: Container(
-              padding: const EdgeInsets.all(1.6),
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white,
-              ),
-              child: core,
-            ),
-          ),
-          Positioned(
-            right: -1,
-            bottom: -1,
-            child: Container(
-              width: crown,
-              height: crown,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [style.color, style.color2],
+                child: Icon(
+                  Icons.workspace_premium,
+                  size: corner * 0.66,
+                  color: Colors.white,
                 ),
-                border: Border.all(color: Colors.white, width: 1.2),
-              ),
-              child: Icon(
-                Icons.workspace_premium,
-                size: crown * 0.66,
-                color: Colors.white,
               ),
             ),
-          ),
         ],
       ),
     );
