@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
+import '../widgets/official_badge.dart';
 import '../models/badge.dart';
 import '../models/fish.dart';
 import '../models/member.dart';
@@ -486,6 +487,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           userId: sp.isLoggedIn ? sp.userId : null,
                           radius: avatarR,
                           member: vip,
+                          official: _me?.official ?? false,
                         ),
                       ),
                     ),
@@ -511,6 +513,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   ),
                                 ),
                               ),
+                              if (_me?.official == true)
+                                const Padding(
+                                  padding: EdgeInsets.only(left: 6),
+                                  child: OfficialBadge(height: 16),
+                                ),
                               const SizedBox(width: 6),
                               _editDot(),
                             ],
