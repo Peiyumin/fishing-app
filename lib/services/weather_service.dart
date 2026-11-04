@@ -43,16 +43,44 @@ class WeatherService {
   static WeatherBundle? _memory;
   static DateTime? _memoryAt;
 
+  /// 进程内「最近一次的当前天气」
+  ///
+  /// ★ v2.1.74：首页天气卡要做到「打开就是它，不转圈」。
+  ///   SharedPreferences 是异步的，即使读得很快，也一定是**首帧之后**才有值，
+  ///   用户看到的就是先空一下再出卡片。所以在启动页那段时间里先把缓存读进内存
+  ///   （见 [warmUp]），首页 build 时同步取值 —— 第一帧就有天气。
+  static FishingWeather? _memoryCurrent;
+
   /// 最近一次成功的天气包（同步读；没有就是 null）
   static WeatherBundle? get memoryBundle => _memory;
 
+  /// 最近一次的当前天气（同步读；没有就是 null）
+  static FishingWeather? get memoryCurrent => _memoryCurrent;
+
   /// 上面那个包拿到的时间
   static DateTime? get memoryAt => _memoryAt;
+
+  /// 启动预热：把本地缓存的「当前天气 + 7 天包」读进内存
+  ///
+  /// 在启动页并行调用（几次 prefs 读，通常 <20ms），首页 / 详情页因此可以
+  /// 在第一帧直接画真实数据，而不是先画占位再跳变。
+  /// 任何异常都吞掉：预热失败最多是「首帧空一下」，绝不能让启动卡住。
+  static Future<void> warmUp() async {
+    // ★ 自己吞异常，不靠调用方兜：它在启动关键路径上，一旦抛出去
+    //   `Future.wait` 会把整个 _prepare 打断，用户就卡在启动页了。
+    try {
+      await readCachedCurrent(allowStale: true);
+    } catch (_) {}
+    try {
+      await readCachedForecast(allowStale: true);
+    } catch (_) {}
+  }
 
   /// 供测试清理（避免用例之间互相污染）
   static void clearMemory() {
     _memory = null;
     _memoryAt = null;
+    _memoryCurrent = null;
   }
 
   /// 缓存是否仍在有效期内（20 分钟内）。无效 / 缺时间戳一律视为过期。
@@ -106,6 +134,7 @@ class WeatherService {
     //   现在只保留一个数据源：一次 7 天请求 → 首页和天气页都从它派生。
     final bundle = await fetchForecast(lat, lng);
     final w = FishingWeather.fromBundle(bundle);
+    _memoryCurrent = w; // 同步可读：返回首页 / 二级页时不用再等网络
     await _saveCache(_curCacheKey, {
       'lat': lat,
       'lng': lng,
@@ -125,7 +154,10 @@ class WeatherService {
       if (!allowStale && !_isFresh(m)) return null; // 过期缓存不返回，触发重新拉取
       final w = m['w'];
       if (w is! Map) return null;
-      return FishingWeather.fromJson(Map<String, dynamic>.from(w));
+      final cur = FishingWeather.fromJson(Map<String, dynamic>.from(w));
+      // 读到的这份也塞进内存：首页 build 时同步取，第一帧就能画出真实天气
+      _memoryCurrent ??= cur;
+      return cur;
     } catch (_) {
       return null;
     }
