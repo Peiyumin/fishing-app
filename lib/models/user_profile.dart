@@ -24,6 +24,9 @@ class UserProfile {
   final int likeCount; // 累计获赞（我的页「喜欢」）
   final int level; // 等级（exp 换算的 LV1~LV30）
 
+  /// 官方账号（v39）：昵称旁显示金色「官方」徽标，没头像时用内置官方图标
+  final bool official;
+
   /// 注册地（v2.1.57）：后端存的「河南省·禹州市」，空串 = 未记录
   final String regPlace;
   final int catchCount; // 发布渔获次数
@@ -46,6 +49,7 @@ class UserProfile {
     this.pointsName = '积分',
     this.likeCount = 0,
     this.level = 1,
+    this.official = false,
     this.regPlace = '',
     this.catchCount = 0,
     this.vip = MemberStyle.normal,
@@ -71,6 +75,7 @@ class UserProfile {
           : '积分',
       likeCount: jsonInt(json['likeCount']) ?? 0,
       level: jsonInt(json['level']) ?? 1,
+      official: jsonBool(json['official'], fallback: false),
       regPlace: (json['regPlace'] ?? '').toString(),
       catchCount: jsonInt(json['catchCount']) ?? 0,
       vip: MemberStyle.fromJson(json),
@@ -99,6 +104,7 @@ class UserProfile {
     String? pointsName,
     int? likeCount,
     int? level,
+    bool? official,
     String? regPlace,
     int? catchCount,
     MemberStyle? vip,
@@ -120,6 +126,7 @@ class UserProfile {
       pointsName: pointsName ?? this.pointsName,
       likeCount: likeCount ?? this.likeCount,
       level: level ?? this.level,
+      official: official ?? this.official,
       regPlace: regPlace ?? this.regPlace,
       catchCount: catchCount ?? this.catchCount,
       vip: vip ?? this.vip,
