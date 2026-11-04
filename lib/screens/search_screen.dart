@@ -32,7 +32,10 @@ class _SearchScreenState extends State<SearchScreen> {
   /// 四个词，点进去还真能搜 —— 看着像「别人的历史记录」。
   List<String> _history = const [];
   static const String _histKey = 'search_history';
-  static const List<String> _suggests = ['野钓', '水库', '长江', '垂钓技巧'];
+  // 推荐词必须能在库里搜到：之前写的是「长江」「垂钓技巧」，而我们的钓点
+  // 全在河南，「长江」在本库一条都没有 —— 用户点一下就是空结果，会以为
+  // 搜索是坏的。现在固定用「类型词」，后端已把 type/fish/tags 纳入匹配。
+  static const List<String> _suggests = ['野钓', '黑坑', '水库', '钓场'];
 
   List<FishingSpot> _spots = const [];
   List<Post> _posts = const [];
@@ -410,7 +413,8 @@ class _SearchScreenState extends State<SearchScreen> {
               style: const TextStyle(
                   fontSize: 14, color: AppTheme.textPrimary)),
           const SizedBox(height: 6),
-          const Text('换个关键词试试，比如地名、鱼种、钓法',
+          const Text('换个关键词试试：地名（许昌、建安）、类型（野钓、黑坑）、鱼种',
+              textAlign: TextAlign.center,
               style:
                   TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
         ],
