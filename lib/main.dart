@@ -32,6 +32,7 @@ import 'services/message_poller.dart';
 import 'services/notification_service.dart';
 import 'services/post_service.dart';
 import 'services/session_provider.dart';
+import 'services/weather_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/discover_screen.dart';
 import 'screens/spots_screen.dart';
@@ -399,13 +400,18 @@ class _StartupGateState extends State<StartupGate> {
 
   /// 启动封面自己的动画是否播完了。
   /// ★ 不能只看 `_loading`：启动接口 200ms 就回来的话，进度条还没动
-  ///   就被切走了。现在由 [SplashScreen] 负责「至少亮 1.6 秒 + 把进度
+  ///   就被切走了。现在由 [SplashScreen] 负责「至少亮 0.6 秒 + 把进度
   ///   涨到 100%」，播完调 [onFinished]，这里才真正放行。
   bool _splashDone = false;
 
   /// 启动配置最多等这么久：超时就用「无启动内容」直接进首页。
   /// 服务器慢 / 断网时不能让用户一直干等在启动页（表现为「白屏过一会才进」）。
-  static const _bootTimeout = Duration(milliseconds: 2500);
+  ///
+  /// ★ v2.1.74：2500 → 800ms。用户要求「打开就要秒进，最长不超过 2 秒」，
+  ///   而这一项是整个放行链路上唯一**依赖网络**的等待。启动广告/预览页
+  ///   本来就是「有就看、没有就直接进」的可选项，为它多等 1.7 秒不值当：
+  ///   弱网下宁可这次不展示广告，也要让用户进得去。
+  static const _bootTimeout = Duration(milliseconds: 800);
 
   /// 本机还没走过权限引导（首次安装，或刚升级到带新引导标记的版本）。
   ///
@@ -433,15 +439,25 @@ class _StartupGateState extends State<StartupGate> {
     }
   }
 
-  /// 启动前要做的全部准备（v2.1.44：并行 + 不阻塞 runApp）
+  /// 启动前要做的全部准备（v2.1.74：只等「决定首屏长什么样」的四件事）
   ///
-  /// 顺序上有两条硬约束：
-  ///   ① 根证书必须最先注入 —— 后面每一次 HTTPS（启动配置 / 天气 / 定位）
-  ///      在老安卓上都要靠它，晚一步就是一片 CERTIFICATE_VERIFY_FAILED；
-  ///   ② 登录态恢复完才能挂消息轮询，否则轮询用的是空 token。
-  /// 其余（本机偏好 / 推送 / 启动图预解码 / 启动配置接口）互不相干，全部并行。
+  /// 放行启动页的条件被压到最短，只有下面四件会**阻塞**：
+  ///   ① 根证书 —— 后面每次 HTTPS 都靠它，晚一步就是一片证书错误；
+  ///   ② 本机偏好 —— 决定首帧字号，等它才不会有「字号跳一下」；
+  ///   ③ 登录态 —— 决定首页顶部是头像还是「登录」，闪一下很难看；
+  ///   ④ 启动配置 —— 决定进的是广告页 / 引导页 / 首页（带 800ms 超时）；
+  ///   ⑤ 天气缓存预热 —— 首页天气卡第一帧就要有数字，不能先转圈再填。
+  /// 其余**全部后台跑**，等它们只会让用户干等：
+  ///   · 推送初始化（老安卓 `initialize()` 能卡 1~3 秒，这是最大的一块）；
+  ///   · 长按图标快捷项、启动图预解码。
+  ///
+  /// 这些后台项里有两项会影响「冷启动补跳」，所以存进 [_lateInits]，
+  /// 主界面挂稳后由 [_drainPendingNav] 等它们一小会儿再补跳。
   Future<void> _prepare() async {
     final session = context.read<SessionProvider>();
+
+    // 启动图预解码：纯本地，和下面所有准备并行，第一帧就有图不用先黑一下
+    unawaited(_precacheSplash());
 
     // ① 根证书（本地资源，几十毫秒）
     await _injectRootCerts();
@@ -462,29 +478,15 @@ class _StartupGateState extends State<StartupGate> {
             .timeout(_bootTimeout)
             .catchError((_) => const AppBootstrap());
 
+    // ④ 只等这四件（都是本地读 + 一个带超时的接口，正常在 300ms 内）
     await Future.wait<void>([
-      // 本机偏好：字体大小 / 个性化推荐 / 鱼获隐私默认值。
-      // 现在它在 runApp 之后才读，所以 MyApp 用 AnimatedBuilder 监听
-      // AppSettings，读完触发一次重建，字号档位照样立即生效。
+      // 本机偏好：字体大小 / 个性化推荐 / 鱼获隐私默认值
       AppSettings.instance.load().catchError((_) {}),
       // 恢复登录态（SessionProvider 是 ChangeNotifier，恢复后自动通知）
       session.restore().catchError((_) {}),
-      // 系统通知（私信 / 评论 / 点赞 / 官方公告）
-      _initPush(),
-      // 预解码启动页底图：Dart 启动页第一帧就能直接画出来，不会先黑一下
-      _precacheSplash(),
-      // 长按图标快捷入口：注册 channel + 取冷启动待处理项
-      AppShortcuts.init(),
+      // 首页天气卡的数据源：把磁盘缓存提到内存，首页 initState 同步取值
+      WeatherService.warmUp(),
     ]);
-
-    // ③ 长按快捷入口：跳转逻辑交给 _openShortcut（等 navigator 就绪）
-    AppShortcuts.onAction = _openShortcut;
-
-    // ④ 登录态就绪后才挂全局消息轮询
-    MessagePoller.instance.attach(session);
-    MessagePoller.instance.onNewItems = (items, summary) {
-      _showFeedBanner(items, summary);
-    };
 
     final boot = await bootF;
     if (!mounted) return;
@@ -493,17 +495,35 @@ class _StartupGateState extends State<StartupGate> {
       _loading = false;
     });
 
+    // ⑤ 放行之后才开始的后台初始化（一项都不 await，绝不拖住首屏）
+    //
+    // ★ 推送的 onTap 必须**先**挂上再初始化：初始化里会读「点通知冷启动」
+    //   的 payload，回调没挂的话热启动点通知就没反应了。
+    AppShortcuts.onAction = _openShortcut;
+    NotificationService.instance.onTap = openFromNotification;
+    _lateInits
+      ..add(AppShortcuts.init().catchError((_) {}))
+      ..add(_initPush());
+
+    // ⑥ 登录态就绪后才挂全局消息轮询
+    MessagePoller.instance.attach(session);
+    MessagePoller.instance.onNewItems = (items, summary) {
+      _showFeedBanner(items, summary);
+    };
+
     // 启动后检查热更新（有新版本才弹窗；强制更新不可跳过）
     // ★ 首次安装不查：这也是一次网络请求，同样会把「无线数据」系统弹窗
     //   提前到权限引导页之前。等走完引导、进了登录页，下一次启动再查。
     if (!_firstRun) UpdateDialog.checkAndShow(context);
   }
 
+  /// 放行之后才启动的后台初始化（推送 / 快捷项），主界面补跳时要等它们
+  final List<Future<void>> _lateInits = [];
+
   /// 推送初始化 + 挂点击回调（失败不影响启动）
   Future<void> _initPush() async {
     try {
       await NotificationService.instance.init();
-      NotificationService.instance.onTap = openFromNotification;
     } catch (_) {
       // 用户拒绝通知权限 / 无网络时拿不到 token，正常现象
     }
@@ -584,7 +604,23 @@ class _StartupGateState extends State<StartupGate> {
   void _handlePendingNav() {
     if (_pendingNavHandled) return;
     _pendingNavHandled = true;
-    // 长按图标的快捷项（冷启动时攒下的）也在这一刻补跳
+    unawaited(_drainPendingNav());
+  }
+
+  /// 把「冷启动带进来的跳转」补上（点通知 / 长按图标）
+  ///
+  /// ★ v2.1.74：推送初始化和快捷项都挪到后台跑了，payload 还没填好就取
+  ///   会静默丢跳转（用户点了通知、App 起来却停在首页）。所以先等后台
+  ///   那几项收尾，最多 1.8 秒 —— 真等不到就算了，不能为了补跳把界面冻住。
+  Future<void> _drainPendingNav() async {
+    if (_lateInits.isNotEmpty) {
+      await Future.wait(_lateInits).timeout(
+        const Duration(milliseconds: 1800),
+        onTimeout: () => <void>[],
+      );
+    }
+    if (!mounted) return;
+    // 长按图标的快捷项（冷启动时攒下的）
     AppShortcuts.flushPending();
     final p = NotificationService.instance.pendingPayload;
     if (p == null) return;
