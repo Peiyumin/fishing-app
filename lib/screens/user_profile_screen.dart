@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../widgets/official_badge.dart';
 
 import '../models/post.dart';
 import '../models/user_profile.dart';
@@ -184,17 +185,31 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       userId: p?.id,
                       radius: 34,
                       vipLevel: p?.vip.level,
+                      official: p?.official ?? false,
                     ),
                     const SizedBox(width: 16),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(p?.nickname ?? '钓友',
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w600)),
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(p?.nickname ?? '钓友',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w600)),
+                              ),
+                              if (p?.official == true)
+                                const Padding(
+                                  padding: EdgeInsets.only(left: 6),
+                                  child: OfficialBadge(height: 16),
+                                ),
+                            ],
+                          ),
                           const SizedBox(height: 5),
                           // ★ v2.1.57：等级 + 注册地（河南省·禹州市）
                           Row(
