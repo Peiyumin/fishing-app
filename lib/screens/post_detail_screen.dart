@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../app_theme.dart';
 import '../widgets/catch_sticker.dart';
 import '../widgets/emoji_panel.dart';
+import '../widgets/official_badge.dart';
 import 'package:provider/provider.dart';
 
 import '../models/badge.dart';
@@ -890,6 +891,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   userId: _post.userId,
                   radius: 23,
                   vipLevel: _post.authorVip,
+                  official: _post.authorOfficial,
                 ),
               ),
               const SizedBox(width: 10),
@@ -913,6 +915,11 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                             ),
                           ),
                         ),
+                        if (_post.authorOfficial)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 5),
+                            child: OfficialBadge(height: 16),
+                          ),
                         _authorBadges(),
                       ],
                     ),
@@ -2160,6 +2167,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   Widget _commentTile(Map<String, dynamic> c) {
     final name = (c['user_nickname'] as String?) ?? '钓友';
     final avatar = c['user_avatar'] as String?;
+    // v39：官方账号发的评论也带官方标记（公告下的官方回复要看得出来）
+    final isOfficial = (jsonInt(c['user_official']) ?? 0) != 0;
     final content = (c['content'] as String?) ?? '';
     final createdAt = (c['created_at'] as String?) ?? '';
     final time = createdAt.isEmpty
@@ -2176,6 +2185,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             userId: c['user_id'] as String?,
             radius: 17,
             vipLevel: jsonInt(c['user_vip']) ?? 0,
+            official: isOfficial,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -2197,6 +2207,11 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                                     color: AppTheme.textSecondary
                                         .withOpacity(.95))),
                           ),
+                          if (isOfficial)
+                            const Padding(
+                              padding: EdgeInsets.only(left: 4),
+                              child: OfficialBadge(height: 12),
+                            ),
                           if (time.isNotEmpty) ...[
                             const SizedBox(width: 6),
                             Text(time,
@@ -2408,6 +2423,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                                 userId: _post.userId,
                                 radius: 15,
                                 vipLevel: _post.authorVip,
+                                official: _post.authorOfficial,
                               ),
                               const SizedBox(width: 8),
                               Expanded(
@@ -2421,6 +2437,11 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                                       color: AppTheme.textPrimary),
                                 ),
                               ),
+                              if (_post.authorOfficial)
+                                const Padding(
+                                  padding: EdgeInsets.only(left: 4),
+                                  child: OfficialBadge(height: 13),
+                                ),
                               if (_canFollow) ...[
                                 FollowButton(
                                   userId: _post.userId,
