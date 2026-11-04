@@ -121,7 +121,20 @@ class NotificationService {
     importance: Importance.high,
   );
 
-  Future<void> init() async {
+  Future<void>? _initF;
+
+  /// 推送初始化（幂等，返回同一个 future）
+  ///
+  /// ★ v2.1.74：从「启动必经之路」改成**后台任务**。
+  ///   `_plugin.initialize()` 在部分老安卓上要 1~3 秒，是「打开 App 干等」
+  ///   的最大一块。现在启动页不再等它，但「点通知冷启动」的 payload 是
+  ///   它填的，所以把 future 存下来，主界面用 [ready] 等一小会儿再取。
+  Future<void> init() => _initF ??= _runInit();
+
+  /// 初始化是否已经结束（主界面取冷启动 payload 前等它，带超时）
+  Future<void> get ready => _initF ?? Future<void>.value();
+
+  Future<void> _runInit() async {
     if (_inited || !supported) return;
     _inited = true;
     try {
@@ -145,8 +158,9 @@ class NotificationService {
             onDidReceiveBackgroundNotificationResponse: null,
           )
           // 初始化卡住不能拖住 App 启动（表现为冷启动白屏更久）。
-          // 3 秒还没好就当作没通知能力，后面 show 会自然失败并回退到应用内横幅。
-          .timeout(const Duration(seconds: 3));
+          // ★ v2.1.74：3 秒 → 1.5 秒。它已经在后台跑了，1.5 秒还起不来
+          //   就当作没通知能力，后面 show 会自然失败并回退到应用内横幅。
+          .timeout(const Duration(milliseconds: 1500));
 
       final android = _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
