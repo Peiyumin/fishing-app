@@ -23,7 +23,8 @@ class Wmo {
     71: '小雪', 73: '中雪', 75: '大雪', 77: '雪粒',
     80: '阵雨', 81: '强阵雨', 82: '暴雨',
     85: '阵雪', 86: '强阵雪',
-    95: '雷暴', 96: '雷暴伴冰雹', 99: '强雷暴伴冰雹',
+    // 用户口径统一叫「雷阵雨」（图标是闪电 + 雨丝），不再写「雷暴」
+    95: '雷阵雨', 96: '雷阵雨冰雹', 99: '强雷阵雨',
   };
 
   static String text(int? code) => _text[code] ?? '未知';
@@ -36,17 +37,23 @@ class Wmo {
   /// v2.1.36 收敛：原来 5 个零散冷蓝 + 一个紫，现在只走
   /// skyLight / sky / skyDeep 三档 + water；**雷暴改红**（原来是紫，
   /// 全站唯一的紫，一屏里只有它跑出色板，而且「雷=危险」本来就该红）。
+  /// v2.1.70：夜间晴/少云也回到暖黄（要画黄色月牙），夜间阴天改中性灰
+  /// （用户口径：阴天夜里是灰月亮）；颜色仍然只从这套 token 里取，
+  /// 图形本身交给 [WeatherGlyph] 手绘（雨丝 / 闪电 / 月牙 / 雪花）。
   static Color color(int? code, {bool day = true}) {
     switch (code) {
       case 0:
-        // 晴：日间暖金黄，夜间月白（配月亮图标，避免「夜里一个大金太阳」）
-        return day ? AppTheme.star : AppTheme.skyLight;
+        // 晴：日间暖黄太阳，**夜间同样是暖黄月牙**（v2.1.70 用户口径：
+        // 夜晚晴天必须是黄色月亮，原来是浅冷蓝的灰月牙，看着像阴天）
+        return AppTheme.star;
       case 1:
-        return day ? AppTheme.star : AppTheme.sky;
+        // 少云：日/夜都用暖黄（图形自己区分太阳与月牙）
+        return AppTheme.star;
       case 2:
         return AppTheme.sky; // 多云：冷蓝
       case 3:
-        return AppTheme.skyDeep; // 阴：更深的冷蓝
+        // 阴：日间更深的冷蓝厚云；**夜间灰月亮**（用户口径）
+        return day ? AppTheme.skyDeep : AppTheme.textSecondary;
       case 45:
       case 48:
         return AppTheme.skyLight; // 雾：浅冷蓝
