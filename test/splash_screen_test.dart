@@ -108,17 +108,17 @@ void main() {
       var done = false;
       await _pump(tester, const Size(390, 844),
           ready: false, onFinished: () => done = true);
-      // 先走完最短展示（1600ms）
-      await tester.pump(const Duration(milliseconds: 1700));
+      // 先走完最短展示（600ms）
+      await tester.pump(const Duration(milliseconds: 700));
       expect(done, isFalse, reason: '还在最短展示窗口内就跳走了');
 
       await tester.pumpWidget(_app(SplashScreen(
         ready: true,
         onFinished: () => done = true,
       )));
-      await tester.pump(const Duration(milliseconds: 420));
-      // 涨满 380ms + 停 200ms
-      await tester.pump(const Duration(milliseconds: 260));
+      await tester.pump(const Duration(milliseconds: 300));
+      // 涨满 260ms + 停 120ms
+      await tester.pump(const Duration(milliseconds: 300));
       expect(done, isTrue, reason: 'ready 之后没有回调，App 会卡在启动页');
       await tester.pumpWidget(const SizedBox());
     });
@@ -130,11 +130,38 @@ void main() {
       // ready 一开始就是 true，但最短展示还没走完 → 不能立刻回调
       await tester.pump(const Duration(milliseconds: 300));
       expect(done, isFalse);
-      // 推过 1600ms 最短展示 + 380ms 涨满 + 200ms 停顿
-      await tester.pump(const Duration(milliseconds: 1700));
-      await tester.pump(const Duration(milliseconds: 400));
-      await tester.pump(const Duration(milliseconds: 260));
+      expect(kSplashMinShow, const Duration(milliseconds: 600),
+          reason: '最短展示涨回去了，启动会变慢');
+      // 推过 600ms 最短展示 → 涨满 260ms → 停 120ms
+      //
+      // ★ 先 pumpAndSettle 把两段动画走完，再补两次 pump：最后那 120ms
+      //   是纯 `Future.delayed`（Timer，不排帧），pumpAndSettle 不会等它。
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
       expect(done, isTrue);
+      await tester.pumpWidget(const SizedBox());
+    });
+  });
+
+  // v2.1.74：用户明确要求「打开 App 要秒加载，最长不能超过 2 秒」。
+  // 引擎冷启动（Dart VM 起来 + 首帧）通常吃 300~600ms，剩下给 Dart 层的
+  // 预算只有 1.2 秒左右 —— 这条用例就是把这个预算钉住，谁再把最短展示
+  // 或动画时长调回去，测试立刻红。
+  group('④ 启动预算', () {
+    testWidgets('配置就绪后 1.2 秒内必须回调（Dart 层）', (tester) async {
+      var done = false;
+      await _pump(tester, const Size(390, 844),
+          ready: true, onFinished: () => done = true);
+      var frames = 0;
+      while (!done && frames < 200) {
+        await tester.pump(const Duration(milliseconds: 16));
+        frames++;
+      }
+      final ms = frames * 16;
+      expect(done, isTrue, reason: '启动页一直没回调，App 卡住了');
+      expect(ms, lessThanOrEqualTo(1200),
+          reason: 'Dart 层启动用了 ${ms}ms，加上引擎冷启动会顶破 2 秒');
       await tester.pumpWidget(const SizedBox());
     });
   });
