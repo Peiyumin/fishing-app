@@ -194,3 +194,93 @@ class _Metric extends StatelessWidget {
     );
   }
 }
+
+/// 天气卡占位（v2.1.74）
+///
+/// 只在「本机从来没成功拿到过天气」时出现（新装用户、清了缓存）。
+/// 以前这里是一个转圈，卡片区域忽隐忽现、进页面时整屏往下跳一次；
+/// 现在画一张和真卡片同样结构的灰卡：
+///   · 位置、高度、圆角、内边距全都对齐 [WeatherCard]，拿到数据后不跳版；
+///   · 文案写「正在获取天气…」，用户知道是在等，而不是坏了；
+///   · 不做闪烁动画 —— 首页首屏最忌讳动，静态占位反而更稳。
+class WeatherCardSkeleton extends StatelessWidget {
+  const WeatherCardSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(
+          horizontal: AppTheme.pagePad, vertical: 4),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.wb_sunny_outlined,
+                    size: 22, color: AppTheme.textTertiary),
+                const SizedBox(width: 6),
+                const Text('钓鱼天气',
+                    style:
+                        TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                const SizedBox(width: 6),
+                const Flexible(
+                  child: Text('· 定位中',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 12.5, color: AppTheme.textSecondary)),
+                ),
+                const Spacer(),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppTheme.divider,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text('垂钓指数 --',
+                      style: TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 11.5,
+                          height: 1.1)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: const [
+                _Metric('--℃', '天气'),
+                _Metric('--%', '湿度'),
+                _Metric('--级', '风力'),
+                _Metric('----', '气压hPa'),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryLight,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.sync, size: 14, color: AppTheme.primary),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text('正在获取天气…',
+                        style:
+                            TextStyle(fontSize: 13, color: AppTheme.primary)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
