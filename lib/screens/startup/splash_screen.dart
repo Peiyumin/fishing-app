@@ -50,13 +50,26 @@ class _SplashScreenState extends State<SplashScreen>
   static const double _labelSize = 44;
 
   /// 进度前 90% 由时间推进（像真在加载），最后 10% 等数据真的到位
-  static const Duration _growDuration = Duration(milliseconds: 2100);
-  static const Duration _finishDuration = Duration(milliseconds: 380);
+  ///
+  /// ★ v2.1.74：2100 → 900ms。用户要求「打开就要秒进，最长不超过 2 秒」，
+  ///   原来光这一条涨到 90% 就要 2.1 秒，比整个启动预算还长。
+  ///   现在 900ms 到 90%，正好和「最短展示 600ms」错开半个节拍，
+  ///   看起来仍是「在加载」，但不会把用户按在这一页上。
+  static const Duration _growDuration = Duration(milliseconds: 900);
+  static const Duration _finishDuration = Duration(milliseconds: 260);
 
   /// 启动页最短展示时长。
   /// 接上快网时启动接口 200ms 就回来了，如果不设下限，这个页面总共只
-  /// 亮 0.6 秒 —— 用户既看不清图，进度条也只是一闪，观感像「闪屏故障」。
-  static const Duration _minShow = Duration(milliseconds: 1600);
+  /// 亮 0.3 秒 —— 用户既看不清图，进度条也只是一闪，观感像「闪屏故障」。
+  ///
+  /// ★ v2.1.74：1600 → 600ms。品牌页只要「看清」就够，不需要「停够」。
+  ///   配合 main.dart 里 `_bootTimeout` 收到 800ms，整条链路
+  ///   （配置就绪 → 600ms 最短展示 → 260ms 涨满 → 120ms 落点）
+  ///   稳定在 1 秒出头，加上引擎冷启动也在 2 秒内进首页。
+  ///
+  /// ★ 真实时长定义在文件末尾的 [kSplashMinShow]（测试要断言这个数字，
+  ///   写死两份最容易「改了一处忘了另一处」，那次启动就悄悄慢了 1 秒）。
+  static const Duration _minShow = kSplashMinShow;
 
   late final AnimationController _c = AnimationController(
     vsync: this,
@@ -86,8 +99,10 @@ class _SplashScreenState extends State<SplashScreen>
       WidgetsBinding.instance.addPostFrameCallback((_) => _finish());
     }
     // 兜底：万一启动接口一直不回来（弱网/后端挂了），也别把用户
-    // 卡在这个页面上 —— 9 秒后强制收尾，进主界面再看各自页面的错误态。
-    _watchdog = Timer(const Duration(seconds: 9), () {
+    // 卡在这个页面上 —— 4 秒后强制收尾，进主界面再看各自页面的错误态。
+    // ★ v2.1.74：9 秒 → 4 秒。放行本身最迟 800ms（boot 超时）+ 1 秒动画，
+    //   真走到这条兜底说明出事了，多等的每一秒都是白等。
+    _watchdog = Timer(const Duration(seconds: 4), () {
       if (mounted) _finish();
     });
   }
@@ -110,7 +125,7 @@ class _SplashScreenState extends State<SplashScreen>
     await _c.animateTo(1.0, duration: _finishDuration, curve: Curves.easeOut);
     if (!mounted) return;
     // 满格之后再亮一下，让「加载完成」有落点，不是戛然而止
-    await Future<void>.delayed(const Duration(milliseconds: 200));
+    await Future<void>.delayed(const Duration(milliseconds: 120));
     if (!mounted) return;
     _done = true;
     widget.onFinished?.call();
@@ -312,3 +327,10 @@ class _SplashColors {
 
 /// 胶囊文案（抽出常量，描边层和填充层必须完全一致才能对齐）
 const _pillText = '正在获取最新渔情';
+
+/// 启动页最短展示时长（v2.1.74：1600 → 600ms）
+///
+/// 单独提成公开常量，是因为 [SplashScreen] 的测试要断言「这个数字不能再
+/// 涨回去」—— 用户的要求是「打开就秒进，最长 2 秒」，而这一项占了预算
+/// 里最大的一块。写死在两个地方，迟早有一处忘记改。
+const kSplashMinShow = Duration(milliseconds: 600);
