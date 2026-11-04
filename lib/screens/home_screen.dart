@@ -47,7 +47,6 @@ class _HomeScreenState extends State<HomeScreen>
   FishingWeather? _weather;
   List<FishingSpot> _spots = [];
   List<Post> _posts = [];
-  bool _loadingWeather = true;
   bool _loadingPosts = true;
   int _feedPage = 1;
   bool _feedHasMore = true;
@@ -85,6 +84,13 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
+    // ★ v2.1.74：先用「启动时预热好的内存缓存」把天气卡填上。
+    //
+    //   以前这里是 _loadingWeather = true，首帧先画转圈，等 SharedPreferences
+    //   异步读完再画卡片 —— 视觉上就是「打开 App 天气卡空一下再蹦出来」。
+    //   启动页期间已经跑过 WeatherService.warmUp()，这里同步取值即可，
+    //   第一帧就是真实天气；随后 _loadWeather 只做「静默更新」。
+    _weather = WeatherService.memoryCurrent;
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_firstFrame.isCompleted) _firstFrame.complete();
@@ -274,10 +280,7 @@ class _HomeScreenState extends State<HomeScreen>
       // allowStale：过期的缓存也先亮出来，别让首页天气卡空着等网络
       final cached = await WeatherService.readCachedCurrent(allowStale: true);
       if (cached != null && mounted && _weather == null) {
-        setState(() {
-          _weather = cached;
-          _loadingWeather = false;
-        });
+        setState(() => _weather = cached);
       }
     }
 
@@ -361,14 +364,10 @@ class _HomeScreenState extends State<HomeScreen>
     try {
       final w = await WeatherService.fetch(lat, lng);
       if (mounted) {
-        setState(() {
-          _weather = w;
-          _loadingWeather = false;
-        });
+        setState(() => _weather = w);
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _loadingWeather = false);
         // 已有缓存 / 自动刷新时不打扰用户；完全没有数据时才提示
         if (_weather == null && !silent) {
           CenterToast.show(context, '天气暂不可用，请检查网络');
@@ -640,38 +639,48 @@ class _HomeScreenState extends State<HomeScreen>
           children: [
             const GridNav(),
             // 天气（点击进入 7 天预报独立页）
-            _loadingWeather
-                ? const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(16),
-                      child: CircularProgressIndicator(),
+            //
+            // ★ v2.1.74：没有数据时不再画转圈，直接画一张同尺寸的占位卡。
+            //   转圈会让整块高度塌陷、进页面时下方内容往下跳一次；
+            //   占位卡和真卡片结构一致，数据回来后原地替换，不动版。
+            if (_weather == null)
+              Column(
+                children: [
+                  SectionHeader(
+                    title: (_place == null || _place!.label.isEmpty)
+                        ? '实时天气'
+                        : '${_place!.label} · 实时天气',
+                    actionLabel: '7天预报',
+                    onAction: () => _guard(() => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const WeatherScreen()))),
+                  ),
+                  const WeatherCardSkeleton(),
+                ],
+              )
+            else
+              Column(
+                  children: [
+                    SectionHeader(
+                      title: (_place == null || _place!.label.isEmpty)
+                          ? '实时天气'
+                          : '${_place!.label} · 实时天气',
+                      actionLabel: '7天预报',
+                      onAction: () => _guard(() => Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => const WeatherScreen()))),
                     ),
-                  )
-                : _weather == null
-                    ? const SizedBox()
-                    :                           Column(
-                        children: [
-                          SectionHeader(
-                            title: (_place == null || _place!.label.isEmpty)
-                                ? '实时天气'
-                                : '${_place!.label} · 实时天气',
-                            actionLabel: '7天预报',
-                            onAction: () => _guard(() =>
-                                Navigator.of(context).push(MaterialPageRoute(
-                                    builder: (_) => const WeatherScreen()))),
-                          ),
-                          InkWell(
-                            onTap: () => _guard(() =>
-                                Navigator.of(context).push(MaterialPageRoute(
-                                    builder: (_) => const WeatherScreen()))),
-                            borderRadius: BorderRadius.circular(14),
-                            child: WeatherCard(
-                              weather: _weather!,
-                              placeLabel: _place?.label,
-                            ),
-                          ),
-                        ],
+                    InkWell(
+                      onTap: () => _guard(() => Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => const WeatherScreen()))),
+                      borderRadius: BorderRadius.circular(14),
+                      child: WeatherCard(
+                        weather: _weather!,
+                        placeLabel: _place?.label,
                       ),
+                    ),
+                  ],
+                ),
             // 钓点横向列表（标题 + 进入钓点页）
             SectionHeader(
               title: '附近钓点',
