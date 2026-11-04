@@ -499,16 +499,13 @@ class _PostCardState extends State<PostCard> {
               ),
               const SizedBox(height: 8),
               // 标题 + 类别标签
+              //
+              // v41：这里原来会给 notice=1 的帖子挂一个红色「公告」角标。
+              // 现在公告根本不进信息流（后端列表强制 notice = 0），
+              // 角标自然一起去掉 —— 信息流里出现的任何一条都该是钓友的内容。
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 公告标在最前：红色「公告」比分类更需要注意
-                  if (_post.isNotice) ...[
-                    const Padding(
-                      padding: EdgeInsets.only(top: 2, right: 6),
-                      child: NoticeTag(height: 17),
-                    ),
-                  ],
                   if (_post.category != 'post') ...[
                     Container(
                       margin: const EdgeInsets.only(top: 2, right: 6),
