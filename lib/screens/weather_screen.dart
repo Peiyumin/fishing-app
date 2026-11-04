@@ -18,6 +18,7 @@ import '../utils/geo_names.dart';
 import '../widgets/location_prompt.dart';
 import '../widgets/member_gate.dart';
 import '../widgets/app_refresh.dart';
+import '../widgets/weather_icon.dart';
 
 /// 天气页调色板 —— 深墨绿水面，不是深蓝夜空
 ///
@@ -1110,8 +1111,11 @@ class _NowCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Wmo.icon(code, day: !isNight),
-                  size: 38, color: Wmo.color(code, day: !isNight)),
+              WeatherGlyph(
+                  code: code,
+                  day: !isNight,
+                  size: 38,
+                  color: Wmo.color(code, day: !isNight)),
               const SizedBox(width: 10),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1911,8 +1915,11 @@ class _HourTable extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Wmo.icon(h.weatherCode, day: isDay),
-                    size: 18, color: Wmo.color(h.weatherCode, day: isDay)),
+                WeatherGlyph(
+                    code: h.weatherCode,
+                    day: isDay,
+                    size: 18,
+                    color: Wmo.color(h.weatherCode, day: isDay)),
                 const SizedBox(height: 2),
                 Text(Wmo.text(h.weatherCode),
                     maxLines: 1,
