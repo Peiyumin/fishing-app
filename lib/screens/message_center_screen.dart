@@ -1,18 +1,25 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import '../models/message.dart';
+import '../models/official.dart';
 import '../services/message_poller.dart';
 import '../services/message_service.dart';
 import '../services/post_service.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/official_badge.dart';
 import 'chat_screen.dart';
+import 'official_notice_screen.dart';
 import 'post_detail_screen.dart';
 import '../widgets/app_refresh.dart';
 
 /// 消息中心（v27）
 /// - 顶部「私信」黑卡入口：与钓友和客服的对话（需先关注对方；非会员每个对象 6 条）
 /// - 下方通知四类：系统通知 / 评论 / 回复 / 点赞
+///
+/// v41：官方公告并入「系统通知」——它不再是帖子，不占信息流，
+/// 进消息页第一屏就能看到平台说了什么。
 class MessageCenterScreen extends StatefulWidget {
   const MessageCenterScreen({super.key});
 
@@ -226,7 +233,7 @@ class _MessageCenterScreenState extends State<MessageCenterScreen> {
 
   Widget _noticeSection() {
     final items = <({String key, String title, String desc, IconData icon, int unread})>[
-      (key: 'system', title: '系统通知', desc: '活动、版本更新、账号提醒', icon: Icons.campaign_outlined, unread: _summary.system),
+      (key: 'system', title: '系统通知', desc: '官方公告、活动与账号提醒', icon: Icons.campaign_outlined, unread: _summary.system),
       (key: 'comment', title: '评论', desc: '帖子收到的新评论', icon: Icons.chat_bubble_outline, unread: _summary.comment),
       (key: 'reply', title: '回复', desc: '你的评论收到了回复', icon: Icons.reply_outlined, unread: _summary.reply),
       (key: 'like', title: '点赞', desc: '有人给你点了赞', icon: Icons.thumb_up_outlined, unread: _summary.like),
@@ -447,43 +454,104 @@ class _NoticeListScreenState extends State<NoticeListScreen> {
                         decoration: BoxDecoration(
                           color: AppTheme.surface,
                           borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-                          border: Border.all(color: AppTheme.border),
+                          border: Border.all(
+                            // 未读的官方公告描一道浅红边：它在通知流里是「公告」，
+                            // 不是一条普通系统消息，值得多给一点视觉权重
+                            color: (!n.isRead && n.isOfficial)
+                                ? AppTheme.danger.withOpacity(0.35)
+                                : AppTheme.border,
+                          ),
                         ),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Container(
-                              width: 6,
-                              height: 6,
-                              margin: const EdgeInsets.only(top: 6, right: 8),
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: n.isRead
-                                    ? Colors.transparent
-                                    : AppTheme.danger,
+                            if (n.isOfficial)
+                              _officialAvatar(n)
+                            else
+                              Container(
+                                width: 6,
+                                height: 6,
+                                margin: const EdgeInsets.only(top: 6, right: 8),
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: n.isRead
+                                      ? Colors.transparent
+                                      : AppTheme.danger,
+                                ),
                               ),
-                            ),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(n.title,
-                                      style: const TextStyle(
-                                          fontSize: 13.5,
-                                          fontWeight: FontWeight.w700)),
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      if (n.isOfficial) ...[
+                                        _officialTag(),
+                                        const SizedBox(width: 5),
+                                      ],
+                                      Flexible(
+                                        child: Text(n.title,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                                fontSize: 13.5,
+                                                height: 1.35,
+                                                fontWeight: n.isRead
+                                                    ? FontWeight.w600
+                                                    : FontWeight.w700)),
+                                      ),
+                                      if (n.pinned) ...[
+                                        const SizedBox(width: 4),
+                                        const Icon(Icons.push_pin_outlined,
+                                            size: 12,
+                                            color: AppTheme.textTertiary),
+                                      ],
+                                    ],
+                                  ),
                                   if (n.content.isNotEmpty) ...[
                                     const SizedBox(height: 3),
                                     Text(n.content,
+                                        maxLines: n.isOfficial ? 3 : 2,
+                                        overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(
                                             fontSize: 12,
                                             color: AppTheme.textSecondary,
-                                            height: 1.4)),
+                                            height: 1.45)),
                                   ],
-                                  const SizedBox(height: 4),
-                                  Text(_fmt(n.createdAt),
-                                      style: const TextStyle(
-                                          fontSize: 10.5,
-                                          color: AppTheme.textSecondary)),
+                                  const SizedBox(height: 5),
+                                  Row(
+                                    children: [
+                                      Text(_fmt(n.createdAt),
+                                          style: const TextStyle(
+                                              fontSize: 10.5,
+                                              color: AppTheme.textSecondary)),
+                                      if (n.isOfficial && n.imageCount > 0) ...[
+                                        const SizedBox(width: 8),
+                                        const Icon(
+                                            Icons.image_outlined,
+                                            size: 11,
+                                            color: AppTheme.textTertiary),
+                                        const SizedBox(width: 2),
+                                        Text('${n.imageCount}',
+                                            style: const TextStyle(
+                                                fontSize: 10.5,
+                                                color: AppTheme.textTertiary)),
+                                      ],
+                                      if (n.isOfficial && !n.isRead) ...[
+                                        const SizedBox(width: 8),
+                                        Container(
+                                          width: 5,
+                                          height: 5,
+                                          decoration: const BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: AppTheme.danger,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
                                 ],
                               ),
                             ),
@@ -496,36 +564,89 @@ class _NoticeListScreenState extends State<NoticeListScreen> {
     );
   }
 
-  /// 点一条通知：标记已读，能定位到动态的就直接打开动态详情
+  /// 官方公告头像（34px）；没设置头像时用金色对勾占位
+  Widget _officialAvatar(NoticeItem n) {
+    const size = 30.0;
+    final fallback = OfficialAvatarGlyph(size: size);
+    return Padding(
+      padding: const EdgeInsets.only(right: 10, top: 1),
+      child: n.fromAvatar.isEmpty
+          ? fallback
+          : ClipOval(
+              child: CachedNetworkImage(
+                imageUrl: n.fromAvatar,
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => fallback,
+                errorWidget: (_, __, ___) => fallback,
+              ),
+            ),
+    );
+  }
+
+  /// 「官方公告」标签（红底白字；金色留给「官方」身份，两者不混）
+  Widget _officialTag() => Container(
+        height: 15,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 5),
+        decoration: BoxDecoration(
+          color: AppTheme.danger,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: const Text(
+          '官方公告',
+          style: TextStyle(
+              fontSize: 9.5,
+              height: 1.0,
+              fontWeight: FontWeight.w800,
+              color: Colors.white),
+        ),
+      );
+
+  /// 点一条通知：标记已读，官方公告进公告详情，互动类通知直达那条动态
   ///
   /// ★ 以前通知列表是「只看不动」的，用户看到「老张评论了你的动态」却点不进去，
   ///   等于白提醒。现在评论 / 回复 / 点赞都带 refId（postId），点开直达那条动态；
-  ///   系统公告没有关联动态，点一下只标记已读。
+  ///   v41 起官方公告带 officialId，点开是公告详情（有配图、有正文）。
   Future<void> _openNotice(NoticeItem n) async {
     // 先本地标记已读，界面立刻消红点（失败不影响跳转）
     if (!n.isRead) {
       try {
-        await MessageService.markRead(id: n.id);
+        // 官方公告的已读存在另一张表，要带 type 才能走对分支
+        await MessageService.markRead(
+            id: n.id, type: n.isOfficial ? 'official' : '');
       } catch (_) {}
       if (mounted) {
         setState(() {
           final idx = _items.indexWhere((e) => e.id == n.id);
-          if (idx >= 0) {
-            _items[idx] = NoticeItem(
-              id: n.id,
-              type: n.type,
-              typeTitle: n.typeTitle,
-              title: n.title,
-              content: n.content,
-              refId: n.refId,
-              isRead: true,
-              createdAt: n.createdAt,
-            );
-          }
+          if (idx >= 0) _items[idx] = _items[idx].copyWithRead(true);
         });
       }
     }
     if (!mounted) return;
+
+    if (n.isOfficial) {
+      if (n.officialId.isEmpty) return;
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => OfficialNoticeScreen(
+          id: n.officialId,
+          // 先把列表里已有的标题/作者/时间顶上去，正文等接口回来再填，
+          // 免得点进去先看到一整屏空白
+          initial: OfficialNotice(
+            id: n.officialId,
+            title: n.title,
+            content: '',
+            pinned: n.pinned,
+            createdAt: DateTime.tryParse(n.createdAt) ?? DateTime.now(),
+            authorName: n.fromName,
+            authorAvatar: n.fromAvatar,
+          ),
+        ),
+      ));
+      return;
+    }
+
     if (n.refId.isEmpty) return; // 系统公告：没有可跳转的对象
 
     final post = await PostService.fetchById(n.refId);
