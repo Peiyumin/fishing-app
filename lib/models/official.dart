@@ -34,23 +34,33 @@ class OfficialOverview {
       );
 }
 
-/// 一条公告（本质是 notice=1 的帖子，所以能直接进信息流）
+/// 一条公告
+///
+/// v41 起公告不再是帖子：它单独存在 official_notices 里，只在
+/// 「消息 → 系统通知」以「官方公告」出现，绝不会进首页/发现的信息流。
+/// 所以这里的字段比帖子窄 —— 没有点赞、没有评论，只有标题/正文/配图/时间/作者。
 class OfficialNotice {
   final String id;
   final String title;
   final String content;
+
+  /// 配图（最多 9 张，绝对地址）
+  final List<String> images;
   final bool pinned;
   final DateTime createdAt;
   final String authorName;
+  final String authorAvatar;
   final bool isMine;
 
   const OfficialNotice({
     required this.id,
     required this.title,
     required this.content,
+    this.images = const [],
     this.pinned = false,
     required this.createdAt,
     this.authorName = '',
+    this.authorAvatar = '',
     this.isMine = false,
   });
 
@@ -58,11 +68,33 @@ class OfficialNotice {
         id: (j['id'] ?? '').toString(),
         title: (j['title'] ?? '').toString(),
         content: (j['content'] ?? '').toString(),
-        pinned: jsonInt(j['pinned']) == 1,
+        images: _stringList(j['images']),
+        pinned: jsonInt(j['pinned']) == 1 || j['pinned'] == true,
         createdAt: jsonDateOrNow(j['createdAt']),
         authorName: (j['authorName'] ?? '').toString(),
+        authorAvatar: _mediaUrl(j['authorAvatar']) ?? '',
         isMine: jsonBool(j['isMine']),
       );
+
+  /// 列表里的一行摘要（换行压平成空格）
+  String get summary =>
+      content.replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+/// 把后端返回的 images 字段读成字符串列表（数组 / 单个字符串都兼容）
+List<String> _stringList(dynamic raw) {
+  if (raw == null) return const [];
+  if (raw is String) {
+    final s = raw.trim();
+    return s.isEmpty ? const [] : <String>[s];
+  }
+  if (raw is List) {
+    return raw
+        .map((e) => e?.toString().trim() ?? '')
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
+  return const [];
 }
 
 /// 帖子管理列表里的一行
@@ -212,6 +244,8 @@ class OfficialLog {
         return '封禁 30 天';
       case 'unban':
         return '解除封禁';
+      case 'spot_edit':
+        return '编辑钓点';
       default:
         return action;
     }
@@ -244,4 +278,183 @@ String officialDateTime(String iso) {
   final t = jsonDate(iso);
   if (t == null) return iso;
   return officialTimeOf(t);
+}
+
+// ══════════════════ 钓点管理（v41） ══════════════════
+
+/// 钓点管理列表里的一行（列表只带概要，点进去再取全字段）
+class OfficialSpot {
+  final String id;
+  final String name;
+  final String kind; // venue 钓场 / wild 野钓点 / shop 渔具店
+  final String type; // 野钓 / 黑坑 / 路亚…
+  final int status;  // 0 待审核 / 1 已上架 / 2 已下架
+  final String statusLabel;
+  final String address;
+  final String? cover;
+  final double? lat;
+  final double? lng;
+  final int imageCount;
+  final int reportCount;
+  final DateTime createdAt;
+
+  const OfficialSpot({
+    required this.id,
+    required this.name,
+    this.kind = 'venue',
+    this.type = '',
+    this.status = 1,
+    this.statusLabel = '',
+    this.address = '',
+    this.cover,
+    this.lat,
+    this.lng,
+    this.imageCount = 0,
+    this.reportCount = 0,
+    required this.createdAt,
+  });
+
+  String get kindLabel =>
+      kind == 'venue' ? '钓场' : (kind == 'shop' ? '渔具店' : '野钓点');
+
+  bool get hasLocation => lat != null && lng != null;
+
+  factory OfficialSpot.fromJson(Map<String, dynamic> j) => OfficialSpot(
+        id: (j['id'] ?? '').toString(),
+        name: (j['name'] ?? '').toString(),
+        kind: (j['kind'] ?? 'venue').toString(),
+        type: (j['type'] ?? '').toString(),
+        status: jsonInt(j['status']) ?? 1,
+        statusLabel: (j['statusLabel'] ?? '').toString(),
+        address: (j['address'] ?? '').toString(),
+        cover: _mediaUrl(j['cover']),
+        lat: jsonDouble(j['lat']),
+        lng: jsonDouble(j['lng']),
+        imageCount: jsonInt(j['imageCount']) ?? 0,
+        reportCount: jsonInt(j['reportCount']) ?? 0,
+        createdAt: jsonDateOrNow(j['createdAt']),
+      );
+}
+
+/// 钓点编辑页的完整表单（和 /official/spot 一一对应）
+///
+/// 单独一个类而不是复用 FishingSpot：编辑页要能拿到 status（未上架的也要能进来改），
+/// 而 FishingSpot 是「给用户看」的模型，不该背审核状态。
+class OfficialSpotDraft {
+  String id;
+  String name;
+  String kind;
+  String type;
+  int status;
+  String description;
+  String address;
+  String fee;
+  String fish;
+  String tags;
+  String cover;
+  String phone;
+  bool delivery;
+  double lat;
+  double lng;
+  double rating;
+  List<String> images;
+
+  OfficialSpotDraft({
+    this.id = '',
+    this.name = '',
+    this.kind = 'venue',
+    this.type = '野钓',
+    this.status = 1,
+    this.description = '',
+    this.address = '',
+    this.fee = '',
+    this.fish = '',
+    this.tags = '',
+    this.cover = '',
+    this.phone = '',
+    this.delivery = false,
+    this.lat = 0,
+    this.lng = 0,
+    this.rating = 0,
+    this.images = const [],
+  });
+
+  factory OfficialSpotDraft.fromJson(Map<String, dynamic> j) => OfficialSpotDraft(
+        id: (j['id'] ?? '').toString(),
+        name: (j['name'] ?? '').toString(),
+        kind: (j['kind'] ?? 'venue').toString(),
+        type: (j['type'] ?? '野钓').toString(),
+        status: jsonInt(j['status']) ?? 1,
+        description: (j['description'] ?? '').toString(),
+        address: (j['address'] ?? '').toString(),
+        fee: (j['fee'] ?? '').toString(),
+        fish: (j['fish'] ?? '').toString(),
+        tags: (j['tags'] ?? '').toString(),
+        cover: (_mediaUrl(j['cover']) ?? ''),
+        phone: (j['phone'] ?? '').toString(),
+        delivery: (jsonInt(j['delivery']) ?? 0) == 1,
+        lat: jsonDouble(j['lat']) ?? 0,
+        lng: jsonDouble(j['lng']) ?? 0,
+        rating: jsonDouble(j['rating']) ?? 0,
+        images: _stringList(j['images']),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'kind': kind,
+        'type': type,
+        'status': status,
+        'description': description,
+        'address': address,
+        'fee': fee,
+        'fish': fish,
+        'tags': tags,
+        'cover': cover,
+        'phone': phone,
+        'delivery': delivery,
+        'lat': lat,
+        'lng': lng,
+        'rating': rating,
+        'images': images,
+      };
+
+  /// 用编辑页上的最新值覆盖（保存时是全字段覆盖，不做 diff）
+  OfficialSpotDraft copyWithFields({
+    String? name,
+    String? kind,
+    String? type,
+    int? status,
+    String? description,
+    String? address,
+    String? fee,
+    String? fish,
+    String? tags,
+    String? cover,
+    String? phone,
+    bool? delivery,
+    double? lat,
+    double? lng,
+    double? rating,
+    List<String>? images,
+  }) =>
+      OfficialSpotDraft(
+        id: id,
+        name: name ?? this.name,
+        kind: kind ?? this.kind,
+        type: type ?? this.type,
+        status: status ?? this.status,
+        description: description ?? this.description,
+        address: address ?? this.address,
+        fee: fee ?? this.fee,
+        fish: fish ?? this.fish,
+        tags: tags ?? this.tags,
+        cover: cover ?? this.cover,
+        phone: phone ?? this.phone,
+        delivery: delivery ?? this.delivery,
+        lat: lat ?? this.lat,
+        lng: lng ?? this.lng,
+        rating: rating ?? this.rating,
+        images: images ?? this.images,
+      );
 }
