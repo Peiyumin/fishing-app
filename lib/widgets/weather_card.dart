@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_theme.dart';
 import '../models/weather_forecast.dart';
 import '../services/weather_service.dart';
+import 'weather_icon.dart';
 
 /// 首页「钓鱼天气」卡片
 /// 显示气温、湿度、风力（几级什么风）、气压 + 垂钓适宜指数与建议
@@ -52,11 +53,14 @@ class WeatherCard extends StatelessWidget {
                 Expanded(
                   child: Row(
                     children: [
-                      // 图标与颜色都跟着当前天气走：晴=金黄太阳，阴=灰蓝云，雨=蓝雨点
-                      Icon(
-                        Wmo.icon(weather.weatherCode),
+                      // 图标按天气手绘（v2.1.70）：雨=雨丝、雷=闪电+雨丝、
+                      // 夜里晴天=黄色月牙；颜色仍走 Wmo.color 的统一口径
+                      WeatherGlyph(
+                        code: weather.weatherCode,
+                        day: !weather.isNightAt,
                         size: 22,
-                        color: Wmo.color(weather.weatherCode),
+                        color: Wmo.color(weather.weatherCode,
+                            day: !weather.isNightAt),
                       ),
                       const SizedBox(width: 6),
                       Text('钓鱼天气',
@@ -89,25 +93,36 @@ class WeatherCard extends StatelessWidget {
                 // v2.1.62：改成和天气页一样的「浅色底 + 同色数字」——
                 // 数字用 AppTheme.biteScore(score)，和天气页顶部「指数 85」
                 // 一字不差地同色；底只垫 12% 的同色，白卡上不抢眼。
+                //
+                // v2.1.70：≥90（爆护）改成**主题黄绿实底 + 反白数字**，
+                // 与天气页逐时表里 90+ 那格（AppTheme.accent 底 +
+                // AppTheme.primary 字）完全一致 —— 用户扫一眼就知道今天
+                // 是不是爆护，而不是要在脑子里比分数。
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: AppTheme.biteScoreSoft(score),
+                    color: score >= 90
+                        ? AppTheme.accent
+                        : AppTheme.biteScoreSoft(score),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text('垂钓指数',
+                      Text('垂钓指数',
                           style: TextStyle(
-                              color: AppTheme.textSecondary,
+                              color: score >= 90
+                                  ? AppTheme.primary
+                                  : AppTheme.textSecondary,
                               fontSize: 11.5,
                               height: 1.1)),
                       const SizedBox(width: 4),
                       Text('$score',
                           style: TextStyle(
-                              color: scoreColor(score),
+                              color: score >= 90
+                                  ? AppTheme.primary
+                                  : scoreColor(score),
                               fontSize: 13.5,
                               height: 1.1,
                               fontWeight: FontWeight.w800)),
