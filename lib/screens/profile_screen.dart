@@ -22,6 +22,7 @@ import '../services/profile_service.dart';
 import '../services/refresh_bus.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
+import 'official_console_screen.dart';
 import '../widgets/ui_kit.dart';
 import '../widgets/fish_dex_card.dart';
 import '../utils/county_label.dart';
@@ -1069,6 +1070,67 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   /// 列表行（我的订单 / 我的卡券）
+  /// 官方工作台入口（v40）
+  ///
+  /// 只有后台设成「官方」的账号才看得到这一条 —— 普通用户连入口都不该看见，
+  /// 更不该点进去吃一个 403。金色边框 = 和官方徽标同一套语义。
+  Widget _officialEntry() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppTheme.pagePad, AppTheme.cardGap, AppTheme.pagePad, 0),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const OfficialConsoleScreen()),
+        ),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+          decoration: BoxDecoration(
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+            border: Border.all(color: AppTheme.star.withOpacity(0.55), width: 1.2),
+            boxShadow: AppTheme.lightShadow,
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [AppTheme.star, AppTheme.starDark],
+                  ),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.workspace_premium_outlined,
+                    size: 19, color: Colors.white),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('官方工作台',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w700)),
+                    SizedBox(height: 3),
+                    Text('发公告 · 管帖子 · 封账号',
+                        style: TextStyle(
+                            fontSize: 11, color: AppTheme.textSecondary)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right,
+                  size: 18, color: AppTheme.textTertiary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _menuCard() {
     if (_cfg.menus.isEmpty) return const SizedBox.shrink();
     return Container(
@@ -1520,6 +1582,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _statsRow(sp),
             _memberBar(),
             _fishDexCard(),
+            if (_me?.official == true) _officialEntry(),
             _menuCard(),
             _servicesCard(),
             _smartBar(),
