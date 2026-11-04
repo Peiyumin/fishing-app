@@ -372,6 +372,22 @@ class FishingWeather {
     );
   }
 
+  /// 这组数据是不是「夜间」（首页卡片要据此画太阳还是月牙）
+  ///
+  /// 口径与天气页逐时表一致：**19:00 起算夜间**，到次日日出为止。
+  /// 首页拿不到当天的日出时刻（日出在天气包里、卡片只带一张快照），
+  /// 所以用 6 点作为保守下限 —— 冬季 6 点天还没亮，但那时太阳图标
+  /// 也不会误导成「大太阳」，而 19 点后画太阳才是真正刺眼的问题。
+  bool get isNightAt {
+    var hour = DateTime.now().hour;
+    // atLabel 形如 "13:00"；解析失败就退回当前时间，不抛异常
+    if (atLabel.length >= 2) {
+      final h = int.tryParse(atLabel.substring(0, 2));
+      if (h != null && h >= 0 && h <= 23) hour = h;
+    }
+    return hour >= 19 || hour < 6;
+  }
+
   Map<String, dynamic> toJson() => {
         't': temperature,
         'h': humidity,
@@ -421,8 +437,9 @@ class FishingWeather {
       80: '阵雨',
       81: '强阵雨',
       82: '暴雨',
-      95: '雷暴',
-      96: '雷暴伴冰雹',
+      95: '雷阵雨',
+      96: '雷阵雨冰雹',
+      99: '强雷阵雨',
     };
     return map[code] ?? '未知';
   }
