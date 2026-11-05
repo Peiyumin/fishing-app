@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../models/my_order.dart';
 import '../models/shop_product.dart';
 import '../models/shop_review.dart';
@@ -219,10 +221,19 @@ class ShopService {
   /// 下单
   /// [usePoints] = true → 积分兑换（扣积分）；false → 现金购买（测试版只登记）
   /// 返回后端结果 Map：积分兑换含 pointsSpent / pointsLeft / pointsName
+  /// 下单
+  ///
+  /// v43：积分兑换必须带收货地址（后端会校验并返回 400「请先填写收货地址」）。
+  /// 地址在兑换弹层里已经写进 user_addresses，这里再作为**订单快照**传一份，
+  /// 之后用户改地址/删地址都不影响历史订单的发货信息。
   static Future<Map<String, dynamic>> createOrder({
     required String productId,
     required bool usePoints,
     int quantity = 1,
+    String recvName = '',
+    String recvPhone = '',
+    String recvRegion = '',
+    String recvDetail = '',
   }) async {
     if (_demo) {
       // 演示模式：不真的扣积分，只返回提示
@@ -233,13 +244,40 @@ class ShopService {
             usePoints ? '演示模式：积分兑换未真实扣减' : '演示模式：现金购买未接入支付',
       };
     }
-    if (ApiClient.token == null) throw Exception('请先登录');
-    final data = jsonMap(await ApiClient.post('/shop/order', {
+    // 先把请求体拼好并记下来，再做登录校验：
+    // 没登录会抛「请先登录」，但测试要验的正是这个体（与 spot_service.reportSpot 同一套做法）
+    final payload = <String, dynamic>{
       'product_id': productId,
       'type': usePoints ? 'points' : 'cash',
       'quantity': quantity,
-    }));
+      if (recvName.isNotEmpty) 'recv_name': recvName,
+      if (recvPhone.isNotEmpty) 'recv_phone': recvPhone,
+      if (recvRegion.isNotEmpty) 'recv_region': recvRegion,
+      if (recvDetail.isNotEmpty) 'recv_detail': recvDetail,
+    };
+    testLastOrderBody = payload;
+    if (ApiClient.token == null) throw Exception('请先登录');
+    final data = jsonMap(await ApiClient.post('/shop/order', payload));
     return Map<String, dynamic>.from(data);
+  }
+
+  /// 仅测试用：记录最近一次 [createOrder] 实际会发出去的请求体
+  @visibleForTesting
+  static Map<String, dynamic>? testLastOrderBody;
+
+  /// 订单详情（含物流轨迹）
+  ///
+  /// 列表接口只带轻量快递字段，轨迹单独取：一屏 100 单，每单都拖十几条轨迹太重。
+  /// 老后端没有这个接口时返回 null，页面退化成「只显示单号」。
+  static Future<MyOrder?> fetchOrderDetail(String orderId) async {
+    if (_demo || ApiClient.token == null || orderId.isEmpty) return null;
+    try {
+      final data = await ApiClient.get('/shop/orders/$orderId');
+      if (data is Map) {
+        return MyOrder.fromJson(Map<String, dynamic>.from(data));
+      }
+    } catch (_) {}
+    return null;
   }
 
   /// 我的订单（积分兑换 / 现金登记）
