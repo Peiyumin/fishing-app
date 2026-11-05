@@ -6,7 +6,9 @@ import '../app_theme.dart';
 import '../widgets/emoji_panel.dart';
 import '../models/shop_product.dart';
 import '../models/shop_review.dart';
+import '../models/user_address.dart';
 import '../services/refresh_bus.dart';
+import '../services/settings_service.dart';
 import '../services/shop_service.dart';
 import '../services/session_provider.dart';
 import '../widgets/center_toast.dart';
@@ -60,35 +62,36 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     if (!session.isLoggedIn) {
       if (!await ensureLogin(context, hint: '登录后即可下单购买')) return;
     }
+    if (!mounted) return;
     if (usePoints && !_p.canRedeem) {
       CenterToast.show(context, '该商品不支持积分兑换');
       return;
     }
 
-    // 积分兑换前先确认（会真实扣除积分）
+    // v43：积分兑换必须填收货地址
+    //
+    // 老流程点「兑换」直接扣积分，后台拿到订单却不知道发货给谁。
+    // 现在先弹地址弹层：可以直接选已有地址，也可以现场填；
+    // 现场填的会写进 user_addresses ——「我的 → 设置 → 收货地址」里同步能看到。
+    UserAddress? addr;
     if (usePoints) {
-      final ok = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('确认积分兑换'),
-              content: Text(
-                '将消耗 ${_p.pointsPrice} 积分兑换「${_p.name}」，'
-                '兑换后积分不可退回，确认继续？',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(ctx).pop(false),
-                  child: const Text('再想想'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.of(ctx).pop(true),
-                  child: const Text('确认兑换'),
-                ),
-              ],
-            ),
-          ) ??
-          false;
-      if (!ok) return;
+      addr = await showModalBottomSheet<UserAddress>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: AppTheme.surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (_) => Padding(
+          padding:
+              EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+          child: _CheckoutSheet(
+            productName: _p.name,
+            points: _p.pointsPrice,
+          ),
+        ),
+      );
+      if (addr == null) return; // 没确认地址 = 放弃兑换
     }
 
     setState(() => _ordering = true);
@@ -96,6 +99,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       final res = await ShopService.createOrder(
         productId: _p.id,
         usePoints: usePoints,
+        recvName: addr?.name ?? '',
+        recvPhone: addr?.phone ?? '',
+        recvRegion: addr?.region ?? '',
+        recvDetail: addr?.detail ?? '',
       );
       if (!mounted) return;
       if (usePoints) {
@@ -401,9 +408,65 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 
   /// 图文混排详情：按后台插入顺序渲染「文字 → 图片 → 文字」
+  ///
+  /// v2.1.76：连续的详情图之间**不留白缝、不切圆角**。
+  /// 后台一次上传的几张图常常是一张长图被切开（或同一组实拍），
+  /// 中间留 10px 白缝 + 四角圆角，看起来像断成几块碎片。
+  /// 现在的规则：上一张也是图 → 上边不留圆角；下一张也是图 → 下边不留白、不留圆角。
+  /// 于是连续 N 张图会拼成一块完整的长图，只有整组的最上和最下才有圆角。
   Widget _detailBlocks() {
     final blocks = _p.detailBlocks;
     if (blocks.isEmpty) return const SizedBox();
+
+    bool isImgAt(int i) => i >= 0 && i < blocks.length && blocks[i].$1 == 'image';
+    const r = AppTheme.radiusSm;
+
+    final items = <Widget>[];
+    for (var i = 0; i < blocks.length; i++) {
+      final b = blocks[i];
+      if (b.$1 == 'image') {
+        final prevImg = isImgAt(i - 1);
+        final nextImg = isImgAt(i + 1);
+        items.add(Padding(
+          padding: EdgeInsets.only(bottom: nextImg ? 0 : 10),
+          child: ClipRRect(
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(prevImg ? 0 : r),
+              topRight: Radius.circular(prevImg ? 0 : r),
+              bottomLeft: Radius.circular(nextImg ? 0 : r),
+              bottomRight: Radius.circular(nextImg ? 0 : r),
+            ),
+            child: CachedNetworkImage(
+              imageUrl: b.$2,
+              width: double.infinity,
+              // fitWidth 而不是 cover：cover 在高度未定时会按比例撑开，
+              // 但一旦图片尺寸异常就会裁掉边缘，接缝处出现半像素白线
+              fit: BoxFit.fitWidth,
+              placeholder: (_, __) => Container(
+                height: 160,
+                color: AppTheme.primarySoft,
+              ),
+              errorWidget: (_, __, ___) => Container(
+                height: 120,
+                color: AppTheme.primarySoft,
+                child: const Icon(Icons.broken_image_outlined,
+                    color: AppTheme.primaryBorder),
+              ),
+            ),
+          ),
+        ));
+      } else {
+        items.add(Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Text(b.$2,
+              style: const TextStyle(
+                  fontSize: 13.5,
+                  height: 1.65,
+                  color: AppTheme.textSecondary)),
+        ));
+      }
+    }
+
     return Container(
       margin: const EdgeInsets.only(top: 10),
       color: AppTheme.surface,
@@ -417,39 +480,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   fontWeight: FontWeight.w600,
                   color: AppTheme.textPrimary)),
           const SizedBox(height: 8),
-          ...blocks.map((b) {
-            if (b.$1 == 'image') {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-                  child: CachedNetworkImage(
-                    imageUrl: b.$2,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
-                    placeholder: (_, __) => Container(
-                      height: 160,
-                      color: AppTheme.primarySoft,
-                    ),
-                    errorWidget: (_, __, ___) => Container(
-                      height: 120,
-                      color: AppTheme.primarySoft,
-                      child: const Icon(Icons.broken_image_outlined,
-                          color: AppTheme.primaryBorder),
-                    ),
-                  ),
-                ),
-              );
-            }
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Text(b.$2,
-                  style: const TextStyle(
-                      fontSize: 13.5,
-                      height: 1.65,
-                      color: AppTheme.textSecondary)),
-            );
-          }),
+          ...items,
         ],
       ),
     );
@@ -636,4 +667,389 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       ),
     );
   }
+}
+
+// ============================================================
+// 积分兑换 · 填写收货地址（v43）
+// ============================================================
+/// 兑换前弹出来的地址弹层
+///
+/// 两种状态：
+///   · 已有地址 → 单选列表（默认选中「默认地址」），底部「确认兑换」
+///   · 没有地址 → 直接出表单（收货人 / 手机号 / 所在地区 / 详细地址）
+///
+/// 表单保存走 [SettingsService.saveAddress]，写的是 user_addresses 表，
+/// 所以「我的 → 设置 → 收货地址」里会立刻出现这一条，两处共用一份数据。
+class _CheckoutSheet extends StatefulWidget {
+  final String productName;
+  final int points;
+
+  const _CheckoutSheet({required this.productName, required this.points});
+
+  @override
+  State<_CheckoutSheet> createState() => _CheckoutSheetState();
+}
+
+class _CheckoutSheetState extends State<_CheckoutSheet> {
+  List<UserAddress> _list = const [];
+  UserAddress? _picked;
+  bool _loading = true;
+  bool _formMode = false; // true = 正在填新地址
+  bool _saving = false;
+
+  final _name = TextEditingController();
+  final _phone = TextEditingController();
+  final _region = TextEditingController();
+  final _detail = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _phone.dispose();
+    _region.dispose();
+    _detail.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    List<UserAddress> list = const [];
+    try {
+      list = await SettingsService.addresses();
+    } catch (_) {
+      // 拉不到地址不算失败：直接让用户手填（离线/老后端都能兑换）
+    }
+    if (!mounted) return;
+    setState(() {
+      _list = list;
+      _picked = list.isEmpty
+          ? null
+          : list.firstWhere((a) => a.isDefault, orElse: () => list.first);
+      _formMode = list.isEmpty; // 没有地址就不用让用户再点一次「新增」
+      _loading = false;
+    });
+  }
+
+  Future<void> _saveNew() async {
+    if (_saving) return;
+    final name = _name.text.trim();
+    final phone = _phone.text.trim();
+    final region = _region.text.trim();
+    final detail = _detail.text.trim();
+    if (name.isEmpty) {
+      CenterToast.show(context, '请填写收货人姓名');
+      return;
+    }
+    if (phone.length < 6) {
+      CenterToast.show(context, '请填写正确的手机号');
+      return;
+    }
+    if (detail.isEmpty) {
+      CenterToast.show(context, '请填写详细地址');
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final list = await SettingsService.saveAddress(
+        name: name,
+        phone: phone,
+        region: region,
+        detail: detail,
+        isDefault: _list.isEmpty, // 第一条自动设为默认地址
+      );
+      if (!mounted) return;
+      UserAddress? saved;
+      for (final a in list) {
+        if (a.name == name && a.phone == phone && a.detail == detail) {
+          saved = a;
+        }
+      }
+      if (saved == null && list.isNotEmpty) saved = list.last;
+      if (saved != null) {
+        Navigator.of(context).pop(saved); // 存好就直接去下单
+      } else {
+        setState(() {
+          _saving = false;
+          _list = list;
+          _picked = list.isEmpty ? null : list.first;
+          _formMode = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        CenterToast.show(context, '保存地址失败：$e');
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.86,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _header(),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 40),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                  child: _formMode ? _formBody() : _listBody(),
+                ),
+              ),
+            if (!_loading) _footer(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _header() => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 8, 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_formMode && !_loading ? '填写收货地址' : '确认收货地址',
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 3),
+                  const Text(
+                    '兑换成功后按这个地址发货，可在「设置 → 收货地址」管理',
+                    style: TextStyle(
+                        fontSize: 11.5, color: AppTheme.textTertiary),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              onPressed: () => Navigator.of(context).pop(),
+              icon: const Icon(Icons.close, size: 20),
+              color: AppTheme.textTertiary,
+            ),
+          ],
+        ),
+      );
+
+  // ---------------- 已有地址列表 ----------------
+
+  Widget _listBody() => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final a in _list) ...[
+            _addrTile(a),
+            const SizedBox(height: 8),
+          ],
+          const SizedBox(height: 2),
+          OutlinedButton.icon(
+            onPressed: () => setState(() => _formMode = true),
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('使用新地址'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 44),
+              side: const BorderSide(color: AppTheme.border),
+              foregroundColor: AppTheme.primary,
+            ),
+          ),
+        ],
+      );
+
+  Widget _addrTile(UserAddress a) {
+    final on = _picked?.id == a.id;
+    return GestureDetector(
+      onTap: () => setState(() => _picked = a),
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
+        decoration: BoxDecoration(
+          color: on ? AppTheme.primarySoft : AppTheme.surface,
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          border: Border.all(
+            color: on ? AppTheme.primary : AppTheme.border,
+            width: on ? 1.4 : 1,
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              on ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+              size: 18,
+              color: on ? AppTheme.primary : AppTheme.textTertiary,
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(a.name,
+                          style: const TextStyle(
+                              fontSize: 14, fontWeight: FontWeight.w700)),
+                      const SizedBox(width: 8),
+                      Text(a.maskedPhone,
+                          style: const TextStyle(
+                              fontSize: 12, color: AppTheme.textSecondary)),
+                      if (a.isDefault) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: AppTheme.accentLight,
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: const Text('默认',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTheme.accentDark)),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(a.fullAddress,
+                      style: const TextStyle(
+                          fontSize: 12.5,
+                          height: 1.45,
+                          color: AppTheme.textSecondary)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------- 新地址表单 ----------------
+
+  Widget _formBody() => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_list.isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => setState(() => _formMode = false),
+                icon: const Icon(Icons.arrow_back, size: 16),
+                label: const Text('选择已有地址'),
+                style: TextButton.styleFrom(
+                  padding: EdgeInsets.zero,
+                  minimumSize: const Size(0, 30),
+                  foregroundColor: AppTheme.textSecondary,
+                ),
+              ),
+            ),
+          _field(_name, '收货人', hint: '请填写收货人姓名', key: 'checkout_name'),
+          const SizedBox(height: 10),
+          _field(_phone, '手机号',
+              hint: '请填写手机号', keyboard: TextInputType.phone, key: 'checkout_phone'),
+          const SizedBox(height: 10),
+          _field(_region, '所在地区', hint: '省 / 市 / 区（选填）', key: 'checkout_region'),
+          const SizedBox(height: 10),
+          _field(_detail, '详细地址',
+              hint: '街道、门牌号、楼栋单元', maxLines: 2, key: 'checkout_detail'),
+        ],
+      );
+
+  Widget _field(TextEditingController c, String label,
+      {String? hint,
+      TextInputType? keyboard,
+      int maxLines = 1,
+      String? key}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: const TextStyle(
+                fontSize: 12.5, color: AppTheme.textSecondary)),
+        const SizedBox(height: 4),
+        TextField(
+          key: key == null ? null : ValueKey(key),
+          controller: c,
+          keyboardType: keyboard,
+          maxLines: maxLines,
+          style: const TextStyle(fontSize: 14),
+          decoration: InputDecoration(
+            hintText: hint,
+            isDense: true,
+            filled: true,
+            fillColor: AppTheme.primarySoft,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: const BorderSide(color: AppTheme.border),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: const BorderSide(color: AppTheme.border),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---------------- 底部按钮 ----------------
+
+  Widget _footer() => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              height: 46,
+              child: ElevatedButton(
+                key: ValueKey(_formMode ? 'checkout_save' : 'checkout_confirm'),
+                onPressed: _saving
+                    ? null
+                    : (_formMode
+                        ? _saveNew
+                        : (_picked == null
+                            ? null
+                            : () => Navigator.of(context).pop(_picked))),
+                child: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : Text(_formMode
+                        ? '保存地址并兑换'
+                        : '确认兑换 · 消耗 ${widget.points} 积分'),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _formMode
+                  ? '保存后地址会同步到「设置 → 收货地址」'
+                  : '兑换成功将立即扣除积分，兑换后积分不可退回',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  fontSize: 11, color: AppTheme.textTertiary),
+            ),
+          ],
+        ),
+      );
 }
