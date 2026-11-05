@@ -68,30 +68,103 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       return;
     }
 
-    // v43：积分兑换必须填收货地址
+    // 积分兑换的三段式流程（v2.1.77 修正顺序）：
     //
-    // 老流程点「兑换」直接扣积分，后台拿到订单却不知道发货给谁。
-    // 现在先弹地址弹层：可以直接选已有地址，也可以现场填；
-    // 现场填的会写进 user_addresses ——「我的 → 设置 → 收货地址」里同步能看到。
+    //   ① 先问「要不要换」——扣积分不可逆，必须在问地址之前问清楚
+    //   ② 确认了才查收货地址：有地址 → 选一个；没地址 → 现场添加
+    //   ③ 地址定下来再最后确认一次（带地址摘要），确认前一分积分都不扣
+    //
+    // 老流程（v2.1.76）是点「兑换」直接弹地址表单，等于「还没决定换不换就让你填地址」，
+    // 而且弹层里的按钮一点就扣分，没有任何二次确认的机会。
+    if (usePoints) {
+      final ok = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('确认积分兑换'),
+              content: Text(
+                '将消耗 ${_p.pointsPrice} 积分兑换「${_p.name}」，'
+                '兑换后积分不可退回，确认继续？',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('再想想'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('继续选择地址'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!ok || !mounted) return;
+    }
+
     UserAddress? addr;
     if (usePoints) {
-      addr = await showModalBottomSheet<UserAddress>(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: AppTheme.surface,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        builder: (_) => Padding(
-          padding:
-              EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-          child: _CheckoutSheet(
-            productName: _p.name,
-            points: _p.pointsPrice,
+      while (true) {
+        // ② 有地址就是单选题，没地址直接进表单
+        final picked = await showModalBottomSheet<UserAddress>(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: AppTheme.surface,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
-        ),
-      );
-      if (addr == null) return; // 没确认地址 = 放弃兑换
+          builder: (_) => Padding(
+            padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom),
+            child: const _CheckoutSheet(),
+          ),
+        );
+        if (picked == null) return; // 关掉弹层 = 放弃兑换
+        if (!mounted) return;
+
+        // ③ 地址选好，最后确认一次（地址 + 扣多少积分都摆出来）
+        final done = await showDialog<bool>(
+              context: context,
+              barrierDismissible: false,
+              builder: (ctx) => AlertDialog(
+                title: const Text('确认兑换'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _confirmRow('收货人', '${picked.name}  ${picked.maskedPhone}'),
+                    const SizedBox(height: 8),
+                    _confirmRow('寄送到', picked.fullAddress),
+                    const SizedBox(height: 12),
+                    Text(
+                      '将消耗 ${_p.pointsPrice} 积分兑换「${_p.name}」，'
+                      '兑换后积分不可退回。',
+                      style: const TextStyle(
+                          fontSize: 12.5,
+                          height: 1.5,
+                          color: AppTheme.textSecondary),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: const Text('修改地址'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    child: const Text('确认兑换'),
+                  ),
+                ],
+              ),
+            ) ??
+            false;
+        if (done) {
+          addr = picked;
+          break;
+        }
+        // 点了「修改地址」→ 回到地址弹层重新选
+        if (!mounted) return;
+      }
     }
 
     setState(() => _ordering = true);
@@ -127,6 +200,23 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       if (mounted) setState(() => _ordering = false);
     }
   }
+
+  /// 最终确认弹窗里的「标签 + 内容」一行
+  Widget _confirmRow(String label, String value) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 50,
+            child: Text(label,
+                style: const TextStyle(
+                    fontSize: 12.5, color: AppTheme.textTertiary)),
+          ),
+          Expanded(
+            child: Text(value,
+                style: const TextStyle(fontSize: 13, height: 1.4)),
+          ),
+        ],
+      );
 
   // ---------------- 评价 ----------------
 
@@ -672,19 +762,19 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 // ============================================================
 // 积分兑换 · 填写收货地址（v43）
 // ============================================================
-/// 兑换前弹出来的地址弹层
+/// 兑换流程第二步弹出来的地址弹层
+///
+/// 只负责「挑一个地址」或「现场加一个地址」，**不负责扣积分** ——
+/// 扣积分放在它之后的最终确认弹窗里，所以用户在这里点错了也不会误扣。
 ///
 /// 两种状态：
-///   · 已有地址 → 单选列表（默认选中「默认地址」），底部「确认兑换」
+///   · 已有地址 → 单选列表（默认选中「默认地址」），底部「使用这个地址」
 ///   · 没有地址 → 直接出表单（收货人 / 手机号 / 所在地区 / 详细地址）
 ///
 /// 表单保存走 [SettingsService.saveAddress]，写的是 user_addresses 表，
 /// 所以「我的 → 设置 → 收货地址」里会立刻出现这一条，两处共用一份数据。
 class _CheckoutSheet extends StatefulWidget {
-  final String productName;
-  final int points;
-
-  const _CheckoutSheet({required this.productName, required this.points});
+  const _CheckoutSheet();
 
   @override
   State<_CheckoutSheet> createState() => _CheckoutSheetState();
@@ -828,13 +918,15 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(_formMode && !_loading ? '填写收货地址' : '确认收货地址',
+                  Text(_formMode && !_loading ? '添加收货地址' : '选择收货地址',
                       style: const TextStyle(
                           fontSize: 16, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 3),
-                  const Text(
-                    '兑换成功后按这个地址发货，可在「设置 → 收货地址」管理',
-                    style: TextStyle(
+                  Text(
+                    _formMode && !_loading
+                        ? '填好后会自动同步到「设置 → 收货地址」'
+                        : '选好后还要最后确认一次，确认前不会扣积分',
+                    style: const TextStyle(
                         fontSize: 11.5, color: AppTheme.textTertiary),
                   ),
                 ],
@@ -1036,15 +1128,15 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
                         height: 18,
                         child: CircularProgressIndicator(strokeWidth: 2))
                     : Text(_formMode
-                        ? '保存地址并兑换'
-                        : '确认兑换 · 消耗 ${widget.points} 积分'),
+                        ? '保存并使用这个地址'
+                        : '使用这个地址'),
               ),
             ),
             const SizedBox(height: 6),
             Text(
               _formMode
-                  ? '保存后地址会同步到「设置 → 收货地址」'
-                  : '兑换成功将立即扣除积分，兑换后积分不可退回',
+                  ? '保存后地址会同步到「设置 → 收货地址」，兑换前还会再确认一次'
+                  : '这一步只是选地址，点下一步才确认兑换、才扣积分',
               textAlign: TextAlign.center,
               style: const TextStyle(
                   fontSize: 11, color: AppTheme.textTertiary),
