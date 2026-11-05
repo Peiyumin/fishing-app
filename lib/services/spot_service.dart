@@ -207,12 +207,37 @@ class SpotService {
   }
 
   /// 钓点报错
+  /// 测试用：记录最近一次 [reportSpot] 实际会发出去的请求体。
+  /// 生产环境只是个赋值，没有副作用；测试靠它断言「坐标真的传下去了」。
+  @visibleForTesting
+  static Map<String, dynamic>? testLastReportBody;
+
+  /// 提交钓点报错
+  ///
+  /// [lat]/[lng]/[accuracy] 是 v2.1.76 加的：报「坐标错误」时把钓友
+  /// 当时站的位置一起传上去。后台能看到「报点坐标距原坐标 380 米」并一键采纳，
+  /// 这是纠偏后仍不准的钓点最靠谱的数据源（高德的 POI 常是管理处/大门口，
+  /// 只有到过现场的人的 GPS 才知道真正的下竿位置）。
   static Future<void> reportSpot({
     required String spotId,
     required String spotName,
     required String reason,
     String? note,
+    double? lat,
+    double? lng,
+    double? accuracy,
   }) async {
+    // 请求体先拼好再记一份（测试断言用）：只有真的拿到位置才带坐标，
+    // 没给定位权限的用户照样能报错，只是不带坐标。
+    // accuracy 为 0 / 负数时不带 —— 那是「拿不到精度」而不是「精度 0 米」。
+    final payload = <String, dynamic>{
+      'reason': reason,
+      'note': note,
+      if (lat != null && lng != null) ...{'lat': lat, 'lng': lng},
+      if (accuracy != null && accuracy > 0) 'accuracy': accuracy,
+    };
+    testLastReportBody = payload;
+
     if (!ApiConfig.enabled) {
       _demoReports.insert(
         0,
@@ -229,7 +254,7 @@ class SpotService {
       return;
     }
     if (ApiClient.token == null) throw Exception('请先登录');
-    await ApiClient.post('/spots/$spotId/report', {'reason': reason, 'note': note});
+    await ApiClient.post('/spots/$spotId/report', payload);
   }
 
   /// 拉取报错列表（用户端按钓点详情展示报错数即可；演示模式返回内置报错）
