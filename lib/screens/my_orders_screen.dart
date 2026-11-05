@@ -424,6 +424,34 @@ class _OrderCard extends StatelessWidget {
                 ],
               ),
             ),
+            if (order.hasExpress) ...[
+              const Divider(height: 1, color: AppTheme.divider),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 9, 14, 9),
+                child: Row(
+                  children: [
+                    const Icon(Icons.local_shipping_outlined,
+                        size: 15, color: AppTheme.accentDark),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        order.expressText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 12.5, color: AppTheme.textSecondary),
+                      ),
+                    ),
+                    if (order.expressStatus.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      _Tag(text: order.expressStatus, color: AppTheme.accentDark),
+                    ],
+                    const Icon(Icons.chevron_right,
+                        size: 16, color: AppTheme.textTertiary),
+                  ],
+                ),
+              ),
+            ],
             // 底部操作
             if (onCancel != null || onConfirm != null) ...[
               const Divider(height: 1, color: AppTheme.divider),
@@ -572,7 +600,12 @@ class _OrderDetail extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = _OrderCard.statusColor(order.status);
     return SafeArea(
-      child: Padding(
+      child: Container(
+        // 弹层最高占 86% 屏幕：里面用 Flexible 滚动内容，
+        // 不设上限的话 Column(mainAxisSize.min) 里的 Flexible 拿不到边界
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.86,
+        ),
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -636,14 +669,24 @@ class _OrderDetail extends StatelessWidget {
                         color: AppTheme.primary)),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
             const Divider(height: 1, color: AppTheme.divider),
             const SizedBox(height: 12),
-            _kv('订单号', order.id),
+            // 内容区可滚动：物流轨迹有时候十几条，弹层高度固定 85% 屏幕，
+            // 不滚会直接溢出（RenderFlex overflowed）
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _kv('订单号', order.id),
             _kv('下单时间', order.createdAtText),
             _kv('购买方式', order.typeLabel),
             _kv('数量', '${order.quantity}'),
             if (order.remark.isNotEmpty) _kv('备注', order.remark),
+            // v43：收货信息 + 快递单号 + 物流轨迹
+            const SizedBox(height: 6),
+            _ExpressSection(order: order),
             if (order.canCancel)
               const Padding(
                 padding: EdgeInsets.only(top: 8),
@@ -665,7 +708,11 @@ class _OrderDetail extends StatelessWidget {
                     style: TextStyle(
                         fontSize: 11.5, color: AppTheme.textSecondary)),
               ),
-            const SizedBox(height: 16),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
             Row(
               children: [
                 Expanded(
@@ -832,6 +879,187 @@ class _OrderSkeleton extends StatelessWidget {
             color: AppTheme.background,
             borderRadius: BorderRadius.circular(4),
           ),
+        ),
+      );
+}
+
+// ============================================================
+// 收货信息 + 快递 + 物流动态（v43）
+// ============================================================
+/// 订单详情里的物流区
+///
+/// 列表接口只带「快递公司 / 单号 / 当前状态」，轨迹要单独取一次
+/// （`/shop/orders/{id}`）—— 一屏 100 单每单都拖十几条轨迹太重。
+/// 所以这里自己发一次请求，拿到轨迹后原地刷新；请求失败就退化成
+/// 只显示单号，不影响看订单。
+class _ExpressSection extends StatefulWidget {
+  final MyOrder order;
+  const _ExpressSection({required this.order});
+
+  @override
+  State<_ExpressSection> createState() => _ExpressSectionState();
+}
+
+class _ExpressSectionState extends State<_ExpressSection> {
+  late MyOrder _o = widget.order;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final d = await ShopService.fetchOrderDetail(_o.id);
+    if (!mounted) return;
+    setState(() {
+      if (d != null) _o = d;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final o = _o;
+    final hasRecv = o.recvName.isNotEmpty || o.recvDetail.isNotEmpty;
+    final hasAny = hasRecv || o.hasExpress || o.expressLogs.isNotEmpty;
+    if (!hasAny) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 8),
+        child: Text('还没有收货 / 物流信息',
+            style: TextStyle(fontSize: 12.5, color: AppTheme.textTertiary)),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: 18, color: AppTheme.divider),
+        if (hasRecv) ...[
+          _kv('收货人', o.recvName.isEmpty
+              ? '—'
+              : (o.recvPhone.isEmpty ? o.recvName : '${o.recvName}  ${o.recvPhone}')),
+          _kv('收货地址', (o.recvRegion.trim().isEmpty
+                  ? o.recvDetail
+                  : '${o.recvRegion} ${o.recvDetail}')
+              .trim()),
+        ],
+        if (o.hasExpress) _kv('快递', o.expressText),
+        if (o.expressStatus.isNotEmpty) _kv('物流状态', o.expressStatus),
+        if (_loading && o.expressLogs.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          )
+        else if (o.expressLogs.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          const Text('物流动态',
+              style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textPrimary)),
+          const SizedBox(height: 8),
+          _timeline(o.expressLogs),
+        ] else if (!o.hasExpress)
+          const Padding(
+            padding: EdgeInsets.only(top: 2, bottom: 8),
+            child: Text('商家还没发货，发货后这里会显示快递单号和物流动态',
+                style: TextStyle(fontSize: 11.5, color: AppTheme.textTertiary)),
+          ),
+      ],
+    );
+  }
+
+  Widget _timeline(List<OrderExpressLog> logs) => Column(
+        children: [
+          for (int i = 0; i < logs.length; i++)
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(
+                    width: 16,
+                    child: Column(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          margin: const EdgeInsets.only(top: 5),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: i == 0 ? AppTheme.primary : AppTheme.border,
+                          ),
+                        ),
+                        if (i != logs.length - 1)
+                          Expanded(
+                            child: Container(
+                              width: 1.4,
+                              margin: const EdgeInsets.only(top: 2),
+                              color: AppTheme.divider,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 4, bottom: 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            logs[i].content.isEmpty
+                                ? logs[i].status
+                                : logs[i].content,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              height: 1.45,
+                              fontWeight:
+                                  i == 0 ? FontWeight.w600 : FontWeight.w400,
+                              color: i == 0
+                                  ? AppTheme.textPrimary
+                                  : AppTheme.textSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            logs[i].status.isEmpty
+                                ? logs[i].timeText
+                                : '${logs[i].timeText} · ${logs[i].status}',
+                            style: const TextStyle(
+                                fontSize: 10.5, color: AppTheme.textTertiary),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      );
+
+  Widget _kv(String k, String v) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 62,
+              child: Text(k,
+                  style: const TextStyle(
+                      fontSize: 12.5, color: AppTheme.textSecondary)),
+            ),
+            Expanded(
+              child: Text(v,
+                  style: const TextStyle(
+                      fontSize: 12.5, height: 1.45, color: AppTheme.textPrimary)),
+            ),
+          ],
         ),
       );
 }
