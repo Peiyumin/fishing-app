@@ -10,6 +10,7 @@ import '../models/fishing_spot.dart';
 import '../models/spot_comment.dart';
 import '../services/api_config.dart';
 import '../services/geo_place.dart';
+import '../services/location_service.dart';
 import '../services/map_launcher.dart';
 import '../services/session_provider.dart';
 import '../services/spot_service.dart';
@@ -120,83 +121,33 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
   }
 
   Future<void> _report() async {
-    String reason = '坐标错误';
-    final noteCtrl = TextEditingController();
-    final ok = await showModalBottomSheet<bool>(
+    final res = await showModalBottomSheet<_ReportResult>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setSt) => Padding(
-          padding: EdgeInsets.only(
-            left: 16,
-            right: 16,
-            top: 16,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('钓点报错',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              const Text('选择原因', style: TextStyle(color: AppTheme.textTertiary)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: ['坐标错误', '已关闭', '信息有误', '已收费', '其他']
-                    .map((r) => ChoiceChip(
-                          label: Text(r),
-                          selected: reason == r,
-                          onSelected: (_) => setSt(() => reason = r),
-                        ))
-                    .toList(),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: noteCtrl,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  labelText: '补充说明（选填）',
-                  border: OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.emoji_emotions_outlined,
-                        size: 20, color: AppTheme.textSecondary),
-                    tooltip: '表情',
-                    onPressed: () => showEmojiSheet(context, noteCtrl),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                height: 44,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.danger,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () => Navigator.pop(ctx, true),
-                  child: const Text('提交报错'),
-                ),
-              ),
-            ],
-          ),
-        ),
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
+      builder: (_) => _ReportSheet(spotName: widget.spot.name),
     );
-    if (ok != true) return;
+    if (res == null) return;
 
     try {
       await SpotService.reportSpot(
         spotId: widget.spot.id,
         spotName: widget.spot.name,
-        reason: reason,
-        note: noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim(),
+        reason: res.reason,
+        note: res.note,
+        lat: res.lat,
+        lng: res.lng,
+        accuracy: res.accuracy,
       );
       if (mounted) {
         setState(() => _reportCount += 1);
-        CenterToast.show(context, '已提交报错，感谢反馈！');
+        CenterToast.show(
+          context,
+          res.hasCoord ? '已提交，你的位置也一起上报了，感谢！' : '已提交报错，感谢反馈！',
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -319,21 +270,45 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
                     color: AppTheme.accentLight,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Row(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.place_outlined,
-                          size: 15, color: AppTheme.accentDark),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          _addressText.isNotEmpty
-                              ? _addressText
-                              : '暂无地址信息，可点「导航前往」在地图里查看',
-                          style: const TextStyle(
-                              fontSize: 13, color: AppTheme.accentDark),
-                        ),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.place_outlined,
+                              size: 15, color: AppTheme.accentDark),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              _addressText.isNotEmpty
+                                  ? _addressText
+                                  : '暂无地址信息，可点「导航前往」在地图里查看',
+                              style: const TextStyle(
+                                  fontSize: 13, color: AppTheme.accentDark),
+                            ),
+                          ),
+                        ],
                       ),
+                      // v2.1.76：纠偏之后仍可能有偏（高德的点常是管理处/大门口），
+                      // 让到过现场的钓友顺手把他站的位置发上来 —— 这是最准的数据源
+                      if (s.lat != 0 || s.lng != 0)
+                        GestureDetector(
+                          onTap: _report,
+                          behavior: HitTestBehavior.opaque,
+                          child: const Padding(
+                            padding: EdgeInsets.only(left: 21, top: 4),
+                            child: Text(
+                              '位置不对？点这里把你在现场的位置发给我们 ›',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppTheme.accentDark,
+                                decoration: TextDecoration.underline,
+                                decorationColor: AppTheme.accentDark,
+                              ),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -670,5 +645,233 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
     );
     if (onTap == null) return row;
     return InkWell(onTap: onTap, child: row);
+  }
+}
+
+/// 报错弹窗的返回值
+class _ReportResult {
+  final String reason;
+  final String? note;
+
+  /// 钓友当时站的位置（WGS-84）。只有选了「坐标错误」并且真的定位成功才有值。
+  final double? lat;
+  final double? lng;
+  final double? accuracy;
+
+  const _ReportResult({
+    required this.reason,
+    this.note,
+    this.lat,
+    this.lng,
+    this.accuracy,
+  });
+
+  bool get hasCoord => lat != null && lng != null;
+}
+
+/// 钓点报错弹窗（v2.1.76：报「坐标错误」时顺手把当前位置带上）
+///
+/// 为什么要带位置：
+///   高德地图里「某某水库」那条 POI，坐标常常落在管理机构、大门口或水体中心，
+///   不是能下竿的位置 —— 这种偏差靠坐标系换算永远修不掉（换算误差不到 1 米）。
+///   到过现场的钓友手机 GPS（一般 ±5~15 米）才是金标准，后台可以一键采纳。
+class _ReportSheet extends StatefulWidget {
+  final String spotName;
+  const _ReportSheet({required this.spotName});
+
+  @override
+  State<_ReportSheet> createState() => _ReportSheetState();
+}
+
+class _ReportSheetState extends State<_ReportSheet> {
+  static const _reasons = ['坐标错误', '已关闭', '信息有误', '已收费', '其他'];
+
+  String _reason = '坐标错误';
+  final TextEditingController _note = TextEditingController();
+
+  bool _locating = false;
+  double? _lat;
+  double? _lng;
+  double? _acc;
+  String _posErr = '';
+
+  @override
+  void initState() {
+    super.initState();
+    // 打开就开始取：用户点进来多半就是想报位置，不该让他再点一次「获取」
+    _grab();
+  }
+
+  @override
+  void dispose() {
+    _note.dispose();
+    super.dispose();
+  }
+
+  Future<void> _grab() async {
+    if (_locating) return;
+    setState(() {
+      _locating = true;
+      _posErr = '';
+    });
+    try {
+      final p = await LocationService.determinePosition();
+      if (!mounted) return;
+      setState(() {
+        _lat = p.latitude;
+        _lng = p.longitude;
+        _acc = p.accuracy;
+        _locating = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _locating = false;
+        _posErr = e is LocationException ? e.message : '定位失败，请检查定位权限';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 16,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('钓点报错',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
+          const Text('选择原因', style: TextStyle(color: AppTheme.textTertiary)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: _reasons
+                .map((r) => ChoiceChip(
+                      label: Text(r),
+                      selected: _reason == r,
+                      onSelected: (_) => setState(() => _reason = r),
+                    ))
+                .toList(),
+          ),
+
+          // 只有报「坐标错误」才需要位置，别的理由问了也白问
+          if (_reason == '坐标错误') ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+              decoration: BoxDecoration(
+                color: AppTheme.accentLight,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.my_location,
+                          size: 16, color: AppTheme.accentDark),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          _locating
+                              ? '正在获取你的位置…'
+                              : (_lat != null
+                                  ? '${_lat!.toStringAsFixed(6)}, '
+                                      '${_lng!.toStringAsFixed(6)}'
+                                      '${_acc != null ? '  ·  精度 ±${_acc!.toStringAsFixed(0)} 米' : ''}'
+                                  : '没有取到位置'),
+                          style: const TextStyle(
+                              fontSize: 13, color: AppTheme.accentDark),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _locating ? null : _grab,
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: const Size(0, 32),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: Text(
+                          _lat == null ? '获取' : '重新获取',
+                          style: const TextStyle(fontSize: 12.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_posErr.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(_posErr,
+                          style: const TextStyle(
+                              fontSize: 12, color: AppTheme.danger)),
+                    ),
+                  if (_lat != null)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Text(
+                        '你在钓点现场的话，这个位置会作为「建议坐标」交给管理员，'
+                        '核对后可直接采纳。',
+                        style: TextStyle(
+                            fontSize: 11.5, color: AppTheme.textSecondary),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 12),
+          TextField(
+            controller: _note,
+            maxLines: 3,
+            decoration: InputDecoration(
+              labelText: '补充说明（选填）',
+              border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.emoji_emotions_outlined,
+                    size: 20, color: AppTheme.textSecondary),
+                tooltip: '表情',
+                onPressed: () => showEmojiSheet(context, _note),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.danger,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () {
+                final note = _note.text.trim();
+                Navigator.pop(
+                  context,
+                  _ReportResult(
+                    reason: _reason,
+                    note: note.isEmpty ? null : note,
+                    // 只在「坐标错误」时把位置带上，别的理由带坐标没意义
+                    lat: _reason == '坐标错误' ? _lat : null,
+                    lng: _reason == '坐标错误' ? _lng : null,
+                    accuracy: _reason == '坐标错误' ? _acc : null,
+                  ),
+                );
+              },
+              child: const Text('提交报错'),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
