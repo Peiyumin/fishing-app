@@ -452,8 +452,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     }
     final w = found;
     if (w == null) return;
-    final g = CoordTransform.wgs84ToGcj02(w.center.latitude, w.center.longitude);
-    _mapController.move(LatLng(g[0], g[1]), 9.5);
+    _mapController.move(_tile.project(w.center), 9.5);
     setState(() => _selWater = w);
   }
 
@@ -905,9 +904,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
           onTap: () {
             Navigator.pop(context);
             if (z.onMap && z.center != null) {
-              final g = CoordTransform.wgs84ToGcj02(
-                  z.center!.latitude, z.center!.longitude);
-              _mapController.move(LatLng(g[0], g[1]), 7.5);
+              _mapController.move(_tile.project(z.center!), 7.5);
             }
             setState(() => _selZone = z);
           },
@@ -1132,9 +1129,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
               child: OutlinedButton.icon(
                 onPressed: () {
                   Navigator.pop(context);
-                  final g = CoordTransform.wgs84ToGcj02(
-                      w.center.latitude, w.center.longitude);
-                  _mapController.move(LatLng(g[0], g[1]), 9.5);
+                  _mapController.move(_tile.project(w.center), 9.5);
                 },
                 icon: const Icon(Icons.my_location, size: 17),
                 label: const Text('在地图上查看'),
@@ -1240,9 +1235,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
                   onPressed: () {
                     Navigator.pop(context);
                     if (z.center != null) {
-                      final g = CoordTransform.wgs84ToGcj02(
-                          z.center!.latitude, z.center!.longitude);
-                      _mapController.move(LatLng(g[0], g[1]), 8.5);
+                      _mapController.move(_tile.project(z.center!), 8.5);
                     }
                   },
                   child: const Text('定位到该区域'),
@@ -1960,9 +1953,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
             color: AppTheme.water,
             onTap: () {
               _exitSearch();
-              final g = CoordTransform.wgs84ToGcj02(
-                  w.center.latitude, w.center.longitude);
-              _mapController.move(LatLng(g[0], g[1]), 9.5);
+              _mapController.move(_tile.project(w.center), 9.5);
               setState(() => _selWater = w);
             }));
       }
@@ -1977,9 +1968,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
             onTap: () {
               _exitSearch();
               if (z.onMap && z.center != null) {
-                final g = CoordTransform.wgs84ToGcj02(
-                    z.center!.latitude, z.center!.longitude);
-                _mapController.move(LatLng(g[0], g[1]), 8);
+                _mapController.move(_tile.project(z.center!), 8);
               }
               setState(() => _selZone = z);
             }));
