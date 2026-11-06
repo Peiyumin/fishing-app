@@ -25,6 +25,17 @@ class FishingSpot {
 
   /// 渔具店是否支持外送（其他类型恒 false）
   final bool delivery;
+
+  /// 坐标是否精确（v44）
+  ///
+  /// `true`  = 坐标来自手机定位或用户在地图上点的位置 —— 这个点就是钓位，
+  ///           导航时把坐标交给地图 App。
+  /// `false` = 用户只打了文字地址，坐标是服务端解析出来的街道级粗坐标 ——
+  ///           拿它当导航终点会导到村口，所以导航时改把**文字地址**塞给
+  ///           地图 App，让它自己搜。
+  ///
+  /// 后端默认 1（老数据都是点选/导入来的坐标），只有「纯文字地址」新建的点是 0。
+  final bool coordPrecise;
   final int reportCount; // 被报错次数
   final bool verified; // 是否官方核实
   final int commentCount; // 评论数（钓场）
@@ -47,6 +58,7 @@ class FishingSpot {
     this.tags = '',
     this.phone = '',
     this.delivery = false,
+    this.coordPrecise = true,
     this.reportCount = 0,
     this.verified = false,
     this.commentCount = 0,
@@ -58,6 +70,13 @@ class FishingSpot {
 
   /// 是否钓场类（列表卡片样式展示）
   bool get isVenue => kind == 'venue';
+
+  /// 能不能按坐标导航
+  ///
+  /// 两个条件都要满足：标记为精确 + 坐标本身有效（0,0 是「没有坐标」的约定写法，
+  /// 真在几内亚湾的钓点不可能存在）。
+  bool get canNavigateByCoord =>
+      coordPrecise && lat.abs() > 0.0001 && lng.abs() > 0.0001;
 
   /// 不可变更新副本（用于点赞/报错数本地即时刷新）
   FishingSpot copyWith({
@@ -78,6 +97,7 @@ class FishingSpot {
     String? tags,
     String? phone,
     bool? delivery,
+    bool? coordPrecise,
     int? reportCount,
     bool? verified,
     int? commentCount,
@@ -100,6 +120,7 @@ class FishingSpot {
       tags: tags ?? this.tags,
       phone: phone ?? this.phone,
       delivery: delivery ?? this.delivery,
+      coordPrecise: coordPrecise ?? this.coordPrecise,
       reportCount: reportCount ?? this.reportCount,
       verified: verified ?? this.verified,
       commentCount: commentCount ?? this.commentCount,
