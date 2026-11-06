@@ -53,6 +53,24 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
 
   LatLng? _picked; // WGS-84 坐标（存储用）
   LatLng? _myLocation; // 当前定位（GCJ-02 之上展示用，仅作「我在哪」指示）
+
+  // ── v44：坐标可信度 ────────────────────────────────────────
+  /// true  = 刚定位 / 刚在地图上点过，坐标就是这个点
+  /// false = 用户手改了「详细地址」，旧坐标已经对不上这句话
+  bool _precise = false;
+
+  /// 提交时按地址解析坐标的 loading
+  bool _geocoding = false;
+
+  /// 地址框下面那行小字
+  String get _addrHint {
+    final t = _addrCtrl.text.trim();
+    if (t.isEmpty) return '可以打字填地址，也可以点右边的准星读当前位置';
+    if (_geocoding) return '正在把你填的地址解析成位置…';
+    if (_precise) return '已按当前位置定位，导航会直接按坐标走';
+    return '导航时会按这段地址搜索（之前点选的坐标不再使用）';
+  }
+
   // 默认中心：杭州（GCJ-02，高德底图坐标系）
   final LatLng _defaultCenter = const LatLng(30.2741, 120.1551);
 
@@ -112,6 +130,7 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
       setState(() {
         _picked = p;
         _myLocation = LatLng(g[0], g[1]);
+        _precise = true; // GPS 拿到的点就是店铺/钓场位置
       });
       final r = await GeoNames.reverse(pos.latitude, pos.longitude);
       if (!mounted) return;
@@ -137,6 +156,7 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
       setState(() {
         _picked = p;
         _myLocation = LatLng(g[0], g[1]);
+        _precise = true;
       });
     } on LocationException catch (e) {
       if (mounted) {
@@ -156,10 +176,39 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
       CenterToast.show(context, '请填写名称');
       return;
     }
-    if (_picked == null) {
-      CenterToast.show(context, '请在地图上点选位置');
+
+    final addrText = _addrCtrl.text.trim();
+
+    // —— 位置来源（v44）——
+    //   刚定位/刚点图 → 用那个坐标，标记精确
+    //   手改了地址     → 按地址重新解析，解析出来的只到街道级，标记不精确
+    double? lat = _picked?.latitude;
+    double? lng = _picked?.longitude;
+    bool precise = _precise;
+
+    if (addrText.isNotEmpty && !_precise) {
+      if (mounted) setState(() => _geocoding = true);
+      final g = await SpotService.geocodeAddress(addrText);
+      if (mounted) setState(() => _geocoding = false);
+      if (!mounted) return;
+      if (g != null && g.valid) {
+        lat = g.lat;
+        lng = g.lng;
+        precise = false;
+      } else if (lat == null) {
+        CenterToast.show(
+            context, '这个地址没能解析成位置，请点「获取定位」或在地图上点一下');
+        return;
+      } else {
+        precise = false;
+      }
+    }
+
+    if (lat == null || lng == null) {
+      CenterToast.show(context, '请填写详细地址，或在地图上点选位置');
       return;
     }
+
     setState(() => _submitting = true);
     try {
       // 上传环境展示图（第一张兼作封面）
@@ -178,10 +227,10 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
         name: _nameCtrl.text.trim(),
         type: _type,
         description: _descCtrl.text.trim(),
-        lat: _picked!.latitude,
-        lng: _picked!.longitude,
+        lat: lat,
+        lng: lng,
         kind: widget.kind,
-        address: _addrCtrl.text.trim(),
+        address: addrText,
         fee: _feeCtrl.text.trim(),
         fish: _fishCtrl.text.trim(),
         tags: _tags.join(','),
@@ -190,6 +239,7 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
         phone: _phoneCtrl.text.trim(),
         rating: _rating,
         delivery: _isShop && _delivery,
+        coordPrecise: precise,
       );
       if (mounted) {
         // 审核提示
@@ -249,7 +299,10 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
                       // 高德底图为 GCJ-02，点选后转回 WGS-84 存储
                       final w = CoordTransform.gcj02ToWgs84(
                           point.latitude, point.longitude);
-                      setState(() => _picked = LatLng(w[0], w[1]));
+                      setState(() {
+                        _picked = LatLng(w[0], w[1]);
+                        _precise = true; // 用户亲手点的位置，可信
+                      });
                     },
                   ),
                   children: [
@@ -479,10 +532,17 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
                 const SizedBox(height: 12),
                 // —— 地址（可一键定位填址） ——
                 TextField(
+                  key: const ValueKey('venue_addr'),
                   controller: _addrCtrl,
+                  // 改了地址文字，之前点选的坐标就不再对应，降级为「不精确」
+                  onChanged: (_) {
+                    if (_precise) setState(() => _precise = false);
+                  },
                   decoration: InputDecoration(
                     labelText: '详细地址',
                     hintText: '例如：杭州市西湖区 XX 路 88 号',
+                    helperText: _addrHint,
+                    helperMaxLines: 2,
                     border: const OutlineInputBorder(),
                     suffixIcon: _locatingAddr
                         ? const Padding(
