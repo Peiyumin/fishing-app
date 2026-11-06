@@ -129,6 +129,8 @@ class SpotService {
       tags: (r['tags'] ?? '').toString(),
       phone: (r['phone'] ?? '').toString(),
       delivery: jsonInt(r['delivery']) == 1,
+      // 后端没这个字段（老版本）时按「精确」处理：老数据的坐标都是点选/导入来的
+      coordPrecise: jsonInt(r['coord_precise']) != 0,
       reportCount: jsonInt(r['report_count']) ?? 0,
       verified: jsonInt(r['verified']) == 1,
       commentCount: jsonInt(r['comment_count']) ?? 0,
@@ -161,6 +163,7 @@ class SpotService {
     String phone = '',
     double rating = 0,
     bool delivery = false,
+    bool coordPrecise = true,
   }) async {
     if (!ApiConfig.enabled) {
       _userSpots.insert(
@@ -203,7 +206,42 @@ class SpotService {
       'phone': phone,
       'rating': rating,
       'delivery': delivery,
+      // v44：告诉后端这个坐标是「实测」还是「地址解析出来的粗坐标」，
+      // 决定详情页导航时按坐标走还是按文字地址走
+      'coord_precise': coordPrecise ? 1 : 0,
     });
+  }
+
+  /// 文字地址 → 坐标（v44）
+  ///
+  /// 走自家后端 `/geo/forward`：高德 Web 服务 Key 是服务端 Key，绝不能放客户端。
+  /// 后端没配 Key 时会用 OSM 兜底，所以这个接口在没有 High德 Key 的情况下也能用。
+  ///
+  /// 返回 null 表示解析失败（地址太模糊、没网、没登录…），调用方应当提示用户
+  /// 「在地图上点一下位置」而不是硬拿一个错坐标去提交。
+  ///
+  /// ★ 解析出来的坐标只到街道级，调用方必须把它当作 `coordPrecise = false` 用。
+  static Future<GeoPoint?> geocodeAddress(String address,
+      {String city = ''}) async {
+    if (!ApiConfig.enabled) return null;
+    final addr = address.trim();
+    if (addr.length < 4) return null;
+    if (ApiClient.token == null) return null;
+    try {
+      final data = jsonMap(await ApiClient.post('/geo/forward', {
+        'address': addr,
+        if (city.isNotEmpty) 'city': city,
+      }));
+      return GeoPoint(
+        lat: jsonDouble(data['lat']) ?? 0,
+        lng: jsonDouble(data['lng']) ?? 0,
+        levelText: (data['level_text'] ?? '').toString(),
+        formatted: (data['formatted'] ?? '').toString(),
+        source: (data['source'] ?? '').toString(),
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 钓点报错
@@ -283,5 +321,40 @@ class SpotService {
     }
     if (ApiClient.token == null) throw Exception('请先登录');
     await ApiClient.post('/spots/$spotId/comment', {'content': content});
+  }
+}
+
+/// 地址解析结果（坐标 + 精度说明）
+///
+/// 由 [SpotService.geocodeAddress] 返回。注意它**永远不是精确坐标**：
+/// 文字地址能解析到门牌号级已经很好了，绝大多数只到街道/村口。
+/// 所以拿到它之后必须按 `coordPrecise = false` 提交，导航时才会改用文字地址。
+class GeoPoint {
+  final double lat;
+  final double lng;
+
+  /// 精度人话：门牌号级 / 道路级 / 区县级 / 未知精度
+  final String levelText;
+
+  /// 服务端规范化后的地址（可以直接回填到地址框）
+  final String formatted;
+
+  /// amap = 高德，osm = OpenStreetMap 兜底
+  final String source;
+
+  const GeoPoint({
+    required this.lat,
+    required this.lng,
+    this.levelText = '',
+    this.formatted = '',
+    this.source = '',
+  });
+
+  bool get valid => lat.abs() > 0.0001 && lng.abs() > 0.0001;
+
+  /// 「街道级 · 高德」这种短说明，给用户看
+  String get hint {
+    final lv = levelText.isEmpty ? '地址级' : levelText;
+    return source == 'amap' ? lv : '$lv · OpenStreetMap';
   }
 }
