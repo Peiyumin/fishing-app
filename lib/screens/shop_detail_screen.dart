@@ -710,6 +710,8 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
                     lng: _s.lng,
                     name: _s.name,
                     address: _addressText,
+                    // 只有文字地址的店铺：让地图 App 按地址搜，别用粗坐标
+                    precise: _s.canNavigateByCoord,
                   ),
                   icon: const Icon(Icons.navigation_rounded, size: 18),
                   label: const Text('导航前往',
