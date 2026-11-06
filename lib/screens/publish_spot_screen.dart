@@ -43,6 +43,20 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
   GeoPlace? _geoAddress;
   bool _resolvingAddress = false;
 
+  // ── v44：地址输入 + 坐标可信度 ──────────────────────────────
+  // 以前这页只能在卫星图上点一下，地址是反查出来的、改不了。
+  // 现在补一个「详细地址」输入框：可以直接打字（给外地的钓点用），
+  // 也可以点右边的准星读当前位置。
+  final _addrCtrl = TextEditingController();
+
+  /// 坐标是否「实测精确」：
+  ///   true  = 刚点过定位 / 刚在图上点过 → 坐标就是钓位
+  ///   false = 用户手改了地址文字 → 旧坐标已经对不上这句话了
+  bool _precise = false;
+
+  /// 地址解析中（提交时按地址换坐标）
+  bool _geocoding = false;
+
   // 默认中心：杭州（GCJ-02）
   final LatLng _defaultCenter = const LatLng(30.2741, 120.1551);
 
@@ -58,6 +72,7 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
     _nameCtrl.dispose();
     _fishCtrl.dispose();
     _descCtrl.dispose();
+    _addrCtrl.dispose();
     super.dispose();
   }
 
@@ -73,6 +88,7 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
         setState(() {
           _picked = p;
           _myLocation = LatLng(g[0], g[1]);
+          _precise = true; // GPS 拿到的点就是钓位
         });
         _resolveAddress(p.latitude, p.longitude);
       }
@@ -86,16 +102,34 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
   }
 
   /// 反查选中坐标的中文地址，结果写入 [_geoAddress]
+  ///
+  /// 只有在 [_precise] 为 true（刚定位/刚点图）时才回填到地址输入框：
+  /// 用户手改了地址之后 [_precise] 会变 false，这时不能拿旧坐标的反查结果
+  /// 去覆盖他刚打的字。
   Future<void> _resolveAddress(double lat, double lng) async {
     if (mounted) setState(() => _resolvingAddress = true);
     try {
       final place = await GeoPlace.reverse(lat, lng);
-      if (mounted) setState(() => _geoAddress = place);
+      if (!mounted) return;
+      setState(() {
+        _geoAddress = place;
+        final best = place?.bestAddress ?? '';
+        if (_precise && best.isNotEmpty) _addrCtrl.text = best;
+      });
     } catch (_) {
       // 地址反查失败不影响选点
     } finally {
       if (mounted) setState(() => _resolvingAddress = false);
     }
+  }
+
+  /// 地址框下面那行小字：直白告诉用户当前坐标到底可不可信
+  String get _addrHint {
+    final t = _addrCtrl.text.trim();
+    if (t.isEmpty) return '可以打字填地址，也可以点右边的准星读当前位置';
+    if (_geocoding) return '正在把你填的地址解析成位置…';
+    if (_precise) return '已按当前位置定位，导航会直接按坐标走';
+    return '导航时会按这段地址搜索（之前点选的坐标不再使用）';
   }
 
   Future<void> _submit() async {
@@ -109,25 +143,64 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
       CenterToast.show(context, '请填写野钓点名称');
       return;
     }
-    if (_picked == null) {
-      CenterToast.show(context, '请先定位或在地图上点选位置');
+
+    final addrText = _addrCtrl.text.trim();
+
+    // —— 位置来源优先级 ——
+    //   1. 刚定位 / 刚在地图上点过（_precise=true）：坐标就是钓位，直接用
+    //   2. 用户手打了地址（_precise=false）：先把文字地址送去后端解析成坐标，
+    //      解析出来的只到街道级，所以 coord_precise 记 0，详情页导航会改用地址搜
+    //   3. 既没点位置、地址也解析不出来：拦下来让用户点一下地图
+    double? lat = _picked?.latitude;
+    double? lng = _picked?.longitude;
+    bool precise = _precise;
+
+    if (addrText.isNotEmpty && !_precise) {
+      if (mounted) setState(() => _geocoding = true);
+      final g = await SpotService.geocodeAddress(addrText);
+      if (mounted) setState(() => _geocoding = false);
+      if (!mounted) return;
+      if (g != null && g.valid) {
+        lat = g.lat;
+        lng = g.lng;
+        precise = false; // 地址解析 = 街道级，不算精确坐标
+      } else if (lat == null) {
+        CenterToast.show(
+            context, '这个地址没能解析成位置，请点「用当前位置」或在地图上点一下');
+        return;
+      } else {
+        // 有之前的坐标但地址解析失败：照常提交，只是标记为不精确，
+        // 导航时会用文字地址而不是这个旧坐标
+        precise = false;
+      }
+    }
+
+    if (lat == null || lng == null) {
+      CenterToast.show(context, '请填写详细地址，或在地图上点选位置');
       return;
     }
+
     setState(() => _submitting = true);
     try {
       await SpotService.addSpot(
         name: _nameCtrl.text.trim(),
         type: '野钓',
         description: _descCtrl.text.trim(),
-        lat: _picked!.latitude,
-        lng: _picked!.longitude,
+        lat: lat,
+        lng: lng,
         kind: 'wild', // 野钓点：保存后直接对全员展示
         fish: _fishCtrl.text.trim(),
-        address: _geoAddress?.bestAddress ?? '',
+        address: addrText.isNotEmpty ? addrText : (_geoAddress?.bestAddress ?? ''),
+        coordPrecise: precise,
       );
       if (mounted) {
-      RefreshBus.bumpFeed();
-        CenterToast.show(context, '标记成功！所有钓友都能在卫星地图上看到');
+        RefreshBus.bumpFeed();
+        CenterToast.show(
+          context,
+          precise
+              ? '标记成功！所有钓友都能在卫星地图上看到'
+              : '标记成功！已按你填的地址定位（导航时会按地址搜索）',
+        );
         Navigator.of(context).pop();
       }
     } catch (e) {
@@ -168,7 +241,10 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
                       final w = CoordTransform.gcj02ToWgs84(
                           point.latitude, point.longitude);
                       final p = LatLng(w[0], w[1]);
-                      setState(() => _picked = p);
+                      setState(() {
+                        _picked = p;
+                        _precise = true; // 用户亲手点的位置，可信
+                      });
                       _resolveAddress(p.latitude, p.longitude);
                     },
                   ),
@@ -285,6 +361,36 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
+                  // v44：地址可以直接打字（给外地钓点用），也可以点准星读当前位置
+                  TextField(
+                    key: const ValueKey('spot_addr'),
+                    controller: _addrCtrl,
+                    // 用户一改地址，之前点选的坐标就不再对应这句话了，
+                    // 必须降级成「不精确」，提交时按地址重新解析
+                    onChanged: (_) {
+                      if (_precise) setState(() => _precise = false);
+                    },
+                    decoration: InputDecoration(
+                      labelText: '详细地址',
+                      hintText: '省市区 + 乡镇 / 水库名，例如「河南省许昌市禹州市夏都街道」',
+                      helperText: _addrHint,
+                      helperMaxLines: 2,
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        tooltip: '用当前位置',
+                        onPressed: _locating ? null : _useMyLocation,
+                        icon: _locating
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.my_location, size: 20),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: _fishCtrl,
                     decoration: const InputDecoration(
@@ -346,11 +452,22 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
                             borderRadius: BorderRadius.circular(12)),
                       ),
                       child: _submitting
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white),
+                          ? Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white),
+                                ),
+                                if (_geocoding) ...[
+                                  const SizedBox(width: 10),
+                                  const Text('正在解析地址…',
+                                      style: TextStyle(
+                                          fontSize: 14, color: Colors.white)),
+                                ],
+                              ],
                             )
                           : const Text('保存标记',
                               style: TextStyle(
