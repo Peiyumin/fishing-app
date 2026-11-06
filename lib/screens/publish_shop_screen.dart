@@ -57,6 +57,21 @@ class _PublishShopScreenState extends State<PublishShopScreen> {
 
   LatLng? _picked; // WGS-84 坐标（存储用）
   LatLng? _myLocation; // 当前定位（GCJ-02，仅作「我在哪」指示）
+
+  // ── v44：坐标可信度 ────────────────────────────────────────
+  /// true  = 刚定位 / 刚在地图上点过，坐标就是店铺位置
+  /// false = 用户手改了「详细地址」，旧坐标已对不上
+  bool _precise = false;
+  bool _geocoding = false;
+
+  String get _addrHint {
+    final t = _addrCtrl.text.trim();
+    if (t.isEmpty) return '可以打字填地址，也可以点右边的准星读当前位置';
+    if (_geocoding) return '正在把你填的地址解析成位置…';
+    if (_precise) return '已按当前位置定位，导航会直接按坐标走';
+    return '导航时会按这段地址搜索（之前点选的坐标不再使用）';
+  }
+
   final LatLng _defaultCenter = const LatLng(30.2741, 120.1551);
 
   static const List<String> _tagOptions = ['饵料', '鱼竿', '鱼线'];
@@ -97,6 +112,7 @@ class _PublishShopScreenState extends State<PublishShopScreen> {
       setState(() {
         _picked = p;
         _myLocation = LatLng(g[0], g[1]);
+        _precise = true; // GPS 拿到的点就是店铺位置
       });
       final r = await GeoNames.reverse(pos.latitude, pos.longitude);
       if (!mounted) return;
@@ -121,6 +137,7 @@ class _PublishShopScreenState extends State<PublishShopScreen> {
       setState(() {
         _picked = p;
         _myLocation = LatLng(g[0], g[1]);
+        _precise = true;
       });
     } on LocationException catch (e) {
       if (mounted) LocationPrompt.showError(context, e);
@@ -138,14 +155,45 @@ class _PublishShopScreenState extends State<PublishShopScreen> {
       CenterToast.show(context, '请填写渔具店名称');
       return;
     }
-    if (_picked == null) {
-      CenterToast.show(context, '请在地图上点选店铺位置');
+    if (_picked == null && _addrCtrl.text.trim().isEmpty) {
+      CenterToast.show(context, '请填写详细地址，或在地图上点选店铺位置');
       return;
     }
     if (_tags.isEmpty) {
       CenterToast.show(context, '请至少选择一个售卖品类');
       return;
     }
+
+    final addrText = _addrCtrl.text.trim();
+
+    // —— 位置来源（v44）——
+    double? lat = _picked?.latitude;
+    double? lng = _picked?.longitude;
+    bool precise = _precise;
+
+    if (addrText.isNotEmpty && !_precise) {
+      if (mounted) setState(() => _geocoding = true);
+      final g = await SpotService.geocodeAddress(addrText);
+      if (mounted) setState(() => _geocoding = false);
+      if (!mounted) return;
+      if (g != null && g.valid) {
+        lat = g.lat;
+        lng = g.lng;
+        precise = false;
+      } else if (lat == null) {
+        CenterToast.show(
+            context, '这个地址没能解析成位置，请点「获取定位」或在地图上点一下');
+        return;
+      } else {
+        precise = false;
+      }
+    }
+
+    if (lat == null || lng == null) {
+      CenterToast.show(context, '请填写详细地址，或在地图上点选店铺位置');
+      return;
+    }
+
     setState(() => _submitting = true);
     try {
       var cover = '';
@@ -162,10 +210,10 @@ class _PublishShopScreenState extends State<PublishShopScreen> {
         name: _nameCtrl.text.trim(),
         type: _type,
         description: _descCtrl.text.trim(),
-        lat: _picked!.latitude,
-        lng: _picked!.longitude,
+        lat: lat,
+        lng: lng,
         kind: 'shop',
-        address: _addrCtrl.text.trim(),
+        address: addrText,
         // 渔具店没有「收费」这个概念：这个字段留着放配送/运费说明
         fee: _shipCtrl.text.trim(),
         // 详情页「售卖种类」读的是 fish 字段，这里写选中的品类
@@ -175,6 +223,7 @@ class _PublishShopScreenState extends State<PublishShopScreen> {
         images: images,
         phone: _phoneCtrl.text.trim(),
         delivery: _delivery,
+        coordPrecise: precise,
       );
       if (mounted) {
         await showDialog(
@@ -228,7 +277,10 @@ class _PublishShopScreenState extends State<PublishShopScreen> {
                     onTap: (_, point) {
                       final w = CoordTransform.gcj02ToWgs84(
                           point.latitude, point.longitude);
-                      setState(() => _picked = LatLng(w[0], w[1]));
+                      setState(() {
+                        _picked = LatLng(w[0], w[1]);
+                        _precise = true; // 用户亲手点的位置，可信
+                      });
                     },
                   ),
                   children: [
@@ -484,10 +536,16 @@ class _PublishShopScreenState extends State<PublishShopScreen> {
 
                 // —— 地址 ——
                 TextField(
+                  key: const ValueKey('shop_addr'),
                   controller: _addrCtrl,
+                  onChanged: (_) {
+                    if (_precise) setState(() => _precise = false);
+                  },
                   decoration: InputDecoration(
                     labelText: '详细地址',
                     hintText: '例如：杭州市西湖区 XX 路 88 号',
+                    helperText: _addrHint,
+                    helperMaxLines: 2,
                     border: const OutlineInputBorder(),
                     suffixIcon: _locatingAddr
                         ? const Padding(
