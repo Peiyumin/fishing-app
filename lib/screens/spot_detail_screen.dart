@@ -290,6 +290,17 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
                           ),
                         ],
                       ),
+                      // v44：这个点没有精确坐标（用户只填了文字地址），
+                      // 明说一句，免得他以为导航会直接到钓位
+                      if (!s.canNavigateByCoord && _addressText.isNotEmpty)
+                        const Padding(
+                          padding: EdgeInsets.only(left: 21, top: 4),
+                          child: Text(
+                            '这个点只有文字地址，导航会按地址搜索',
+                            style: TextStyle(
+                                fontSize: 11, color: AppTheme.accentDark),
+                          ),
+                        ),
                       // v2.1.76：纠偏之后仍可能有偏（高德的点常是管理处/大门口），
                       // 让到过现场的钓友顺手把他站的位置发上来 —— 这是最准的数据源
                       if (s.lat != 0 || s.lng != 0)
@@ -335,6 +346,9 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
                           lng: s.lng,
                           name: s.name,
                           address: _navAddress,
+                          // v44：只有文字地址的点，改用「把地址交给地图 App 自己搜」，
+                          // 而不是把地址解析出来的粗坐标当终点（会导到村口）
+                          precise: s.canNavigateByCoord,
                         ),
                         style: OutlinedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 12),
