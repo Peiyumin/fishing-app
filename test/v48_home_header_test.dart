@@ -80,14 +80,15 @@ void main() {
       expect(r.right, lessThan(w * 0.6));
     });
 
-    testWidgets('字号 ≥ 28（旧版 18）', (t) async {
+    testWidgets('字号 ≥ 32（旧版 18 → v2.1.84 30 → v2.1.85 34）', (t) async {
       await t.pumpWidget(wrap());
       final style = t.widget<Text>(find.text('渔报')).style!;
-      expect(style.fontSize, greaterThanOrEqualTo(28),
-          reason: '旧版 18pt，用户要求「改大一点」，毛笔字字面小，'
-              '低于 28 气势出不来');
+      expect(style.fontSize, greaterThanOrEqualTo(32),
+          reason: '旧版 18pt，用户两次要求「改大一点」，毛笔字字面小，'
+              '低于 32 气势出不来');
       expect(style.fontWeight, anyOf(isNull, FontWeight.w400),
-          reason: '毛笔字体只有一个字重，写 w700 会被合成加粗（笔画糊成一团）');
+          reason: '毛笔字体只有一个字重，写 w700 会被合成加粗（笔画糊成一团），'
+              '用户还专门要求「笔画细一点」，更不能合成加粗');
       expect(style.color, Colors.white, reason: '近黑顶栏上必须是白字');
     });
 

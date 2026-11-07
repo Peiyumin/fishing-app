@@ -1,7 +1,7 @@
 name: fishing_app
 description: 垂钓社区 App —— 钓鱼天气、钓点导航、渔获分享（Flutter 双端）
 publish_to: 'none'
-version: 2.1.84+94
+version: 2.1.85+95
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -89,14 +89,18 @@ flutter:
     # App 图标（登录页 Logo，1024×1024）
     - assets/branding/
 
-  # 首页「渔报」两字的毛笔标题字（v2.1.84）
+  # 首页「渔报」两字的毛笔标题字（v2.1.84 引入，v2.1.85 换成龙藏行书）
   #
   # 为什么随包带字体、而不是用系统字体名：
   #   ① 系统里没有一款「笔锋犀利」的毛笔中文（iOS/安卓只有黑体/宋体），
   #      写 fontFamily: 'Songti SC' 这类名字在别的机器上解析不到 → 方块；
-  #   ② 全量 Ma Shan Zheng 有 4.6MB，而这里只用「渔」和「报」两个字，
-  #      用 Google Fonts 的 text= 子集接口裁到 2.9KB，随包走零风险。
+  #   ② 全量毛笔字族都有 4~5MB，而这里只用「渔」和「报」两个字，
+  #      用 Google Fonts 的 text= 子集接口裁到 2.4KB，随包走零风险。
   # 只放这一个 family：别把正文也改成毛笔字，正文要的是可读性。
+  #
+  # v2.1.85：Ma Shan Zheng（厚楷）→ Long Cang（龙藏行书）。
+  #   用户要「字更大、笔画更细」，厚楷放大只会更粗 —— 行书用笔瘦、收锋利，
+  #   34pt 反而比原来 30pt 的厚楷更透气。文件名沿用 yubao_brush.ttf（只是容器名）。
   fonts:
     - family: YuBaoBrush
       fonts:
