@@ -24,7 +24,7 @@ import '../widgets/grid_nav.dart';
 import '../widgets/home_ad_banner.dart';
 import '../widgets/home_weather_hero.dart';
 import '../widgets/location_prompt.dart';
-import '../widgets/msg_bell.dart';
+import '../widgets/home_top_bar.dart';
 import '../widgets/section_header.dart';
 import '../widgets/spot_card.dart';
 import '../widgets/waterfall_post_card.dart';
@@ -537,43 +537,11 @@ class _HomeScreenState extends State<HomeScreen>
   Widget build(BuildContext context) {
     final topAd = _layout.topAd;
     return Scaffold(
-      appBar: AppBar(
-        // 顶部高度收紧（默认 56 → 46）：只有居中的软件名和右侧消息铃铛。
-        // v2.1.83 起去掉了右上角的搜索框和左上的定位胶囊 —— 搜索走「钓点」页，
-        // 定位地名已经在下面的天气通栏里显示，顶部不再堆两处入口。
-        toolbarHeight: 46,
-        centerTitle: true,
-        titleSpacing: 12,
-        // ★ v2.1.59：AppBarTheme 已改为「白底 + 近黑图标」，首页这里是深色
-        //   Hero（flexibleSpace 画近黑渐变），必须显式把前景改回白色，
-        //   否则标题/消息铃铛会变成黑图标压在黑底上直接消失。
-        foregroundColor: Colors.white,
-        title: const SizedBox(
-          width: double.infinity,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              // —— 软件名：居中 ——
-              Text(
-                '渔报',
-                style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1,
-                    color: Colors.white),
-              ),
-              // —— 消息铃铛：靠右浮层（带未读红点）——
-              Align(
-                alignment: Alignment.centerRight,
-                child: MsgBellButton(),
-              ),
-            ],
-          ),
-        ),
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
-        ),
-      ),
+      // v2.1.84：顶栏整块抽成 HomeTopBar —— 左上角毛笔「渔报」+ 右侧铃铛，
+      // 并且显式盖掉主题那条 1px 底边线（以前它横在「渔报」下面像一条白胶带）。
+      // 搜索框、左上定位胶囊在 v2.1.83 已移除：搜索走「钓点」页，
+      // 定位地名在下面的天气通栏里显示，顶部不再堆入口。
+      appBar: const HomeTopBar(),
       body: AppRefresh(
         onRefresh: _onRefresh,
         child: ListView(

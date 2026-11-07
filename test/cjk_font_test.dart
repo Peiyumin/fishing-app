@@ -40,6 +40,27 @@ List<String> _codeLines(String path) {
       .toList();
 }
 
+/// pubspec.yaml `fonts:` 段里声明的**随包字体族**
+///
+/// 为什么要单独放行这一类：
+///   `fontFamily:` 之所以被禁，是因为写的是**系统字体名**（'PingFang SC'、
+///   'Microsoft YaHei'）—— 换个 ROM 就没有这个字体，整段文字退到
+///   last-resort 字体，汉字全变方块。
+///   而 `fonts:` 里声明的字体是 **asset，跟着安装包一起走**，
+///   任何设备上都能解析到，不存在「这台机器没有」的问题。
+///   所以判据从「出现 fontFamily 就算违规」收紧为
+///   「fontFamily 的**值**必须是 pubspec 声明过的随包字体」。
+Set<String> _bundledFamilies() {
+  final fams = <String>{};
+  for (final l in File('pubspec.yaml').readAsLinesSync()) {
+    // 字体段长这样：  - family: YuBaoBrush
+    final m = RegExp(r'''^\s*-\s*family:\s*["']?([A-Za-z0-9_ -]+)["']?\s*$''')
+        .firstMatch(l);
+    if (m != null) fams.add(m.group(1)!.trim());
+  }
+  return fams;
+}
+
 void main() {
   group('① 字体：不许手写中文回退栈', () {
     /// ThemeData 的 fontFamily / fontFamilyFallback 会被下发到
@@ -91,22 +112,64 @@ void main() {
       }
     });
 
-    test('文案样式里也不写死 fontFamily', () {
+    test('文案样式里也不写死 fontFamily（随包字体除外）', () {
       final root = Directory('lib');
+      final bundled = _bundledFamilies();
       final hits = <String>[];
+      // 只认字面量：`fontFamily: 'YuBaoBrush'`
+      final literal =
+          RegExp(r'''\bfontFamily\s*:\s*["']([^"']+)["']''');
+      final anyUse = RegExp(r'\bfontFamily\s*:');
+      final fallback = RegExp(r'\bfontFamilyFallback\s*:');
       for (final f in root.listSync(recursive: true)) {
         if (f is! File || !f.path.endsWith('.dart')) continue;
-        for (var i = 0; i < _codeLines(f.path).length; i++) {
-          final l = _codeLines(f.path)[i];
-          // `fontFamily:` 或 `fontFamilyFallback:` 出现在代码里就算违规
-          if (RegExp(r'\bfontFamily(Fallback)?\s*:').hasMatch(l)) {
-            hits.add('${f.path}: ${l.trim()}');
+        for (final l in _codeLines(f.path)) {
+          // ① 回退栈一律禁：无论写的是系统字体还是随包字体，
+          //    手写回退栈都会切断系统自带的 emoji / 生僻字兜底
+          if (fallback.hasMatch(l)) {
+            hits.add('${f.path}: $l  ← 不许手写 fontFamilyFallback');
+            continue;
+          }
+          if (!anyUse.hasMatch(l)) continue;
+          final m = literal.firstMatch(l);
+          if (m == null) {
+            hits.add('${f.path}: $l  ← fontFamily 的值不是字面量，无法核对');
+          } else if (!bundled.contains(m.group(1)!)) {
+            hits.add('${f.path}: $l  ← 「${m.group(1)}」不在 pubspec 的 fonts: 里'
+                '（系统字体名换台机器就没有 → 汉字变方块）');
           }
         }
       }
       expect(hits, isEmpty,
           reason: '这些地方写死了字体族，真机没有该字体就会显示方块：\n'
-              '${hits.join('\n')}');
+              '${hits.join('\n')}\n'
+              '唯一允许的写法：用 pubspec.yaml `fonts:` 里声明的随包字体族'
+              '（目前是 YuBaoBrush，只有「渔报」两字的子集）。');
+    });
+
+    test('随包字体真的在包里：每个 family 的 asset 都存在且非空', () {
+      final fams = _bundledFamilies();
+      expect(fams, isNotEmpty,
+          reason: 'pubspec 里一个 fonts: family 都没解析到 —— '
+              '正则和 pubspec 结构脱节了');
+      // 逐条核对 asset 路径存在、字节数 > 0（空文件 = 打进去也画不出字）
+      String? current;
+      for (final raw in File('pubspec.yaml').readAsLinesSync()) {
+        final l = raw.trim();
+        final fm = RegExp(r'''^-\s*family:\s*["']?([A-Za-z0-9_ -]+)''')
+            .firstMatch(l);
+        if (fm != null) {
+          current = fm.group(1)!.trim();
+          continue;
+        }
+        final am = RegExp(r'^-\s*asset:\s*(\S+)').firstMatch(l);
+        if (am == null || current == null) continue;
+        final path = am.group(1)!.replaceAll(RegExp(r'''["']'''), '');
+        final f = File(path);
+        expect(f.existsSync(), isTrue, reason: '$current 的 asset 不存在：$path');
+        expect(f.lengthSync(), greaterThan(0),
+            reason: '$current 的 asset 是空文件：$path');
+      }
     });
   });
 
