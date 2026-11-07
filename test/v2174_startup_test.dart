@@ -43,6 +43,9 @@ Map<String, dynamic> _cache(int temp) => {
         'fa': '午后浅滩有口，注意防晒',
         'sc': 78,
         'al': '14:00',
+        // v2.1.86：首页第三格要显示水氧，缓存里必须带 ox，
+        // 否则首帧那一格是「--」（老缓存的真实表现，见文件末尾的用例）
+        'ox': 7.2,
       },
     };
 
@@ -97,6 +100,29 @@ void main() {
     expect(find.text('78'), findsOneWidget, reason: '垂钓指数没跟着秒显');
 
     // 收尾：首页里挂着定位 6 秒延时与 3 分钟轮询 timer，不推走会报 pending timer
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 20));
+  });
+
+  testWidgets('老缓存没有水氧：温度/指数照样秒显，只有水氧那格是「--」', (tester) async {
+    // v2.1.86 之前写下的缓存没有 `ox` 键。升级后第一次打开就是这个状态：
+    // 不能因为多了一格水氧，就把整张卡退回占位态。
+    final legacy = _cache(23);
+    (legacy['w'] as Map<String, dynamic>).remove('ox');
+    SharedPreferences.setMockInitialValues({_kCurKey: jsonEncode(legacy)});
+    WeatherService.clearMemory();
+    await WeatherService.warmUp();
+
+    await tester.pumpWidget(_wrap(const HomeScreen()));
+
+    expect(find.text('23°'), findsOneWidget, reason: '温度必须照常秒显');
+    expect(find.text('78'), findsOneWidget, reason: '指数必须照常秒显');
+    expect(find.text('正在获取当前位置的天气…'), findsNothing);
+    // 整卡只有水氧这一格是「--」
+    expect(find.text('--'), findsOneWidget,
+        reason: '老缓存缺 ox 时，只有水氧格该是「--」；多一格占位说明别处也空了');
+    expect(find.text('水氧 mg/L'), findsOneWidget);
+
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 20));
   });

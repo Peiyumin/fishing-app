@@ -1,13 +1,23 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../models/home_mode.dart';
+import '../services/tide_service.dart';
 import '../services/weather_service.dart';
 import 'weather_icon.dart';
 
-/// 首页顶部的「钓鱼天气」大区（v46）
+/// 首页顶部的「钓鱼天气」大区（v46，v2.1.86 按钓法分叉）
 ///
 /// 版式参考用户在需求里给的那张图：整块深色通栏画面，
-/// 大号钓鱼指数 + 等级 + 一句建议，底部四格指标（气温 / 水温 / 风力 / 气压）。
+/// 大号钓鱼指数 + 等级 + 一句建议，底部四格指标。
+///
+/// ★ 四格里的**第三格按钓法变**（v2.1.86 用户要求）：
+///     海钓          → 潮汐（+1.2m / 涨潮）
+///     台钓·路亚·钓场 → 水氧（7.4 mg/L）
+///   气压那格让位给第三格 —— 气压并没有丢，上面那句建议里本来就带着
+///   「气压 1015hPa 缓慢回升…」，再占一格是重复。
+///   四格仍然是四格：五格在 390dp 上单格只剩 68dp，「水氧 mg/L」这种
+///   标签会挤成竖排，320dp 的小屏直接溢出。
 ///
 /// 为什么不直接用老的 [WeatherCard]：
 ///   老卡是白底小卡片，标题「实时天气」和「7天预报」都在卡片外面，
@@ -25,12 +35,20 @@ class HomeWeatherHero extends StatelessWidget {
   final double? waterTemp;
   final VoidCallback onTap;
 
+  /// 当前选中的钓法：决定第三格显示潮汐还是水氧
+  final HomeMode mode;
+
+  /// 潮汐估算（仅海钓用；没拿到坐标时为 null → 第三格显示「--」）
+  final TideInfo? tide;
+
   const HomeWeatherHero({
     super.key,
     required this.weather,
     required this.onTap,
     this.placeLabel,
     this.waterTemp,
+    this.mode = HomeMode.taiDiao,
+    this.tide,
   });
 
   @override
@@ -44,7 +62,8 @@ class HomeWeatherHero extends StatelessWidget {
     final place = (placeLabel ?? '').trim();
     final atLabel = has ? w.atLabel : '';
 
-    // 四个指标：气温 / 水温（没有就退成湿度）/ 风力 / 气压
+    // 四个指标：气温 / 水温（没有就退成湿度）/ 第三格（潮汐或水氧）/ 风力
+    final third = homeThirdMetric(mode: mode, weather: weather, tide: tide);
     final metrics = <_Metric>[
       _Metric(
         has ? '${w.temperature.round()}°' : '--',
@@ -55,11 +74,15 @@ class HomeWeatherHero extends StatelessWidget {
       else
         _Metric(has ? '${w.humidity}%' : '--', '湿度'),
       _Metric(
+        third.value,
+        third.label,
+        hint: mode.wantsTide ? null : oxygenFeel(w?.oxygen),
+      ),
+      _Metric(
           has
               ? '${_windLevel(w.windSpeed)}级${w.windDir == null ? '' : _windDir(w.windDir!)}'
               : '--',
           '风力'),
-      _Metric(has ? '${w.pressure.round()}' : '--', '气压 hPa'),
     ];
 
     return Container(
@@ -194,26 +217,32 @@ class HomeWeatherHero extends StatelessWidget {
     );
   }
 
-  Widget _metricCell(_Metric m) => Column(
-        children: [
-          Text(
-            m.value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-                fontSize: 15.5,
-                fontWeight: FontWeight.w700,
-                color: Colors.white),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            m.label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 10.5, color: Colors.white38),
-          ),
-        ],
-      );
+  Widget _metricCell(_Metric m) {
+    final cell = Column(
+      children: [
+        Text(
+          m.value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+              fontSize: 15.5,
+              fontWeight: FontWeight.w700,
+              color: Colors.white),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          m.label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 10.5, color: Colors.white38),
+        ),
+      ],
+    );
+    // 只有第三格带 hint（水氧/潮汐的一句话解读）：读屏用户听到的是
+    // 「水氧 7.4 溶氧充足，鱼口活跃」，不是一个光秃秃的数字
+    if (m.hint == null) return cell;
+    return Semantics(label: '${m.label} ${m.value} ${m.hint}', child: cell);
+  }
 
   /// 风速 km/h → 蒲福风级（和天气卡同一口径）
   static int _windLevel(double kmh) {
@@ -241,5 +270,8 @@ class HomeWeatherHero extends StatelessWidget {
 class _Metric {
   final String value;
   final String label;
-  const _Metric(this.value, this.label);
+
+  /// 读屏用的一句话解读（只有水氧/潮汐那格有）
+  final String? hint;
+  const _Metric(this.value, this.label, {this.hint});
 }

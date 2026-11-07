@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../models/home_mode.dart';
+import 'mode_tabs.dart';
 import 'msg_bell.dart';
 
 /// 首页顶栏（v2.1.84 定稿）
@@ -44,10 +46,19 @@ class HomeTopBar extends StatelessWidget implements PreferredSizeWidget {
   /// 工具栏高度：标题 34pt（行高 1.05 ≈ 36）+ 上下各 13 的留白 = 62
   static const double barHeight = 62;
 
-  const HomeTopBar({super.key});
+  /// 标题下面那条钓法分类（台钓 / 路亚 / 钓场 / 海钓）
+  final HomeMode mode;
+  final ValueChanged<HomeMode>? onModeChanged;
+
+  const HomeTopBar({
+    super.key,
+    this.mode = HomeMode.taiDiao,
+    this.onModeChanged,
+  });
 
   @override
-  Size get preferredSize => const Size.fromHeight(barHeight);
+  Size get preferredSize =>
+      const Size.fromHeight(barHeight + ModeTabs.height);
 
   @override
   Widget build(BuildContext context) {
@@ -85,6 +96,16 @@ class HomeTopBar extends StatelessWidget implements PreferredSizeWidget {
           child: MsgBellButton(),
         ),
       ],
+      // ★ v2.1.86：分类条挂在 AppBar 的 bottom 上，而不是塞进页面 body ——
+      //   塞 body 会跟着列表滚走，用户划到下面想换个钓法还得先划回顶部。
+      //   挂 bottom 后它和标题一样常驻，滑到底也在。
+      //
+      //   背景不用另画：AppBar 的 flexibleSpace 铺满整条（含 bottom 区），
+      //   所以这里保持透明，顶栏到分类条是一整片渐变。
+      bottom: PreferredSize(
+        preferredSize: const Size.fromHeight(ModeTabs.height),
+        child: ModeTabs(mode: mode, onChanged: onModeChanged),
+      ),
       flexibleSpace: Container(
         decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
       ),

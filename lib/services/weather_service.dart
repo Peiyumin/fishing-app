@@ -335,6 +335,13 @@ class FishingWeather {
   /// 这组数据对应的整点，如 "13:00"；为空表示没有逐时数据
   final String atLabel;
 
+  /// 水氧（溶解氧，mg/L）：v2.1.86 起首页第三格要显示它
+  ///
+  /// 和天气页、AI 分析用的是同一套 `WaterMetrics`（水温热惯性 + 饱和溶氧模型），
+  /// 不是另算一份 —— 否则同一时刻首页写 7.4、天气详情页写 6.9，用户只会觉得
+  /// 「这数是不是瞎编的」。老缓存（没有这个键）读出 null，界面显示「--」。
+  final double? oxygen;
+
   const FishingWeather({
     required this.temperature,
     required this.humidity,
@@ -347,6 +354,7 @@ class FishingWeather {
     required this.fishAdvice,
     this.score = 50,
     this.atLabel = '',
+    this.oxygen,
   });
 
   /// 由完整天气包构造。
@@ -368,7 +376,11 @@ class FishingWeather {
   /// 气温与指数，而不是打开页面这一刻的。老帖子没有快照时，客户端会按发布
   /// 时间回拉历史逐时，再用 [indexOfCurrentHour] 定位到那一小时，交给这里算分。
   /// 天气页、首页仍然走 [fromBundle]（= 现在这一小时），两者口径互不干扰。
-  factory FishingWeather.fromIndex(WeatherBundle b, int i) {
+  ///
+  /// [mode] 指定钓法（v2.1.86）：首页顶部切「台钓 / 路亚 / 钓场 / 海钓」时，
+  /// 同一个小时要用不同钓法的权重重算指数 —— 海钓重潮汐、路亚重掠食性活跃度，
+  /// 不改钓法只换个标签是不成立的。不传 = 台钓（老调用方行为完全不变）。
+  factory FishingWeather.fromIndex(WeatherBundle b, int i, {FishingMode? mode}) {
     final h = i >= 0 && i < b.hours.length ? b.hours[i] : null;
     // 与天气页同源的水温/水氧（热惯性模型），保证两页指数可对齐
     final metrics = WaterMetrics.derive(b.hours);
@@ -376,13 +388,13 @@ class FishingWeather {
         ? metrics[i]
         : WaterMetrics((b.curTemp * 0.8 + 4).clamp(2.0, 32.0), 7.0);
 
-    final mode = FishingMode.all.first;
+    final md = mode ?? FishingMode.all.first;
     final sp = FishingSpecies.all.first; // 默认目标鱼：鲫鱼
 
     final est = h != null
-        ? Bite.compute(h: h, w: w, sp: sp, mode: mode)
+        ? Bite.compute(h: h, w: w, sp: sp, mode: md)
         : FishScore.computeRaw(
-            method: mode.name,
+            method: md.name,
             airTemp: b.curTemp,
             pressure: b.curPressure,
             windMs: b.curWindSpeed / 3.6,
@@ -414,6 +426,7 @@ class FishingWeather {
       atLabel: h == null
           ? ''
           : '${h.time.hour.toString().padLeft(2, '0')}:00',
+      oxygen: w.oxygen,
     );
   }
 
@@ -445,6 +458,7 @@ class FishingWeather {
         'fa': fishAdvice,
         'sc': score,
         'al': atLabel,
+        'ox': oxygen,
       };
 
   factory FishingWeather.fromJson(Map<String, dynamic> m) => FishingWeather(
@@ -459,6 +473,8 @@ class FishingWeather {
         fishAdvice: (m['fa'] ?? '').toString(),
         score: jsonNum(m['sc'])?.round() ?? 50,
         atLabel: (m['al'] ?? '').toString(),
+        // 老缓存没有 ox 键 → null，界面显示「--」，不要写成 0（0mg/L 是死水）
+        oxygen: jsonDouble(m['ox']),
       );
 
   // WMO 天气代码 → 中文描述

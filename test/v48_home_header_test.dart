@@ -16,6 +16,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fishing_app/app_theme.dart';
 import 'package:fishing_app/widgets/home_top_bar.dart';
+import 'package:fishing_app/widgets/mode_tabs.dart';
 
 /// pubspec.yaml `fonts:` 段声明的随包字体族（与 lib 代码里的 fontFamily 对齐）
 Set<String> bundledFamilies() {
@@ -117,12 +118,13 @@ void main() {
       expect(bell.left, greaterThan(title.right));
     });
 
-    testWidgets('preferredSize 高 62，标题垂直居中且不溢出', (t) async {
+    testWidgets('preferredSize = 工具栏 + 分类条，标题垂直居中且不溢出', (t) async {
       await t.pumpWidget(wrap());
       const bar = HomeTopBar();
-      expect(bar.preferredSize.height, 62);
+      // v2.1.86：标题下面多了一条钓法分类（台钓/路亚/钓场/海钓）
+      expect(bar.preferredSize.height, HomeTopBar.barHeight + ModeTabs.height);
       final h = t.getSize(find.byType(AppBar)).height;
-      expect(h, 62);
+      expect(h, HomeTopBar.barHeight + ModeTabs.height);
 
       // 标题整体落在工具栏内部（上下各留一点），没有被裁
       final r = t.getRect(find.text('渔报'));

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../app_theme.dart';
 import '../models/fishing_spot.dart';
 import '../models/home_layout.dart';
+import '../models/home_mode.dart';
 import '../models/post.dart';
 import '../services/geo_place.dart';
 import '../services/home_service.dart';
@@ -14,6 +15,7 @@ import '../services/location_service.dart';
 import '../services/post_service.dart';
 import '../services/refresh_bus.dart';
 import '../services/session_provider.dart';
+import '../services/tide_service.dart';
 import '../services/spot_service.dart';
 import '../services/weather_service.dart';
 import '../utils/coord_transform.dart';
@@ -47,6 +49,18 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen>
     with WidgetsBindingObserver {
   FishingWeather? _weather;
+
+  /// 顶部钓法分类（v2.1.86）：台钓 / 路亚 / 钓场 / 海钓
+  ///
+  /// 它不只改标签 —— 换钓法会用**同一小时**的天气按新权重重算指数，
+  /// 并且把天气通栏的第三格换成对应数据（海钓看潮汐，其余看水氧）。
+  HomeMode _mode = HomeMode.taiDiao;
+
+  /// 海钓用的潮汐估算（内陆/没定位时是 null，第三格显示「--」）
+  TideInfo? _tide;
+
+  /// 钓法偏好的本地键：用户上次选哪一类，下次打开还是哪一类
+  static const String _modeKey = 'home_mode_v1';
 
   /// 首页装修（分类导航 + 广告位 + 一行几个），后台 `/home/layout` 下发
   ///
@@ -104,6 +118,7 @@ class _HomeScreenState extends State<HomeScreen>
     });
     _loadPlace(); // 先用缓存秒显地名（断网也能看到上次城市）
     _loadLayout(); // 后台配的宫格/广告：先用缓存，再静默换成最新的
+    _loadMode(); // 上次选的钓法（台钓/路亚/钓场/海钓）
     _loadWeather();
     _loadSpots();
     _loadFeed();
@@ -322,6 +337,8 @@ class _HomeScreenState extends State<HomeScreen>
         setState(() {
           _myLat = lat;
           _myLng = lng;
+          // 海钓的潮汐要用坐标，拿到定位就补算一次
+          _tide = _computeTide();
         });
         // 拿到定位后重排一次钓点（首次进入时钓点可能已先于定位返回）
         unawaited(_loadSpots());
@@ -366,13 +383,77 @@ class _HomeScreenState extends State<HomeScreen>
     } catch (_) {}
   }
 
+  // ── 钓法分类：台钓 / 路亚 / 钓场 / 海钓（v2.1.86）──────────────
+
+  /// 读上次选的钓法（启动时调用一次；读不到就是台钓）
+  Future<void> _loadMode() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final m = HomeMode.fromKey(sp.getString(_modeKey));
+      if (!mounted || m == _mode) return;
+      setState(() {
+        _mode = m;
+        _applyModeToWeather();
+      });
+    } catch (_) {
+      // 偏好读失败不影响首页
+    }
+  }
+
+  /// 切钓法：改标签 → 按新权重重算指数 → 海钓再补潮汐 → 记住选择
+  void _setMode(HomeMode m) {
+    if (m == _mode) return;
+    setState(() {
+      _mode = m;
+      _applyModeToWeather();
+    });
+    // 存偏好失败不该影响这次切换：界面已经改完了，最多下次打开回到台钓
+    SharedPreferences.getInstance()
+        .then((sp) => sp.setString(_modeKey, m.key))
+        .catchError((_) => false);
+  }
+
+  /// 用当前钓法权重，把「现在这一小时」的指数重算一遍
+  ///
+  /// ★ 为什么必须重算：海钓的权重里潮汐占 31%、路亚看掠食性活跃时段、
+  ///   台钓看水温适温 —— 同一个小时，四套秤砣称出来不是一个数。
+  ///   只改标签不换数，用户点「海钓」看到和「台钓」一模一样的 78 分，
+  ///   只会判定「这个切换是假的」。
+  ///
+  /// ★ 只改本页的 `_weather`，**不动** `WeatherService.memoryCurrent`：
+  ///   内存里那份是全站基线（天气页/钓点页都按台钓口径读），
+  ///   在这里就地改掉会让别的页面跟着抖。
+  void _applyModeToWeather() {
+    final b = WeatherService.memoryBundle;
+    _tide = _computeTide();
+    if (b == null) return; // 只有本地快照时保持原样，等拉到新数据再对齐
+    _weather = FishingWeather.fromIndex(
+      b,
+      b.indexOfCurrentHour(DateTime.now()),
+      mode: _mode.fishingMode,
+    );
+  }
+
+  /// 潮汐估算（只有海钓要看；算法是纯函数，没坐标就返回 null）
+  TideInfo? _computeTide() {
+    final lat = _myLat;
+    final lng = _myLng;
+    if (lat == null || lng == null) return null;
+    return TideService.at(lat, lng, DateTime.now());
+  }
+
   /// 拉最新天气并上屏（失败时保持已有缓存，不把卡片清空）
   Future<void> _fetchWeather(double lat, double lng,
       {bool silent = false}) async {
     try {
       final w = await WeatherService.fetch(lat, lng);
       if (mounted) {
-        setState(() => _weather = w);
+        setState(() {
+          _weather = w;
+          // 拉回来的是「台钓口径」的快照；当前选的是别的钓法就按那套权重重算，
+          // 否则用户切到海钓、后台刷新一次又被打回 78 分
+          _applyModeToWeather();
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -541,7 +622,10 @@ class _HomeScreenState extends State<HomeScreen>
       // 并且显式盖掉主题那条 1px 底边线（以前它横在「渔报」下面像一条白胶带）。
       // 搜索框、左上定位胶囊在 v2.1.83 已移除：搜索走「钓点」页，
       // 定位地名在下面的天气通栏里显示，顶部不再堆入口。
-      appBar: const HomeTopBar(),
+      //
+      // v2.1.86：标题下面挂钓法分类（台钓/路亚/钓场/海钓），切换后
+      // 下面的天气通栏第三格跟着换（海钓 → 潮汐，其余 → 水氧），指数也重算。
+      appBar: HomeTopBar(mode: _mode, onModeChanged: _setMode),
       body: AppRefresh(
         onRefresh: _onRefresh,
         child: ListView(
@@ -552,6 +636,8 @@ class _HomeScreenState extends State<HomeScreen>
               weather: _weather,
               placeLabel: _place?.label,
               waterTemp: WeatherService.memoryWaterTemp,
+              mode: _mode,
+              tide: _tide,
               onTap: () => _guard(() => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const WeatherScreen()))),
             ),
