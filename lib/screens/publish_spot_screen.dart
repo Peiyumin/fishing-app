@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'dart:async';
+
 import '../app_theme.dart';
 import '../widgets/emoji_panel.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -12,6 +14,7 @@ import '../services/spot_service.dart';
 import '../services/session_provider.dart';
 import '../services/api_config.dart';
 import '../services/geo_place.dart';
+import '../utils/address_lookup.dart';
 import '../utils/coord_transform.dart';
 import 'auth_screen.dart';
 import '../widgets/center_toast.dart';
@@ -57,23 +60,88 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
   /// 地址解析中（提交时按地址换坐标）
   bool _geocoding = false;
 
+  // ── v45：边打字边解析，地图跟着走 ──────────────────────────
+  /// 地址输入防抖：停手 700ms 才发请求，别每敲一个字就查一次
+  Timer? _addrTimer;
+
+  /// 最近一次地址解析结果（成功才有坐标，失败带原因）
+  AddressLookup? _addrLookup;
+
+  /// 正在后台解析（跟 [_geocoding] 区分：这个是「边打字边算」，不挡保存）
+  bool _addrPreviewing = false;
+
+  /// 当前 [_addrLookup] 对应的是哪一段文字 —— 用户又改了字就作废
+  String _addrResolvedFor = '';
+
+  /// 以代码方式回填地址框时，别把 [_precise] 又降级掉
+  /// （定位完会把反查到的地址写进输入框，那不代表「用户手改了地址」）
+  bool _suppressAddrListener = false;
+
   // 默认中心：杭州（GCJ-02）
   final LatLng _defaultCenter = const LatLng(30.2741, 120.1551);
 
   @override
   void initState() {
     super.initState();
+    _addrCtrl.addListener(_onAddrChanged);
     // 打开页面即自动读取当前位置
     WidgetsBinding.instance.addPostFrameCallback((_) => _useMyLocation());
   }
 
   @override
   void dispose() {
+    _addrTimer?.cancel();
+    _addrCtrl.removeListener(_onAddrChanged);
     _nameCtrl.dispose();
     _fishCtrl.dispose();
     _descCtrl.dispose();
     _addrCtrl.dispose();
     super.dispose();
+  }
+
+  /// 地址框一改：先降级坐标可信度，再防抖解析一次
+  void _onAddrChanged() {
+    if (_suppressAddrListener) return;
+    if (_precise) setState(() => _precise = false);
+    _addrTimer?.cancel();
+    _addrTimer = Timer(const Duration(milliseconds: 700), _previewByAddress);
+  }
+
+  /// 把当前地址解析成坐标，并把地图挪过去（用户能当场看见点落在哪）
+  ///
+  /// 这一步是 v45 的核心修复：以前只有点「保存」才解析，失败了也没人知道，
+  /// 结果存下去的还是打开页面时拿到的当前位置。现在边打字边算，
+  /// 地图上的红标会跟着地址走，看得见就不至于存错。
+  Future<void> _previewByAddress() async {
+    final t = _addrCtrl.text.trim();
+    if (!mounted) return;
+    if (t.length < 4) {
+      setState(() {
+        _addrLookup = null;
+        _addrResolvedFor = '';
+        _addrPreviewing = false;
+      });
+      return;
+    }
+    setState(() => _addrPreviewing = true);
+    final r = await AddressLookup.resolve(t);
+    if (!mounted) return;
+    setState(() {
+      _addrPreviewing = false;
+      _addrLookup = r;
+      if (r.ok) {
+        _picked = LatLng(r.lat, r.lng);
+        _precise = false; // 地址解析只到街道级
+        _addrResolvedFor = t;
+        _geoAddress = null; // 顶部改显示解析出来的地址
+      } else {
+        _addrResolvedFor = '';
+      }
+    });
+    if (r.ok) {
+      final g = CoordTransform.wgs84ToGcj02(r.lat, r.lng);
+      _mapController.move(LatLng(g[0], g[1]), 14);
+    }
   }
 
   /// 读取当前位置（WGS-84）并在地图上居中
@@ -114,7 +182,15 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
       setState(() {
         _geoAddress = place;
         final best = place?.bestAddress ?? '';
-        if (_precise && best.isNotEmpty) _addrCtrl.text = best;
+        if (_precise && best.isNotEmpty && best != _addrCtrl.text) {
+          // 反查结果回填输入框：这是「系统写的」，不是「用户改的」，
+          // 不能让监听器把 _precise 降级，否则 GPS 点会被降成街道级
+          _suppressAddrListener = true;
+          _addrCtrl.text = best;
+          _suppressAddrListener = false;
+          _addrLookup = null;
+          _addrResolvedFor = '';
+        }
       });
     } catch (_) {
       // 地址反查失败不影响选点
@@ -129,7 +205,34 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
     if (t.isEmpty) return '可以打字填地址，也可以点右边的准星读当前位置';
     if (_geocoding) return '正在把你填的地址解析成位置…';
     if (_precise) return '已按当前位置定位，导航会直接按坐标走';
+    if (_addrPreviewing) return '正在解析地址…';
+    final r = _addrLookup;
+    if (r != null && r.ok) {
+      final where = r.formatted.isEmpty ? t : r.formatted;
+      return '已定位到：$where${r.hint.isEmpty ? '' : '（${r.hint}）'}';
+    }
+    if (r != null && !r.ok) return '没解析出位置：${r.reason}';
     return '导航时会按这段地址搜索（之前点选的坐标不再使用）';
+  }
+
+  /// 地图顶部那行提示（v45 起按「文字地址 / 地图点选」分流显示）
+  String get _bannerText {
+    if (_picked == null) {
+      return _locating ? '正在读取当前位置…' : '点地图微调位置 · 蓝点=我的位置 · 红标=钓点';
+    }
+    if (!_precise) {
+      if (_addrPreviewing || _geocoding) return '正在按地址定位…';
+      final r = _addrLookup;
+      if (r != null && r.ok) {
+        final w = r.formatted.isEmpty ? _addrCtrl.text.trim() : r.formatted;
+        return '按地址定位：$w';
+      }
+      if (r != null && !r.ok) return '地址没解析出位置，红标仍是地图上的旧点';
+    }
+    if (_geoAddress != null) return '已选钓点：${_geoAddress!.bestAddress}';
+    if (_resolvingAddress) return '已选钓点，正在解析地址…';
+    return '已选钓点：${_picked!.latitude.toStringAsFixed(4)}, '
+        '${_picked!.longitude.toStringAsFixed(4)}';
   }
 
   Future<void> _submit() async {
@@ -146,33 +249,67 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
 
     final addrText = _addrCtrl.text.trim();
 
-    // —— 位置来源优先级 ——
+    // —— 位置来源优先级（v45 修订）——
     //   1. 刚定位 / 刚在地图上点过（_precise=true）：坐标就是钓位，直接用
-    //   2. 用户手打了地址（_precise=false）：先把文字地址送去后端解析成坐标，
-    //      解析出来的只到街道级，所以 coord_precise 记 0，详情页导航会改用地址搜
-    //   3. 既没点位置、地址也解析不出来：拦下来让用户点一下地图
-    double? lat = _picked?.latitude;
-    double? lng = _picked?.longitude;
-    bool precise = _precise;
+    //   2. 用户手打了地址（_precise=false）：**必须**用地址解析出来的坐标。
+    //      解析不出来就停下来问用户要怎么办 —— 绝不能拿打开页面时那个
+    //      「当前位置」顶上去。v2.1.78 线上就是这么错的：用户填了
+    //      「河南省许昌市…」，存下来的却是他自己脚下，地图上点跑偏几百公里。
+    //   3. 什么坐标都没有：拦下来让用户点一下地图
+    double? lat;
+    double? lng;
+    bool precise;
 
     if (addrText.isNotEmpty && !_precise) {
-      if (mounted) setState(() => _geocoding = true);
-      final g = await SpotService.geocodeAddress(addrText);
-      if (mounted) setState(() => _geocoding = false);
-      if (!mounted) return;
-      if (g != null && g.valid) {
-        lat = g.lat;
-        lng = g.lng;
-        precise = false; // 地址解析 = 街道级，不算精确坐标
-      } else if (lat == null) {
-        CenterToast.show(
-            context, '这个地址没能解析成位置，请点「用当前位置」或在地图上点一下');
-        return;
+      // 边打字边解析过、且解析的就是这段话 → 直接复用，别再等一次网络
+      AddressLookup r;
+      if (_addrLookup != null && _addrLookup!.ok && _addrResolvedFor == addrText) {
+        r = _addrLookup!;
       } else {
-        // 有之前的坐标但地址解析失败：照常提交，只是标记为不精确，
-        // 导航时会用文字地址而不是这个旧坐标
-        precise = false;
+        if (mounted) setState(() => _geocoding = true);
+        r = await AddressLookup.resolve(addrText);
+        if (!mounted) return;
+        setState(() {
+          _geocoding = false;
+          _addrLookup = r;
+          _addrResolvedFor = r.ok ? addrText : '';
+        });
       }
+
+      if (!r.ok) {
+        // 解析失败：给三个明确选项，不替用户做决定
+        final act = await showAddressFallbackSheet(
+          context,
+          address: addrText,
+          reason: r.reason,
+        );
+        if (!mounted) return;
+        switch (act) {
+          case AddressFallbackAction.editAddress:
+            CenterToast.show(context, '把地址写细一点，例如「省+市+区/县+乡镇」');
+            break;
+          case AddressFallbackAction.useCurrentLocation:
+            await _useMyLocation();
+            break;
+          case AddressFallbackAction.pickOnMap:
+            CenterToast.show(context, '在地图上点一下你要标记的位置');
+            break;
+          case null:
+            break;
+        }
+        return; // 无论选了哪个都先不提交，等用户确认
+      }
+
+      lat = r.lat;
+      lng = r.lng;
+      precise = false; // 地址解析 = 街道级，不算精确坐标
+      // 顺手把地图对到解析点，让用户看见「存的就是这儿」
+      final g = CoordTransform.wgs84ToGcj02(lat, lng);
+      _mapController.move(LatLng(g[0], g[1]), 14);
+    } else {
+      lat = _picked?.latitude;
+      lng = _picked?.longitude;
+      precise = _precise;
     }
 
     if (lat == null || lng == null) {
@@ -195,6 +332,7 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
       );
       if (mounted) {
         RefreshBus.bumpFeed();
+        RefreshBus.bumpSpots(); // 钓点列表 / 地图跟着刷新，回首页就能看到新点
         CenterToast.show(
           context,
           precise
@@ -309,16 +447,7 @@ class _PublishSpotScreenState extends State<PublishSpotScreen> {
                       //   NotoColorEmoji 字体，ROM 精简过或老 Android 上直接
                       //   渲染成小方块 —— 用户看到的就是「定位那行有乱码」。
                       //   App 自己的文案一律不用 emoji，要图形就用 Icon。
-                      _picked == null
-                          ? _locating
-                              ? '正在读取当前位置…'
-                              : '点地图微调位置 · 蓝点=我的位置 · 红标=钓点'
-                          : _geoAddress == null
-                              ? _resolvingAddress
-                                  ? '已选钓点，正在解析地址…'
-                                  : '已选钓点：${_picked!.latitude.toStringAsFixed(4)}, '
-                                      '${_picked!.longitude.toStringAsFixed(4)}'
-                              : '已选钓点：${_geoAddress!.bestAddress}',
+                      _bannerText,
                       style: const TextStyle(fontSize: 13),
                     ),
                   ),

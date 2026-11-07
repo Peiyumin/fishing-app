@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -15,6 +16,7 @@ import '../services/location_service.dart';
 import '../services/spot_service.dart';
 import '../services/session_provider.dart';
 import '../services/api_config.dart';
+import '../utils/address_lookup.dart';
 import '../utils/coord_transform.dart';
 import '../utils/geo_names.dart';
 import 'auth_screen.dart';
@@ -62,12 +64,28 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
   /// 提交时按地址解析坐标的 loading
   bool _geocoding = false;
 
+  // ── v45：边打字边解析，地图跟着走 ──────────────────────────
+  Timer? _addrTimer;
+  AddressLookup? _addrLookup;
+  bool _addrPreviewing = false;
+  String _addrResolvedFor = '';
+
+  /// 代码回填地址框时别把 [_precise] 降级（那不是用户手改）
+  bool _suppressAddrListener = false;
+
   /// 地址框下面那行小字
   String get _addrHint {
     final t = _addrCtrl.text.trim();
     if (t.isEmpty) return '可以打字填地址，也可以点右边的准星读当前位置';
     if (_geocoding) return '正在把你填的地址解析成位置…';
     if (_precise) return '已按当前位置定位，导航会直接按坐标走';
+    if (_addrPreviewing) return '正在解析地址…';
+    final r = _addrLookup;
+    if (r != null && r.ok) {
+      final where = r.formatted.isEmpty ? t : r.formatted;
+      return '已定位到：$where${r.hint.isEmpty ? '' : '（${r.hint}）'}';
+    }
+    if (r != null && !r.ok) return '没解析出位置：${r.reason}';
     return '导航时会按这段地址搜索（之前点选的坐标不再使用）';
   }
 
@@ -88,10 +106,53 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
   void initState() {
     super.initState();
     _type = _typeOptions.first;
+    _addrCtrl.addListener(_onAddrChanged);
+  }
+
+  /// 地址框一改：降级坐标可信度 + 防抖解析（地图会跟着挪）
+  void _onAddrChanged() {
+    if (_suppressAddrListener) return;
+    if (_precise) setState(() => _precise = false);
+    _addrTimer?.cancel();
+    _addrTimer = Timer(const Duration(milliseconds: 700), _previewByAddress);
+  }
+
+  /// 把地址解析成坐标，并把地图挪到那个点
+  Future<void> _previewByAddress() async {
+    final t = _addrCtrl.text.trim();
+    if (!mounted) return;
+    if (t.length < 4) {
+      setState(() {
+        _addrLookup = null;
+        _addrResolvedFor = '';
+        _addrPreviewing = false;
+      });
+      return;
+    }
+    setState(() => _addrPreviewing = true);
+    final r = await AddressLookup.resolve(t);
+    if (!mounted) return;
+    setState(() {
+      _addrPreviewing = false;
+      _addrLookup = r;
+      if (r.ok) {
+        _picked = LatLng(r.lat, r.lng);
+        _precise = false;
+        _addrResolvedFor = t;
+      } else {
+        _addrResolvedFor = '';
+      }
+    });
+    if (r.ok) {
+      final g = CoordTransform.wgs84ToGcj02(r.lat, r.lng);
+      _mapController.move(LatLng(g[0], g[1]), 14);
+    }
   }
 
   @override
   void dispose() {
+    _addrTimer?.cancel();
+    _addrCtrl.removeListener(_onAddrChanged);
     _nameCtrl.dispose();
     _addrCtrl.dispose();
     _phoneCtrl.dispose();
@@ -134,7 +195,12 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
       });
       final r = await GeoNames.reverse(pos.latitude, pos.longitude);
       if (!mounted) return;
+      // 这是系统反查出来的地址，不是用户手改的：别让监听器把 GPS 点降级
+      _suppressAddrListener = true;
       _addrCtrl.text = (r?['display'] as String?) ?? '';
+      _suppressAddrListener = false;
+      _addrLookup = null;
+      _addrResolvedFor = '';
       CenterToast.show(context, '已定位到当前位置');
     } on LocationException catch (e) {
       if (mounted) LocationPrompt.showError(context, e);
@@ -165,6 +231,26 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
     }
   }
 
+  /// 顶部提示（v45：文字地址解析出来的点要明说「按地址定位」）
+  String get _bannerText {
+    final what = _isShop ? '渔具店' : '钓点';
+    if (_picked == null) {
+      return '点击地图或点「获取定位」选择$what位置';
+    }
+    if (!_precise) {
+      if (_addrPreviewing || _geocoding) return '正在按地址定位…';
+      final r = _addrLookup;
+      if (r != null && r.ok) {
+        final w = r.formatted.isEmpty ? _addrCtrl.text.trim() : r.formatted;
+        return '按地址定位：$w';
+      }
+      if (r != null && !r.ok) return '地址没解析出位置，红标仍是地图上的旧点';
+    }
+    return '已选$what坐标（WGS84）：'
+        '${_picked!.latitude.toStringAsFixed(5)}, '
+        '${_picked!.longitude.toStringAsFixed(5)}';
+  }
+
   Future<void> _submit() async {
     final sp = Provider.of<SessionProvider>(context, listen: false);
     if (ApiConfig.enabled && !sp.isLoggedIn) {
@@ -182,26 +268,60 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
     // —— 位置来源（v44）——
     //   刚定位/刚点图 → 用那个坐标，标记精确
     //   手改了地址     → 按地址重新解析，解析出来的只到街道级，标记不精确
-    double? lat = _picked?.latitude;
-    double? lng = _picked?.longitude;
-    bool precise = _precise;
+    // —— v45：地址是用户打的，就**必须**用地址解析出来的坐标 ——
+    //   解析失败时停下来问用户，绝不拿「打开页面时的当前定位」顶上。
+    //   v2.1.78 线上就错在这儿：填的地址存成了自己脚下。
+    double? lat;
+    double? lng;
+    bool precise;
 
     if (addrText.isNotEmpty && !_precise) {
-      if (mounted) setState(() => _geocoding = true);
-      final g = await SpotService.geocodeAddress(addrText);
-      if (mounted) setState(() => _geocoding = false);
-      if (!mounted) return;
-      if (g != null && g.valid) {
-        lat = g.lat;
-        lng = g.lng;
-        precise = false;
-      } else if (lat == null) {
-        CenterToast.show(
-            context, '这个地址没能解析成位置，请点「获取定位」或在地图上点一下');
-        return;
+      AddressLookup r;
+      if (_addrLookup != null && _addrLookup!.ok && _addrResolvedFor == addrText) {
+        r = _addrLookup!;
       } else {
-        precise = false;
+        if (mounted) setState(() => _geocoding = true);
+        r = await AddressLookup.resolve(addrText);
+        if (!mounted) return;
+        setState(() {
+          _geocoding = false;
+          _addrLookup = r;
+          _addrResolvedFor = r.ok ? addrText : '';
+        });
       }
+
+      if (!r.ok) {
+        final act = await showAddressFallbackSheet(
+          context,
+          address: addrText,
+          reason: r.reason,
+        );
+        if (!mounted) return;
+        switch (act) {
+          case AddressFallbackAction.editAddress:
+            CenterToast.show(context, '把地址写细一点，例如「省+市+区/县+乡镇」');
+            break;
+          case AddressFallbackAction.useCurrentLocation:
+            await _fillAddressByLocation();
+            break;
+          case AddressFallbackAction.pickOnMap:
+            CenterToast.show(context, '在地图上点一下你要标记的位置');
+            break;
+          case null:
+            break;
+        }
+        return;
+      }
+
+      lat = r.lat;
+      lng = r.lng;
+      precise = false;
+      final g = CoordTransform.wgs84ToGcj02(lat, lng);
+      _mapController.move(LatLng(g[0], g[1]), 14);
+    } else {
+      lat = _picked?.latitude;
+      lng = _picked?.longitude;
+      precise = _precise;
     }
 
     if (lat == null || lng == null) {
@@ -356,11 +476,7 @@ class _PublishVenueScreenState extends State<PublishVenueScreen> {
                     ),
                     child: Text(
                       // 去掉 👆：emoji 在没装彩色 emoji 字体的机器上是方块
-                      _picked == null
-                          ? '点击地图或点「获取定位」选择${_isShop ? '渔具店' : '钓点'}位置'
-                          : '已选${_isShop ? '渔具店' : '钓点'}坐标（WGS84）：'
-                              '${_picked!.latitude.toStringAsFixed(5)}, '
-                              '${_picked!.longitude.toStringAsFixed(5)}',
+                      _bannerText,
                       style: const TextStyle(fontSize: 12.5),
                     ),
                   ),

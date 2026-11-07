@@ -215,31 +215,56 @@ class SpotService {
   /// 文字地址 → 坐标（v44）
   ///
   /// 走自家后端 `/geo/forward`：高德 Web 服务 Key 是服务端 Key，绝不能放客户端。
-  /// 后端没配 Key 时会用 OSM 兜底，所以这个接口在没有 High德 Key 的情况下也能用。
+  /// 后端按「高德 Key → 百度网页搜索 → OSM」的顺序兜底，所以没配 Key 也能解析。
   ///
-  /// 返回 null 表示解析失败（地址太模糊、没网、没登录…），调用方应当提示用户
-  /// 「在地图上点一下位置」而不是硬拿一个错坐标去提交。
+  /// 返回 null 表示解析失败（地址太模糊、没网、没登录…），**失败原因在
+  /// [lastGeocodeError] 里**。调用方不要拿旧坐标顶上，宁可拦下来让用户改地址：
+  /// v2.1.78 线上就出过这个事故 —— 解析失败被静默忽略，用户填的地址全存成了
+  /// 他当时所在的位置，地图上点跑到了自己脚下。
   ///
   /// ★ 解析出来的坐标只到街道级，调用方必须把它当作 `coordPrecise = false` 用。
+  static String lastGeocodeError = '';
+
   static Future<GeoPoint?> geocodeAddress(String address,
       {String city = ''}) async {
-    if (!ApiConfig.enabled) return null;
+    lastGeocodeError = '';
+    if (!ApiConfig.enabled) {
+      lastGeocodeError = '未连接服务器，无法解析地址';
+      return null;
+    }
     final addr = address.trim();
-    if (addr.length < 4) return null;
-    if (ApiClient.token == null) return null;
+    if (addr.length < 4) {
+      lastGeocodeError = '地址太短，写清省市区或乡镇';
+      return null;
+    }
+    if (ApiClient.token == null) {
+      lastGeocodeError = '请先登录再解析地址';
+      return null;
+    }
     try {
       final data = jsonMap(await ApiClient.post('/geo/forward', {
         'address': addr,
         if (city.isNotEmpty) 'city': city,
       }));
-      return GeoPoint(
+      final p = GeoPoint(
         lat: jsonDouble(data['lat']) ?? 0,
         lng: jsonDouble(data['lng']) ?? 0,
         levelText: (data['level_text'] ?? '').toString(),
         formatted: (data['formatted'] ?? '').toString(),
         source: (data['source'] ?? '').toString(),
       );
-    } catch (_) {
+      if (!p.valid) {
+        lastGeocodeError = '服务器返回的坐标不对';
+        return null;
+      }
+      return p;
+    } on ApiException catch (e) {
+      // 后端的报错是给用户看的（「地址解析失败（高德未配置 Key；百度：…）」），
+      // 直接透出去，别再吞掉
+      lastGeocodeError = e.message;
+      return null;
+    } catch (e) {
+      lastGeocodeError = e.toString();
       return null;
     }
   }
@@ -355,6 +380,9 @@ class GeoPoint {
   /// 「街道级 · 高德」这种短说明，给用户看
   String get hint {
     final lv = levelText.isEmpty ? '地址级' : levelText;
-    return source == 'amap' ? lv : '$lv · OpenStreetMap';
+    // 后端给百度/OSM 的 level_text 里已经带了来源（「POI 级（百度）」），
+    // 再拼一次就变成「（百度）· OpenStreetMap」这种自相矛盾的文案
+    if (lv.contains('（')) return lv;
+    return source == 'osm' ? '$lv · OpenStreetMap' : lv;
   }
 }

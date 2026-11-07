@@ -205,16 +205,19 @@ void main() {
     });
 
     test('提交时按地址重新解析坐标', () {
+      // v45：解析入口收敛到 AddressLookup（带失败原因），页面不再直接调服务
       for (final f in [wild, venue, shop]) {
-        expect(f.contains('SpotService.geocodeAddress(addrText)'), isTrue);
+        expect(f.contains('AddressLookup.resolve(addrText)'), isTrue);
         expect(f.contains('coordPrecise: precise'), isTrue);
       }
     });
 
-    test('地址解析不出且没有坐标时拦下，不提交错位置', () {
-      expect(wild.contains('这个地址没能解析成位置'), isTrue);
-      expect(venue.contains('这个地址没能解析成位置'), isTrue);
-      expect(shop.contains('这个地址没能解析成位置'), isTrue);
+    test('地址解析不出时弹选择层，绝不默认用当前定位', () {
+      for (final f in [wild, venue, shop]) {
+        expect(f.contains('showAddressFallbackSheet'), isTrue);
+        // 老代码有一条「解析失败就照常提交旧坐标」的静默分支，必须删掉
+        expect(f.contains('有之前的坐标但地址解析失败'), isFalse);
+      }
     });
   });
 
@@ -248,7 +251,7 @@ void main() {
     });
 
     test('地址太短不调接口（省一次外部请求）', () {
-      expect(svc.contains('if (addr.length < 4) return null;'), isTrue);
+      expect(svc.contains('if (addr.length < 4)'), isTrue);
     });
   });
 }

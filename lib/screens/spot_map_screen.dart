@@ -17,6 +17,7 @@ import '../services/cached_tile_provider.dart';
 import '../services/map_config_service.dart';
 import '../services/map_data_service.dart';
 import '../services/map_tile_source.dart';
+import '../services/refresh_bus.dart';
 import '../services/spot_service.dart';
 import '../services/weather_service.dart';
 import '../utils/coord_transform.dart';
@@ -182,6 +183,8 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
       if (mounted && !_gotAnyTile) _onTileFail();
     });
     _load();
+    // v45：刚在添加页按地址存下的点，回到地图要能立刻看到（不用杀进程重开）
+    RefreshBus.spotTick.addListener(_onSpotsChanged);
     _searchCtrl.addListener(_onSearchChanged);
     // 宿主页（钓点页）联动定位：把内部移动能力挂到 controller 上
     widget.controller?._move = _moveToLocation;
@@ -194,8 +197,18 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     });
   }
 
+  /// 有新钓点（或钓点报错纠偏）后，只重拉钓点，不动水系/禁钓区
+  Future<void> _onSpotsChanged() async {
+    final list = await SpotService.fetchSpots();
+    if (!mounted) return;
+    setState(() {
+      _spots = list.where((s) => s.lat != 0 && s.lng != 0).toList();
+    });
+  }
+
   @override
   void dispose() {
+    RefreshBus.spotTick.removeListener(_onSpotsChanged);
     _watchdog?.cancel();
     widget.controller?._move = null;
     _searchCtrl.removeListener(_onSearchChanged);
