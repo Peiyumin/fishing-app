@@ -86,11 +86,14 @@ void main() {
     await tester.pumpWidget(_wrap(const HomeScreen()));
     // 只 pumpWidget 一次 = 真正的首帧，后面任何 setState 都还没来
 
-    expect(find.text('正在获取天气…'), findsNothing,
-        reason: '首帧还在画占位卡，说明内存预热没接上');
-    expect(find.text('--℃'), findsNothing, reason: '首帧是骨架态的 --℃');
-    expect(find.text('23℃'), findsOneWidget,
-        reason: '首帧没有真实温度，用户会看到卡片先空一下再跳');
+    // v46：天气区从白卡改成了顶部深色通栏（HomeWeatherHero），
+    // 温度显示成 `23°`、占位态是 `--`，断言跟着换，但守的还是同一件事：
+    // 首帧就必须是真实数据，不能先画占位再跳。
+    expect(find.text('正在获取当前位置的天气…'), findsNothing,
+        reason: '首帧还在画占位，说明内存预热没接上');
+    expect(find.text('--'), findsNothing, reason: '首帧是占位态的 --');
+    expect(find.text('23°'), findsOneWidget,
+        reason: '首帧没有真实温度，用户会看到天气块先空一下再跳');
     expect(find.text('78'), findsOneWidget, reason: '垂钓指数没跟着秒显');
 
     // 收尾：首页里挂着定位 6 秒延时与 3 分钟轮询 timer，不推走会报 pending timer

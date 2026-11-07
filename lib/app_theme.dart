@@ -256,6 +256,18 @@ class AppTheme {
   /// 同上的浅色底：胶囊 / 徽章填充（12% 透明度，白底上不抢文字）
   static Color biteScoreSoft(int s) => biteScore(s).withOpacity(.12);
 
+  /// 深色底（首页天气区）上的评分色
+  ///
+  /// [biteScore] 里 90 分以上是近黑、40 分以下是浅灰 —— 在白色卡片上没问题，
+  /// 但首页天气区是近黑渐变底，近黑数字直接看不见。深色底必须**反过来**：
+  /// 高分用品牌青柠，低分用冷灰蓝，且都要能在 #07080C 上达到 4.5:1。
+  static Color biteScoreOnDark(int s) {
+    if (s >= 80) return accent; // 青柠：条件很好
+    if (s >= 60) return const Color(0xFFFFD54F); // 暖黄：还行
+    if (s >= 40) return const Color(0xFFFF9F43); // 橙：一般
+    return const Color(0xFF9AA7B8); // 灰蓝：较差
+  }
+
   static final ThemeData light = ThemeData(
     useMaterial3: true,
     brightness: Brightness.light,

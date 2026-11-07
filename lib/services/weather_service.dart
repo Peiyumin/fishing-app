@@ -60,6 +60,19 @@ class WeatherService {
   /// 上面那个包拿到的时间
   static DateTime? get memoryAt => _memoryAt;
 
+  /// 当前水温（℃）——首页天气区要用，没有完整天气包时返回 null
+  ///
+  /// 和天气页、渔获详情用的是**同一个** [WaterMetrics.derive]（热惯性模型），
+  /// 不能自己拿气温乘个系数凑，否则首页显示 17℃、天气页显示 15℃ 又要被问。
+  static double? get memoryWaterTemp {
+    final b = _memory;
+    if (b == null || b.hours.isEmpty) return null;
+    final i = b.indexOfCurrentHour(DateTime.now());
+    final m = WaterMetrics.derive(b.hours);
+    if (i < 0 || i >= m.length) return null;
+    return m[i].temp;
+  }
+
   /// 启动预热：把本地缓存的「当前天气 + 7 天包」读进内存
   ///
   /// 在启动页并行调用（几次 prefs 读，通常 <20ms），首页 / 详情页因此可以

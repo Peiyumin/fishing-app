@@ -6,8 +6,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_theme.dart';
 import '../models/fishing_spot.dart';
+import '../models/home_layout.dart';
 import '../models/post.dart';
 import '../services/geo_place.dart';
+import '../services/home_service.dart';
 import '../services/location_service.dart';
 import '../services/post_service.dart';
 import '../services/refresh_bus.dart';
@@ -19,12 +21,13 @@ import '../utils/spot_sort.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/login_gate.dart';
 import '../widgets/grid_nav.dart';
+import '../widgets/home_ad_banner.dart';
+import '../widgets/home_weather_hero.dart';
 import '../widgets/location_prompt.dart';
 import '../widgets/msg_bell.dart';
 import '../widgets/section_header.dart';
 import '../widgets/spot_card.dart';
 import '../widgets/waterfall_post_card.dart';
-import '../widgets/weather_card.dart';
 import 'post_detail_screen.dart';
 import 'search_screen.dart';
 import 'signin_screen.dart';
@@ -45,6 +48,11 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen>
     with WidgetsBindingObserver {
   FishingWeather? _weather;
+
+  /// 首页装修（分类导航 + 广告位 + 一行几个），后台 `/home/layout` 下发
+  ///
+  /// v46：先取内存/兜底，首帧就能画出宫格；随后异步换成后台真实配置。
+  HomeLayout _layout = HomeService.current;
   List<FishingSpot> _spots = [];
   List<Post> _posts = [];
   bool _loadingPosts = true;
@@ -96,6 +104,7 @@ class _HomeScreenState extends State<HomeScreen>
       if (!_firstFrame.isCompleted) _firstFrame.complete();
     });
     _loadPlace(); // 先用缓存秒显地名（断网也能看到上次城市）
+    _loadLayout(); // 后台配的宫格/广告：先用缓存，再静默换成最新的
     _loadWeather();
     _loadSpots();
     _loadFeed();
@@ -478,6 +487,23 @@ class _HomeScreenState extends State<HomeScreen>
     return const SizedBox(height: 18);
   }
 
+  /// 拉首页装修（分类导航 + 广告位 + 一行几个）
+  ///
+  /// 两步走：
+  ///   1. 先读本地缓存 —— 上次启动时后台配过什么，现在就画什么，首帧不用等网络；
+  ///   2. 再请求 `/home/layout` —— 后台刚改完配置，用户下次进首页就能看到。
+  /// 任何一步失败都保持当前布局（最差是内置那 10 个入口），首页不会空。
+  Future<void> _loadLayout() async {
+    final cached = await HomeService.loadCache();
+    if (!mounted) return;
+    if (cached != null) setState(() => _layout = cached);
+
+    final fresh = await HomeService.refresh();
+    if (!mounted) return;
+    // 名字/图标/顺序都可能变，直接整块替换；HomeLayout 很小，重画代价可忽略
+    setState(() => _layout = fresh);
+  }
+
   /// 手动下拉刷新：顺带重新定位一次，保证「附近钓点」距离是新的
   ///
   /// ★ 定位不参与 await（v2.1.19）。
@@ -497,6 +523,7 @@ class _HomeScreenState extends State<HomeScreen>
     }
     unawaited(_loadWeather(silent: true));
     unawaited(_loadSpots());
+    unawaited(_loadLayout()); // 后台刚上的广告/分类，下拉就能立刻看到
     if (mounted) setState(() => _lastUpdated = DateTime.now());
   }
 
@@ -509,6 +536,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    final topAd = _layout.topAd;
     return Scaffold(
       appBar: AppBar(
         // 顶部高度收紧（默认 56 → 46），软件名居中，定位地名浮在左侧
@@ -637,50 +665,18 @@ class _HomeScreenState extends State<HomeScreen>
         child: ListView(
           controller: _feedScroll,
           children: [
-            const GridNav(),
-            // 天气（点击进入 7 天预报独立页）
-            //
-            // ★ v2.1.74：没有数据时不再画转圈，直接画一张同尺寸的占位卡。
-            //   转圈会让整块高度塌陷、进页面时下方内容往下跳一次；
-            //   占位卡和真卡片结构一致，数据回来后原地替换，不动版。
-            if (_weather == null)
-              Column(
-                children: [
-                  SectionHeader(
-                    title: (_place == null || _place!.label.isEmpty)
-                        ? '实时天气'
-                        : '${_place!.label} · 实时天气',
-                    actionLabel: '7天预报',
-                    onAction: () => _guard(() => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const WeatherScreen()))),
-                  ),
-                  const WeatherCardSkeleton(),
-                ],
-              )
-            else
-              Column(
-                  children: [
-                    SectionHeader(
-                      title: (_place == null || _place!.label.isEmpty)
-                          ? '实时天气'
-                          : '${_place!.label} · 实时天气',
-                      actionLabel: '7天预报',
-                      onAction: () => _guard(() => Navigator.of(context).push(
-                          MaterialPageRoute(
-                              builder: (_) => const WeatherScreen()))),
-                    ),
-                    InkWell(
-                      onTap: () => _guard(() => Navigator.of(context).push(
-                          MaterialPageRoute(
-                              builder: (_) => const WeatherScreen()))),
-                      borderRadius: BorderRadius.circular(14),
-                      child: WeatherCard(
-                        weather: _weather!,
-                        placeLabel: _place?.label,
-                      ),
-                    ),
-                  ],
-                ),
+            // ① 顶部天气（改版：整块深色通栏，指数 + 建议 + 四格指标）
+            HomeWeatherHero(
+              weather: _weather,
+              placeLabel: _place?.label,
+              waterTemp: WeatherService.memoryWaterTemp,
+              onTap: () => _guard(() => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const WeatherScreen()))),
+            ),
+            // ② 分类导航：名字 / 图标 / 顺序 / 一行几个全部来自后台
+            GridNav(items: _layout.categories, crossAxisCount: _layout.gridCols),
+            // ③ 首页广告位：后台没配在投广告时整块不占位，不留空坑
+            if (topAd != null) HomeAdBanner(ad: topAd),
             // 钓点横向列表（标题 + 进入钓点页）
             SectionHeader(
               title: '附近钓点',

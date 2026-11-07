@@ -1,53 +1,65 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../models/home_layout.dart';
 import '../screens/activity_list_screen.dart';
 import '../screens/article_list_screen.dart';
 import '../screens/catch_screen.dart';
+import '../screens/fish_guide_screen.dart';
 import '../screens/lure_screen.dart';
 import '../screens/mall_screen.dart';
-import '../screens/weather_screen.dart';
+import '../screens/member_center_screen.dart';
+import '../screens/nearby_anglers_screen.dart';
+import '../screens/pond_screen.dart';
+import '../screens/signin_screen.dart';
 import '../screens/spots_screen.dart';
+import '../screens/weather_screen.dart';
+import '../utils/home_icons.dart';
 import 'center_toast.dart';
 
-/// 首页宫格导航（10 个图标 + 标题）
-/// 已实现的频道直接跳页；未实现的用居中提示说明，不用底部 SnackBar
-/// （SnackBar 会顶起底部导航和中间的发布按钮）
+/// 首页宫格导航（v46：内容与列数全部由后台 `/home/layout` 下发）
+///
+/// 和老版本的区别：
+///   · 老的 10 个入口是写死的 const 列表，改一个名字就要发版；
+///     现在名字、图标、顺序、显示与否都在后台「首页分类导航」里配。
+///   · 一行几个也由后台决定（4 或 5），窄屏机型嫌挤可以切 4 个。
+///   · 后台删掉 / 隐藏分类后，App 按接口返回的列表渲染，不再有「幽灵入口」。
+///
+/// 兜底：接口没数据时用 [HomeLayout.fallback]（= 改版前那 10 个），
+/// 所以断网也不会出现空宫格。
 class GridNav extends StatelessWidget {
-  const GridNav({super.key});
+  final List<HomeCategory> items;
 
-  // 10 个频道：图标 + 标题 + 跳转标识
-  static const List<_NavItem> _items = [
-    _NavItem(Icons.wb_sunny_outlined, '天气', 'weather'),
-    _NavItem(Icons.place_outlined, '钓点', 'spot'),
-    _NavItem(Icons.catching_pokemon_outlined, '渔获', 'catch'),
-    _NavItem(Icons.sports_handball_outlined, '路亚', 'lure'),
-    _NavItem(Icons.water_drop_outlined, '黑坑', 'blackpit'),
-    _NavItem(Icons.shopping_bag_outlined, '装备', 'gear'),
-    _NavItem(Icons.menu_book_outlined, '技巧', 'skill'),
-    _NavItem(Icons.event_outlined, '活动', 'event'),
-    _NavItem(Icons.storefront_outlined, '商城', 'shop'),
-    _NavItem(Icons.live_tv_outlined, '直播', 'live'),
-  ];
+  /// 一行几个（4 / 5），由后台配置
+  final int crossAxisCount;
+
+  const GridNav({
+    super.key,
+    this.items = const [],
+    this.crossAxisCount = 5,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final list = items.isEmpty ? HomeLayout.fallback.categories : items;
+    final cols = (crossAxisCount == 4) ? 4 : 5;
+
     return Card(
-      // v2.1.61：左右跟着页边距收到 10，上下 8 → 6
-      // v2.1.62：左右 → pagePad(8)，上下 6 → 4（和下面分区标题的 4pt 相接）
       margin: const EdgeInsets.symmetric(
           horizontal: AppTheme.pagePad, vertical: 4),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
         child: GridView.count(
-          crossAxisCount: 5, // 一行 5 个，两行共 10 个
+          crossAxisCount: cols,
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          childAspectRatio: 0.85,
-          children: _items
-              .map((it) => _GridCell(
-                    item: it,
-                    onTap: () => _onTap(context, it),
+          // 4 个一行时格子更宽，比例跟着调，图标才不会被拉成扁的
+          childAspectRatio: cols == 4 ? 0.92 : 0.85,
+          children: list
+              .map((c) => _GridCell(
+                    item: c,
+                    big: cols == 4,
+                    onTap: () => openCategory(context, c),
                   ))
               .toList(),
         ),
@@ -55,89 +67,120 @@ class GridNav extends StatelessWidget {
     );
   }
 
-  /// 频道点击：已实现的跳页，未实现的居中提示
-  void _onTap(BuildContext context, _NavItem item) {
-    switch (item.tag) {
+  /// 分类点击：按后台配的 tag 跳 App 内页面
+  void openCategory(BuildContext context, HomeCategory item) {
+    if (item.action == 'none') {
+      CenterToast.show(context, '「${item.name}」暂未开放');
+      return;
+    }
+    final route = routeOf(item.value);
+    if (route == null) {
+      CenterToast.show(context, '「${item.name}」功能未开发');
+      return;
+    }
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => route));
+  }
+
+  /// tag → 页面（纯函数，单测直接断言）
+  ///
+  /// ★ 后台 `lib/home_layout.php` 的 `home_action_catalog()` 必须和这里同步：
+  ///   后台给了个这里没有的 tag，用户点了只会看到「功能未开发」。
+  static Widget? routeOf(String tag) {
+    switch (tag) {
       case 'weather':
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const WeatherScreen()),
-        );
-        return;
+        return const WeatherScreen();
       case 'spot':
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const SpotsScreen()),
-        );
-        return;
+        return const SpotsScreen();
       case 'catch':
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const CatchScreen()),
-        );
-        return;
-      case 'shop':
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const MallScreen()),
-        );
-        return;
+        return const CatchScreen();
       case 'lure':
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const LureScreen()),
-        );
-        return;
+        return const LureScreen();
       case 'skill':
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => const ArticleListScreen(
-              title: '垂钓技巧',
-              tabs: [ArticleTab('技巧', 'skill')],
-            ),
-          ),
+        return const ArticleListScreen(
+          title: '垂钓技巧',
+          tabs: [ArticleTab('技巧', 'skill')],
         );
-        return;
       case 'event':
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const ActivityListScreen()),
-        );
-        return;
+        return const ActivityListScreen();
+      case 'shop':
+        return const MallScreen();
+      case 'pond':
+        return const PondScreen();
+      case 'guide':
+        return const FishGuideScreen();
+      case 'nearby':
+        return const NearbyAnglersScreen();
+      case 'signin':
+        return const SigninScreen();
+      case 'member':
+        return const MemberCenterScreen();
       default:
-        CenterToast.show(context, '「${item.label}」功能未开发');
+        // blackpit / gear / live 等还没有对应页面 → 返回 null 走提示
+        return null;
     }
   }
 }
 
-class _NavItem {
-  final IconData icon;
-  final String label;
-  final String tag;
-  const _NavItem(this.icon, this.label, this.tag);
-}
-
 class _GridCell extends StatelessWidget {
-  final _NavItem item;
+  final HomeCategory item;
+  final bool big;
   final VoidCallback onTap;
-  const _GridCell({required this.item, required this.onTap});
+
+  const _GridCell({required this.item, required this.onTap, this.big = false});
 
   @override
   Widget build(BuildContext context) {
+    final box = big ? 50.0 : 44.0;
     return InkWell(
       onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
-            width: 46,
-            height: 46,
+            width: box,
+            height: box,
             decoration: BoxDecoration(
-              color: AppTheme.primaryLight,
-              borderRadius: BorderRadius.circular(16),
+              color: AppTheme.primarySoft,
+              borderRadius: BorderRadius.circular(big ? 16 : 14),
             ),
-            child: Icon(item.icon, color: AppTheme.primary, size: 24),
+            clipBehavior: Clip.antiAlias,
+            child: _icon(box),
           ),
-          const SizedBox(height: 6),
-          Text(item.label,
-              style: const TextStyle(
-                  fontSize: 12, color: AppTheme.textPrimary)),
+          SizedBox(height: big ? 7 : 6),
+          Text(
+            item.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: big ? 12.5 : 12,
+              fontWeight: FontWeight.w500,
+              color: AppTheme.textPrimary,
+            ),
+          ),
         ],
       ),
     );
   }
+
+  Widget _icon(double box) {
+    final url = item.iconUrl;
+    if (url != null && url.isNotEmpty) {
+      // 后台传的自定义图标：铺满方块，加载失败退回内置图标（不留白块）
+      return Image.network(
+        url,
+        width: box,
+        height: box,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _builtinIcon(box),
+      );
+    }
+    return _builtinIcon(box);
+  }
+
+  Widget _builtinIcon(double box) => Icon(
+        homeIconOf(item.icon),
+        size: box * 0.5,
+        color: AppTheme.primary,
+      );
 }
