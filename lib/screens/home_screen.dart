@@ -314,6 +314,15 @@ class _HomeScreenState extends State<HomeScreen>
     if (!mounted) return;
     final lastPos = await _readLastPos();
     if (lastPos != null) {
+      // 海钓的潮汐要有坐标才有意义。GPS 还没回来（室内/刚开机）时先用
+      // 上次的位置兜底，别让用户点了「海钓」看到一格「--」。
+      if (mounted && _myLat == null) {
+        setState(() {
+          _myLat = lastPos[0];
+          _myLng = lastPos[1];
+          _tide = _computeTide();
+        });
+      }
       unawaited(_fetchWeather(lastPos[0], lastPos[1], silent: silent));
     }
 
