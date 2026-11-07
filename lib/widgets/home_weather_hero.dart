@@ -81,7 +81,11 @@ class HomeWeatherHero extends StatelessWidget {
                   const SizedBox(width: 4),
                   Flexible(
                     child: Text(
-                      place.isEmpty ? '当前位置 · 实时天气' : '$place · 实时天气',
+                      // 顶部定位胶囊去掉后，地名只在这里出现一次：
+                      // 能取到就写地名，取不到写「当前位置」。
+                      // 不再缀「· 实时天气」—— 右边就是更新时间，整块本来就是实时天气，
+                      // 缀上去反而把地名挤成「当前位置 · 实时⋯」
+                      place.isEmpty ? '当前位置' : place,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(

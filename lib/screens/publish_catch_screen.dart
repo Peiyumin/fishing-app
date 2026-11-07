@@ -42,7 +42,25 @@ class PublishCatchScreen extends StatefulWidget {
   /// 传入则为「编辑模式」，预填该动态内容；不传为「发布模式」
   final Post? existing;
 
-  const PublishCatchScreen({super.key, this.existing});
+  /// 从钓点详情页「晒渔获」进来时带上的钓点（v2.1.83）
+  ///
+  /// 用户点的是「在这个钓点晒渔获」，钓点就该是那个钓点，
+  /// 不该再用他现在站的位置 —— 他可能是在家里翻到这个地方的。
+  final String? spotName;
+  final double? spotLat;
+  final double? spotLng;
+
+  const PublishCatchScreen({
+    super.key,
+    this.existing,
+    this.spotName,
+    this.spotLat,
+    this.spotLng,
+  });
+
+  /// 是否带着钓点进来（带着就不再自动定位覆盖掉）
+  bool get hasPresetSpot =>
+      spotLat != null && spotLng != null && spotLat != 0 && spotLng != 0;
 
   @override
   State<PublishCatchScreen> createState() => _PublishCatchScreenState();
@@ -118,6 +136,23 @@ class _PublishCatchScreenState extends State<PublishCatchScreen> {
       }
       final wk = kgInputText(ex.weightG);
       if (wk.isNotEmpty) _weightCtrl.text = wk;
+    } else if (widget.hasPresetSpot) {
+      // 从钓点详情页进来：直接用那个钓点的坐标，不再自动定位，
+      // 否则会被「我现在站的地方」覆盖掉
+      _lat = widget.spotLat;
+      _lng = widget.spotLng;
+      _placeLabel = widget.spotName;
+      _locating = false;
+      // 名字有了、行政区分不出来，异步补一个（失败就用钓点名）
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        try {
+          final rev = await GeoNames.reverse(widget.spotLat!, widget.spotLng!);
+          final d = (rev?['display'] as String?)?.trim();
+          if (mounted && d != null && d.isNotEmpty) {
+            setState(() => _placeDetail = d);
+          }
+        } catch (_) {}
+      });
     } else {
       // 首帧后再拿定位：iOS 在首帧前弹权限框会被系统丢掉
       WidgetsBinding.instance.addPostFrameCallback((_) => _locate());

@@ -29,7 +29,6 @@ import '../widgets/section_header.dart';
 import '../widgets/spot_card.dart';
 import '../widgets/waterfall_post_card.dart';
 import 'post_detail_screen.dart';
-import 'search_screen.dart';
 import 'signin_screen.dart';
 import 'weather_screen.dart';
 import 'spots_screen.dart';
@@ -539,7 +538,9 @@ class _HomeScreenState extends State<HomeScreen>
     final topAd = _layout.topAd;
     return Scaffold(
       appBar: AppBar(
-        // 顶部高度收紧（默认 56 → 46），软件名居中，定位地名浮在左侧
+        // 顶部高度收紧（默认 56 → 46）：只有居中的软件名和右侧消息铃铛。
+        // v2.1.83 起去掉了右上角的搜索框和左上的定位胶囊 —— 搜索走「钓点」页，
+        // 定位地名已经在下面的天气通栏里显示，顶部不再堆两处入口。
         toolbarHeight: 46,
         centerTitle: true,
         titleSpacing: 12,
@@ -547,13 +548,13 @@ class _HomeScreenState extends State<HomeScreen>
         //   Hero（flexibleSpace 画近黑渐变），必须显式把前景改回白色，
         //   否则标题/消息铃铛会变成黑图标压在黑底上直接消失。
         foregroundColor: Colors.white,
-        title: SizedBox(
+        title: const SizedBox(
           width: double.infinity,
           child: Stack(
             alignment: Alignment.center,
             children: [
               // —— 软件名：居中 ——
-              const Text(
+              Text(
                 '渔报',
                 style: TextStyle(
                     fontSize: 18,
@@ -561,63 +562,8 @@ class _HomeScreenState extends State<HomeScreen>
                     letterSpacing: 1,
                     color: Colors.white),
               ),
-              // —— 定位地名：靠左浮层（点击可刷新定位）——
-              Align(
-                alignment: Alignment.centerLeft,
-                child: InkWell(
-                  onTap: () async {
-                    GeoPlace.clearCache();
-                    await _loadPlace(refresh: true);
-                    await _loadWeather();
-                    if (mounted) {
-                      CenterToast.show(context, '已重新定位');
-                    }
-                  },
-                  borderRadius: BorderRadius.circular(20),
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.22),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (_locatingPlace && _place == null)
-                          const SizedBox(
-                            width: 11,
-                            height: 11,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 1.6, color: Colors.white),
-                          )
-                        else
-                          const Icon(Icons.location_on,
-                              size: 13, color: Colors.white),
-                        const SizedBox(width: 3),
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 76),
-                          child: Text(
-                            _place == null || _place!.label.isEmpty
-                                ? '定位中'
-                                : _place!.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 12.5,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.white),
-                          ),
-                        ),
-                        const Icon(Icons.keyboard_arrow_down,
-                            size: 14, color: Colors.white70),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
               // —— 消息铃铛：靠右浮层（带未读红点）——
-              const Align(
+              Align(
                 alignment: Alignment.centerRight,
                 child: MsgBellButton(),
               ),
@@ -626,38 +572,6 @@ class _HomeScreenState extends State<HomeScreen>
         ),
         flexibleSpace: Container(
           decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
-        ),
-        // 顶部搜索框（高度一并收紧）
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(50),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: InkWell(
-              onTap: () => _guard(() => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SearchScreen()))),
-                child: Container(
-                  height: 42,
-                  decoration: BoxDecoration(
-                    color: AppTheme.surface,
-                    borderRadius:
-                        BorderRadius.circular(AppTheme.radiusPill),
-                    border: Border.all(color: AppTheme.border),
-                    boxShadow: AppTheme.lightShadow,
-                  ),
-                  child: const Row(
-                    children: [
-                      SizedBox(width: 14),
-                      Icon(Icons.search,
-                          color: AppTheme.textSecondary, size: 20),
-                      SizedBox(width: 8),
-                      Text('搜索钓点 / 钓友 / 渔获',
-                          style: TextStyle(
-                              fontSize: 14, color: AppTheme.textSecondary)),
-                    ],
-                  ),
-                ),
-            ),
-          ),
         ),
       ),
       body: AppRefresh(
@@ -707,7 +621,7 @@ class _HomeScreenState extends State<HomeScreen>
                     .toList(),
               ),
             ),
-            SectionHeader(
+            const SectionHeader(
               title: '钓友动态',
               subtitle: '实时更新',
             ),

@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../app_theme.dart';
 import '../widgets/emoji_panel.dart';
@@ -8,15 +9,22 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/fishing_spot.dart';
 import '../models/spot_comment.dart';
+import '../services/ai_spot_service.dart';
 import '../services/api_config.dart';
 import '../services/geo_place.dart';
 import '../services/location_service.dart';
 import '../services/map_launcher.dart';
 import '../services/session_provider.dart';
+import '../models/weather_forecast.dart';
+import '../services/spot_conditions.dart';
 import '../services/spot_service.dart';
+import '../services/weather_service.dart';
 import '../widgets/center_toast.dart';
+import '../widgets/login_gate.dart';
+import '../widgets/spot_conditions_card.dart';
 import '../widgets/user_avatar.dart';
 import 'auth_screen.dart';
+import 'publish_catch_screen.dart';
 
 /// 钓点详情页
 /// 顶部为「环境展示图」图集（钓友上传的实拍环境照片），
@@ -24,7 +32,22 @@ import 'auth_screen.dart';
 /// 并提供「导航前往」（跳转高德/腾讯/百度地图）与「报错」。
 class SpotDetailScreen extends StatefulWidget {
   final FishingSpot spot;
-  const SpotDetailScreen({super.key, required this.spot});
+
+  /// 仅测试 / 截图用：直接喂一份钓点天气，跳过网络请求
+  ///
+  /// （和 AiSpotDetailScreen 的 debugBundle 同一套做法：
+  ///  详情页的分数全靠天气算，没有天气就断言不了「推荐指数/最佳时段」到底对不对）
+  final WeatherBundle? debugBundle;
+
+  /// 仅测试 / 截图用：直接喂一份「我当前位置」的实时天气
+  final FishingWeather? debugMyWeather;
+
+  const SpotDetailScreen({
+    super.key,
+    required this.spot,
+    this.debugBundle,
+    this.debugMyWeather,
+  });
 
   @override
   State<SpotDetailScreen> createState() => _SpotDetailScreenState();
@@ -44,19 +67,125 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
   /// 逆地理反查到的中文地址（钓点自身没填地址时兜底显示）
   String _geoAddress = '';
 
+  // ── v2.1.83：AI 分析 / 现在去合不合适 ──
+  //
+  // 天气分两份，别混：
+  //   _bundle   = **这个钓点坐标**的逐时天气 → 算推荐指数、24 小时色条
+  //   _myWeather = **我当前位置**的实时天气 → 卡片最上面那行「你所在位置」
+  // 判断「去那里合不合适」当然用钓点的天气，用户自己的天气只作参考。
+  WeatherBundle? _bundle;
+  SpotConditions? _conditions;
+  FishingWeather? _myWeather;
+  bool _wxLoading = true;
+  bool _myLocating = false;
+  double? _myLat;
+  double? _myLng;
+
+  final ScrollController _scroll = ScrollController();
+  final FocusNode _commentFocus = FocusNode();
+  final GlobalKey _commentKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
     _reportCount = widget.spot.reportCount;
     _loadComments();
     _resolveAddress();
+    if (widget.debugBundle != null) {
+      _bundle = widget.debugBundle;
+      _wxLoading = false;
+      _recomputeConditions();
+    } else {
+      _loadSpotWeather();
+    }
+    if (widget.debugMyWeather != null) {
+      _myWeather = widget.debugMyWeather;
+    } else {
+      // 不主动弹定位权限框：只有已经授权过的才顺手取一下
+      _loadMyWeather();
+    }
   }
 
   @override
   void dispose() {
     _galleryCtrl.dispose();
     _commentCtrl.dispose();
+    _scroll.dispose();
+    _commentFocus.dispose();
     super.dispose();
+  }
+
+  // ───────────────────── 天气 / 指数 ─────────────────────
+
+  /// 拉这个钓点坐标的逐时天气，算出推荐指数与最佳时段
+  Future<void> _loadSpotWeather() async {
+    try {
+      final b = await AiSpotService.weatherAt(widget.spot.lat, widget.spot.lng);
+      if (!mounted) return;
+      setState(() {
+        _bundle = b;
+        _wxLoading = false;
+        _recomputeConditions();
+      });
+    } catch (_) {
+      if (mounted) setState(() => _wxLoading = false);
+    }
+  }
+
+  /// 取「我当前位置」的实时天气
+  ///
+  /// [ask] 为 true 表示是用户主动点的：这时才允许弹系统定位授权框。
+  /// 页面打开时不弹（HIG：不在启动路径上要权限）。
+  Future<void> _loadMyWeather({bool ask = false}) async {
+    if (_myLocating) return;
+    setState(() => _myLocating = true);
+    try {
+      // ① 先用系统缓存的位置：绝大多数情况下用户刚在首页定位过
+      final cached = await WeatherService.readCachedLocation();
+      double? lat = cached?.$1;
+      double? lng = cached?.$2;
+
+      // ② 没缓存才真正取一次定位（ask=false 且没授权就直接放弃，不打扰）
+      if (lat == null || lng == null) {
+        if (!ask && !await LocationService.hasPermission()) {
+          if (mounted) setState(() => _myLocating = false);
+          return;
+        }
+        final pos = await LocationService.determinePosition();
+        lat = pos.latitude;
+        lng = pos.longitude;
+      }
+
+      final w = await WeatherService.fetch(lat, lng);
+      if (!mounted) return;
+      setState(() {
+        _myWeather = w;
+        _myLat = lat;
+        _myLng = lng;
+        _myLocating = false;
+        _recomputeConditions();
+      });
+    } catch (_) {
+      if (mounted) setState(() => _myLocating = false);
+    }
+  }
+
+  /// 重新算子（距离/方位角要等定位回来才算得准）
+  void _recomputeConditions() {
+    final s = widget.spot;
+    var km = 0.0;
+    var bearing = 0.0;
+    final lat = _myLat, lng = _myLng;
+    if (lat != null && lng != null) {
+      km = SpotConditions.kmBetween(lat, lng, s.lat, s.lng);
+      bearing = SpotConditions.bearingBetween(lat, lng, s.lat, s.lng);
+    }
+    _conditions = SpotConditions.of(
+      bundle: _bundle,
+      kind: s.kind,
+      km: km,
+      bearingFromMe: bearing,
+    );
   }
 
   /// 拉取已审核通过的评论
@@ -189,199 +318,376 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
     final images = _galleryImages;
 
     return Scaffold(
-      appBar: AppBar(title: Text(s.name)),
+      backgroundColor: AppTheme.background,
+      appBar: AppBar(
+        title: Text(s.name),
+        actions: [_reportAction()],
+      ),
       body: ListView(
+        controller: _scroll,
+        padding: EdgeInsets.zero,
         children: [
-          // —— 环境展示图（图集，可左右滑动） ——
+          // ① 环境展示图
           _buildGallery(images),
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 类型 + 核实 + 星级
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: s.kind == 'wild'
-                            ? AppTheme.dangerLight
-                            : AppTheme.primaryLight,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text('${s.kindLabel} · ${s.type}',
-                          style: TextStyle(
-                              fontSize: 13,
-                              color: s.kind == 'wild'
-                                  ? AppTheme.danger
-                                  : AppTheme.primary)),
-                    ),
-                    if (s.verified) ...[
-                      const SizedBox(width: 8),
-                      const Icon(Icons.verified,
-                          size: 16, color: AppTheme.water),
-                      const SizedBox(width: 4),
-                      const Text('官方核实',
-                          style: TextStyle(
-                              fontSize: 12, color: AppTheme.water)),
-                    ],
-                    const Spacer(),
-                    const Icon(Icons.star, size: 16, color: AppTheme.star),
-                    const SizedBox(width: 4),
-                    Text(s.rating.toString(),
-                        style: const TextStyle(fontSize: 14)),
-                  ],
-                ),
-                // 标签：一行排满再换行（自绘小标签，间距紧凑不拉散）
-                if (tags.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: tags.map(_tagChip).toList(),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                // 地址 / 收费 / 鱼种 / 电话
-                if (s.address.isNotEmpty) _infoRow(Icons.location_on_outlined, s.address),
-                if (s.fee.isNotEmpty)
-                  _infoRow(Icons.payments_outlined, '收费：${s.fee}'),
-                if (s.fish.isNotEmpty)
-                  _infoRow(Icons.set_meal_outlined, '鱼种：${s.fish}'),
-                if (s.phone.isNotEmpty)
-                  _infoRow(Icons.phone_outlined, s.phone, onTap: () => _call(s.phone)),
-                if (s.commentCount > 0)
-                  _infoRow(Icons.chat_bubble_outline, '${s.commentCount} 条评论'),
-                const SizedBox(height: 8),
-                // 描述
-                Text(s.description.isEmpty ? '钓友暂未填写说明' : s.description,
-                    style: const TextStyle(fontSize: 15, height: 1.5)),
-                const SizedBox(height: 12),
-                // 位置：显示中文地址（不再展示经纬度数字）
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: AppTheme.accentLight,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(Icons.place_outlined,
-                              size: 15, color: AppTheme.accentDark),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              _addressText.isNotEmpty
-                                  ? _addressText
-                                  : '暂无地址信息，可点「导航前往」在地图里查看',
-                              style: const TextStyle(
-                                  fontSize: 13, color: AppTheme.accentDark),
-                            ),
-                          ),
-                        ],
-                      ),
-                      // v46：坐标是地址解析来的点，明说一句精度，免得他以为
-                      // 能精确到钓位（导航本身照样按坐标走）
-                      if (!s.canNavigateByCoord && _addressText.isNotEmpty)
-                        const Padding(
-                          padding: EdgeInsets.only(left: 21, top: 4),
-                          child: Text(
-                            '位置按地址定位，误差可能几十米，到附近后按岸线找一下',
-                            style: TextStyle(
-                                fontSize: 11, color: AppTheme.accentDark),
-                          ),
-                        ),
-                      // v2.1.76：纠偏之后仍可能有偏（高德的点常是管理处/大门口），
-                      // 让到过现场的钓友顺手把他站的位置发上来 —— 这是最准的数据源
-                      if (s.lat != 0 || s.lng != 0)
-                        GestureDetector(
-                          onTap: _report,
-                          behavior: HitTestBehavior.opaque,
-                          child: const Padding(
-                            padding: EdgeInsets.only(left: 21, top: 4),
-                            child: Text(
-                              '位置不对？点这里把你在现场的位置发给我们 ›',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: AppTheme.accentDark,
-                                decoration: TextDecoration.underline,
-                                decorationColor: AppTheme.accentDark,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
+                // ② 类型 / 核实 / 星级 / 标签（轻量一行，不抢 AI 卡的视线）
+                _metaRow(s, tags),
                 const SizedBox(height: 10),
-                // 报错数
-                Row(
-                  children: [
-                    const Icon(Icons.report_problem_outlined,
-                        size: 15, color: AppTheme.danger),
-                    const SizedBox(width: 6),
-                    Text('该钓点已被报错 $_reportCount 次',
-                        style: const TextStyle(
-                            fontSize: 13, color: AppTheme.danger)),
-                  ],
+                // ③ AI 分析（黑卡）：推荐指数 = 天气 + 水域 + 风岸 + 距离
+                SpotAiCard(data: _conditions, loading: _wxLoading),
+                // ④ 现在去合不合适（白卡）：定位实时天气 + 温度/风力 + 建议 + 最佳时段
+                SpotConditionsCard(
+                  data: _conditions,
+                  loading: _wxLoading,
+                  myWeather: _myWeather,
+                  myLocating: _myLocating,
+                  onRefreshMyWeather: () => _loadMyWeather(ask: true),
                 ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => MapLauncher.navigate(
-                          context,
-                          lat: s.lat,
-                          lng: s.lng,
-                          name: s.name,
-                          address: _navAddress,
-                          // v46：有坐标就按坐标导航，不再因为「坐标是地址解析来的」
-                          // 而退回按文字搜索 —— 解析出来的坐标本来就是这句地址的位置
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                        ),
-                        icon: const Icon(Icons.navigation_outlined, size: 18),
-                        label: const Text('导航前往',
-                            style: TextStyle(fontSize: 14)),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: _report,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.danger,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                        ),
-                        icon: const Icon(Icons.report_problem_outlined,
-                            size: 18),
-                        label: const Text('报错', style: TextStyle(fontSize: 14)),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
+                // ⑤ 基础信息 + 说明
+                _infoCard(s),
+                const SizedBox(height: 12),
+                // ⑥ 位置精度提醒 / 位置不对报点
+                _noticeCard(s),
+                const SizedBox(height: 16),
+                // ⑦ 评论
                 _buildCommentsSection(),
+                const SizedBox(height: 14),
               ],
             ),
           ),
         ],
       ),
-      // 底部评论输入（提交后需审核，审核通过才出现在上面的列表里）
-      bottomNavigationBar: _buildCommentInput(),
+      // 底部常驻操作栏（收藏位的三个小动作 + 主按钮导航）
+      bottomNavigationBar: _actionBar(s),
+    );
+  }
+
+  /// 右上角「报错」：带次数角标
+  Widget _reportAction() {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: InkWell(
+        onTap: _report,
+        borderRadius: BorderRadius.circular(AppTheme.radiusPill),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            children: [
+              const Icon(Icons.report_problem_outlined,
+                  size: 18, color: AppTheme.danger),
+              if (_reportCount > 0) ...[
+                const SizedBox(width: 3),
+                Text('$_reportCount',
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.danger)),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 类型胶囊 + 官方核实 + 星级 + 标签
+  Widget _metaRow(FishingSpot s, List<String> tags) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: s.kind == 'wild'
+                    ? AppTheme.dangerLight
+                    : AppTheme.primaryLight,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                '${s.kindLabel} · ${s.type}',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: s.kind == 'wild' ? AppTheme.danger : AppTheme.primary,
+                ),
+              ),
+            ),
+            if (s.verified) ...[
+              const SizedBox(width: 8),
+              const Icon(Icons.verified, size: 15, color: AppTheme.water),
+              const SizedBox(width: 3),
+              const Text('官方核实',
+                  style: TextStyle(fontSize: 11.5, color: AppTheme.water)),
+            ],
+            const Spacer(),
+            const Icon(Icons.star, size: 15, color: AppTheme.star),
+            const SizedBox(width: 3),
+            Text(
+              s.rating.toStringAsFixed(1),
+              style: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textPrimary),
+            ),
+          ],
+        ),
+        if (tags.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(spacing: 6, runSpacing: 6, children: tags.map(_tagChip).toList()),
+        ],
+      ],
+    );
+  }
+
+  /// 基础信息卡：地址 / 收费 / 鱼种 / 电话 / 说明
+  Widget _infoCard(FishingSpot s) {
+    final rows = <Widget>[
+      if (_addressText.isNotEmpty)
+        _infoRow(Icons.location_on_outlined, _addressText),
+      if (s.fee.isNotEmpty) _infoRow(Icons.payments_outlined, '收费：${s.fee}'),
+      if (s.fish.isNotEmpty) _infoRow(Icons.set_meal_outlined, '鱼种：${s.fish}'),
+      if (s.phone.isNotEmpty)
+        _infoRow(Icons.phone_outlined, s.phone, onTap: () => _call(s.phone)),
+      if (s.commentCount > 0)
+        _infoRow(Icons.chat_bubble_outline, '${s.commentCount} 条评论'),
+    ];
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ...rows,
+          if (rows.isNotEmpty) const SizedBox(height: 6),
+          Text(
+            s.description.isEmpty ? '钓友暂未填写说明' : s.description,
+            style: TextStyle(
+              fontSize: 13.5,
+              height: 1.62,
+              color: s.description.isEmpty
+                  ? AppTheme.textSecondary
+                  : AppTheme.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 位置卡：地址精度提醒 + 「位置不对」上报入口（v2.1.76 的现场报点）
+  Widget _noticeCard(FishingSpot s) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
+      decoration: BoxDecoration(
+        color: AppTheme.accentLight,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.place_outlined,
+                  size: 15, color: AppTheme.accentDark),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _addressText.isNotEmpty
+                      ? _addressText
+                      : '暂无地址信息，可点「导航前往」在地图里查看',
+                  style: const TextStyle(
+                      fontSize: 12.5, height: 1.5, color: AppTheme.accentDark),
+                ),
+              ),
+            ],
+          ),
+          if (!s.canNavigateByCoord && _addressText.isNotEmpty)
+            const Padding(
+              padding: EdgeInsets.only(left: 21, top: 4),
+              child: Text(
+                '位置按地址定位，误差可能几十米，到附近后按岸线找一下',
+                style: TextStyle(
+                    fontSize: 11.5, height: 1.5, color: AppTheme.accentDark),
+              ),
+            ),
+          if (s.lat != 0 || s.lng != 0)
+            GestureDetector(
+              onTap: _report,
+              behavior: HitTestBehavior.opaque,
+              child: const Padding(
+                padding: EdgeInsets.only(left: 21, top: 5),
+                child: Text(
+                  '位置不对？点这里把你在现场的位置发给我们 >',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: AppTheme.accentDark,
+                    decoration: TextDecoration.underline,
+                    decorationColor: AppTheme.accentDark,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 底部操作栏：分享 / 评价 / 晒渔获 + 导航前往
+  ///
+  /// 为什么把「导航前往」做成黑色主按钮：
+  ///   这一页 90% 的用户动作是「现在就出发」，它必须是唯一的视觉重心；
+  ///   报错挪到右上角（带次数角标），避免和主按钮并排时被误点。
+  Widget _actionBar(FishingSpot s) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppTheme.surface,
+        border: Border(top: BorderSide(color: AppTheme.divider)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 7, 12, 7),
+          child: Row(
+            children: [
+              _actionBtn(Icons.share_outlined, '分享', () => _share(s)),
+              _actionBtn(Icons.rate_review_outlined, '评价', _focusComment),
+              _actionBtn(Icons.camera_alt_outlined, '晒渔获', () => _publishCatch(s)),
+              const SizedBox(width: 6),
+              Expanded(child: _navButton(s)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _actionBtn(IconData icon, String label, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+      child: SizedBox(
+        width: 52,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 19, color: AppTheme.textPrimary),
+            const SizedBox(height: 3),
+            Text(label,
+                style: const TextStyle(
+                    fontSize: 10.5, color: AppTheme.textSecondary)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _navButton(FishingSpot s) {
+    return InkWell(
+      onTap: () => MapLauncher.navigate(
+        context,
+        lat: s.lat,
+        lng: s.lng,
+        name: s.name,
+        address: _navAddress,
+        // v46：有坐标就按坐标导航，不再因为「坐标是地址解析来的」
+        // 而退回按文字搜索 —— 解析出来的坐标本来就是这句地址的位置
+      ),
+      borderRadius: BorderRadius.circular(AppTheme.radiusPill),
+      child: Container(
+        height: 46,
+        decoration: BoxDecoration(
+          color: AppTheme.inkBg,
+          borderRadius: BorderRadius.circular(AppTheme.radiusPill),
+        ),
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // 绿点：和 App 里「AI 在线」的荧光绿同一个信号色
+            SizedBox(
+              width: 7,
+              height: 7,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                    color: AppTheme.accent, shape: BoxShape.circle),
+              ),
+            ),
+            SizedBox(width: 8),
+            Text(
+              '导航前往',
+              style: TextStyle(
+                fontSize: 14.5,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 分享：把钓点关键信息复制出去（App 没接系统分享面板，
+  /// 复制粘贴给钓友是最通用的路径，也不申请额外权限）
+  Future<void> _share(FishingSpot s) async {
+    final c = _conditions;
+    final lines = <String>[
+      '【${s.kindLabel}】${s.name}',
+      if (_addressText.isNotEmpty) '地址：$_addressText',
+      if (s.fish.isNotEmpty) '鱼种：${s.fish}',
+      if (c != null) '今日推荐指数：${c.score}（${c.grade}）',
+      if (c != null && c.best != null)
+        '最佳时段：${c.best!.range}（${c.best!.score} 分）',
+      if (s.lat != 0 || s.lng != 0)
+        '坐标：${s.lat.toStringAsFixed(5)},${s.lng.toStringAsFixed(5)}',
+      '—— 来自渔报',
+    ];
+    await Clipboard.setData(ClipboardData(text: lines.join('\n')));
+    if (mounted) {
+      CenterToast.show(context, '钓点信息已复制，可以发给钓友', icon: Icons.copy);
+    }
+  }
+
+  /// 评价：滚到评论区并聚焦输入框
+  void _focusComment() {
+    final ctx = _commentKey.currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOut,
+        alignment: .05,
+      );
+    }
+    Future.delayed(const Duration(milliseconds: 340), () {
+      if (mounted) _commentFocus.requestFocus();
+    });
+  }
+
+  /// 晒渔获：带上这个钓点的名字与坐标去发渔获
+  Future<void> _publishCatch(FishingSpot s) async {
+    final ok = await ensureLogin(context, hint: '登录后才能发布渔获');
+    if (!ok || !mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PublishCatchScreen(
+          spotName: s.name,
+          spotLat: s.lat == 0 ? null : s.lat,
+          spotLng: s.lng == 0 ? null : s.lng,
+        ),
+      ),
     );
   }
 
@@ -405,6 +711,7 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
   /// 评论区：标题 + 已通过审核的评论列表
   Widget _buildCommentsSection() {
     return Column(
+      key: _commentKey,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
@@ -457,6 +764,10 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
           )
         else
           ..._comments.map(_commentTile),
+        const SizedBox(height: 10),
+        // 输入框放回评论区里：底部操作栏已经常驻，
+        // 再挂一条 bottomNavigationBar 会把「导航前往」顶上去
+        _buildCommentInput(),
       ],
     );
   }
@@ -529,55 +840,52 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
     );
   }
 
-  /// 底部评论输入条
+  /// 评论输入条（内联在评论区下方）
   Widget _buildCommentInput() {
     return Container(
-      decoration: const BoxDecoration(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
         color: AppTheme.surface,
-        border: Border(top: BorderSide(color: AppTheme.divider)),
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+        border: Border.all(color: AppTheme.divider),
       ),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _commentCtrl,
-                  textInputAction: TextInputAction.send,
-                  maxLength: 500,
-                  onSubmitted: (_) => _sendComment(),
-                  decoration: InputDecoration(
-                    hintText: '说说这个钓点的情况…（审核后显示）',
-                    hintStyle: const TextStyle(fontSize: 13),
-                    isDense: true,
-                    counterText: '',
-                    filled: true,
-                    fillColor: AppTheme.primarySoft,
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 10),
-                    border: OutlineInputBorder(
-                      borderRadius:
-                          BorderRadius.circular(AppTheme.radiusPill),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _commentCtrl,
+              focusNode: _commentFocus,
+              textInputAction: TextInputAction.send,
+              maxLength: 500,
+              onSubmitted: (_) => _sendComment(),
+              decoration: InputDecoration(
+                hintText: '说说这个钓点的情况…（审核后显示）',
+                hintStyle: const TextStyle(fontSize: 13),
+                isDense: true,
+                counterText: '',
+                filled: true,
+                fillColor: AppTheme.primarySoft,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppTheme.radiusPill),
+                  borderSide: BorderSide.none,
                 ),
               ),
-              const SizedBox(width: 8),
-              _sending
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : IconButton(
-                      icon: const Icon(Icons.send, color: AppTheme.primary),
-                      onPressed: _sendComment,
-                    ),
-            ],
+            ),
           ),
-        ),
+          const SizedBox(width: 8),
+          _sending
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : IconButton(
+                  icon: const Icon(Icons.send, color: AppTheme.primary),
+                  onPressed: _sendComment,
+                ),
+        ],
       ),
     );
   }
@@ -586,7 +894,7 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
   Widget _buildGallery(List<String> images) {
     if (images.isEmpty) {
       return Container(
-        height: 210,
+        height: 168,
         width: double.infinity,
         decoration: const BoxDecoration(gradient: AppTheme.brandGradient),
         child: Column(
