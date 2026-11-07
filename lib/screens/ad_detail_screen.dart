@@ -25,28 +25,37 @@ class AdDetailScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
-        title: Text(ad.title.isEmpty ? '详情' : ad.title),
-        titleTextStyle: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: AppTheme.textPrimary),
+        // 标题样式交给 AppTheme.appBarTheme（kAppBarTitle）——
+        // 在这里再写一份 titleTextStyle 会整条覆盖主题，字号/颜色/字重
+        // 各写一遍不说，还会把主题里的字体设定一起冲掉
+        title: Text(ad.title.isEmpty ? '详情' : ad.title,
+            maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
       body: ListView(
         children: [
-          // 顶部大图：和详情页一致走 16:9，图片本身已经在上一条横幅里出现过，
-          // 这里给的是能看清细节的尺寸
-          AspectRatio(
-            aspectRatio: 16 / 9,
-            child: Image.network(
-              ad.image,
-              fit: BoxFit.cover,
-              loadingBuilder: (ctx, child, prog) =>
-                  prog == null ? child : Container(color: AppTheme.primarySoft),
-              errorBuilder: (_, __, ___) => Container(
+          // 顶部大图：**按原图比例完整显示**，不裁。
+          // ★ 不能写成 16:9 + BoxFit.cover：首页横幅是 12:5，cover 进 16:9
+          //   左右各要切掉 ~13%，运营把字放在边上（很常见）就直接被切没了。
+          //   这里宽度拉满、高度跟随原图比例，竖图最多让页面多滑两下，不丢内容。
+          Image.network(
+            ad.image,
+            width: double.infinity,
+            fit: BoxFit.fitWidth,
+            // 占位按 12:5 —— 和后台建议的横幅尺寸一致，图片加载完不会跳版
+            loadingBuilder: (ctx, child, prog) => prog == null
+                ? child
+                : const AspectRatio(
+                    aspectRatio: 12 / 5,
+                    child: ColoredBox(color: AppTheme.primarySoft),
+                  ),
+            errorBuilder: (_, __, ___) => const AspectRatio(
+              aspectRatio: 12 / 5,
+              child: ColoredBox(
                 color: AppTheme.primarySoft,
-                alignment: Alignment.center,
-                child: const Icon(Icons.image_outlined,
-                    size: 32, color: AppTheme.textTertiary),
+                child: Center(
+                  child: Icon(Icons.image_outlined,
+                      size: 32, color: AppTheme.textTertiary),
+                ),
               ),
             ),
           ),
@@ -96,7 +105,8 @@ class AdDetailScreen extends StatelessWidget {
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 0, 16, 28),
             child: Text('该内容由商家提供，与平台立场无关',
-                style: TextStyle(fontSize: 11, color: AppTheme.textTertiary)),
+                // 免责声明是要给人看清的，别用三级灰（10px 灰字等于没写）
+                style: TextStyle(fontSize: 11.5, color: AppTheme.textSecondary)),
           ),
         ],
       ),
