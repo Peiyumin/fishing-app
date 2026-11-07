@@ -149,11 +149,14 @@ void main() {
       }
     });
 
-    test('没坐标：地址文字被完整塞进目的地参数', () {
+    test('没坐标：完整地址进各 App 的搜索参数', () {
       final amap = android(hasCoord: false).first;
-      expect(amap.nativeUrl.contains('dname=$addrQ'), isTrue);
+      // 高德 route/plan 只认 dlat/dlon，没坐标必须换 keywordNavi，否则没有终点
+      expect(amap.nativeUrl.contains('keyword=$addrQ'), isTrue);
+      expect(amap.nativeUrl.contains('keywordNavi'), isTrue);
       final qq = android(hasCoord: false).firstWhere((t) => t.name == '腾讯地图');
-      expect(qq.nativeUrl.contains('to=$addrQ'), isTrue);
+      expect(qq.nativeUrl.contains('keyword=$addrQ'), isTrue);
+      expect(qq.nativeUrl.contains('/search'), isTrue);
       final bd = android(hasCoord: false).firstWhere((t) => t.name == '百度地图');
       expect(bd.nativeUrl.contains('destination=$addrQ'), isTrue);
     });
@@ -225,16 +228,21 @@ void main() {
     final detail = read('lib/screens/spot_detail_screen.dart');
     final shopDetail = read('lib/screens/shop_detail_screen.dart');
 
-    test('钓点详情按 canNavigateByCoord 决定导航方式', () {
-      expect(detail.contains('precise: s.canNavigateByCoord'), isTrue);
+    test('钓点详情直接把经纬度交给地图 App（v46：有坐标就按坐标导）', () {
+      expect(detail.contains('lat: s.lat'), isTrue);
+      expect(detail.contains('lng: s.lng'), isTrue);
+      // v46 删掉了 precise 开关，详情页不许再按 coordPrecise 降级成文字搜索
+      expect(detail.contains('precise:'), isFalse);
     });
 
-    test('渔具店详情同样分流', () {
-      expect(shopDetail.contains('precise: _s.canNavigateByCoord'), isTrue);
+    test('渔具店详情同样不按 coordPrecise 降级', () {
+      expect(shopDetail.contains('lat: _s.lat'), isTrue);
+      expect(shopDetail.contains('precise:'), isFalse);
     });
 
-    test('地址卡明说「只有文字地址，按地址搜索」', () {
-      expect(detail.contains('这个点只有文字地址，导航会按地址搜索'), isTrue);
+    test('地址卡只提示精度，不再说「导航会按地址搜索」', () {
+      expect(detail.contains('这个点只有文字地址，导航会按地址搜索'), isFalse);
+      expect(detail.contains('位置按地址定位'), isTrue);
     });
   });
 

@@ -290,13 +290,13 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
                           ),
                         ],
                       ),
-                      // v44：这个点没有精确坐标（用户只填了文字地址），
-                      // 明说一句，免得他以为导航会直接到钓位
+                      // v46：坐标是地址解析来的点，明说一句精度，免得他以为
+                      // 能精确到钓位（导航本身照样按坐标走）
                       if (!s.canNavigateByCoord && _addressText.isNotEmpty)
                         const Padding(
                           padding: EdgeInsets.only(left: 21, top: 4),
                           child: Text(
-                            '这个点只有文字地址，导航会按地址搜索',
+                            '位置按地址定位，误差可能几十米，到附近后按岸线找一下',
                             style: TextStyle(
                                 fontSize: 11, color: AppTheme.accentDark),
                           ),
@@ -346,9 +346,8 @@ class _SpotDetailScreenState extends State<SpotDetailScreen> {
                           lng: s.lng,
                           name: s.name,
                           address: _navAddress,
-                          // v44：只有文字地址的点，改用「把地址交给地图 App 自己搜」，
-                          // 而不是把地址解析出来的粗坐标当终点（会导到村口）
-                          precise: s.canNavigateByCoord,
+                          // v46：有坐标就按坐标导航，不再因为「坐标是地址解析来的」
+                          // 而退回按文字搜索 —— 解析出来的坐标本来就是这句地址的位置
                         ),
                         style: OutlinedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 12),

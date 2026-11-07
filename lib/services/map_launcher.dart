@@ -35,38 +35,58 @@ class NavTarget {
 ///   3. 用户点哪个就用原生 scheme 唤起那个 App，并把**中文地址**填进终点栏；
 ///   4. 一个都没装时，明确提示「请先安装地图 App」，网页版只作为用户主动选择的兜底。
 ///
-/// 导航方式（v44 分两种）：
-///   · 坐标精确（GPS / 地图点选）→ 把经纬度交给地图 App，直接精准导航到钓位
-///   · 坐标不精确（用户只填了文字地址）→ **只把文字地址**填进目的地栏，
-///     让地图 App 自己去搜。因为地址解析出来的粗坐标可能偏几百米，
-///     拿它当终点会把人导到村口。
+/// 导航方式（v46 定稿，只按「有没有坐标」分，不再看坐标是怎么来的）：
+///   · **有坐标**（经纬度都有效）→ 一律按坐标导航：把经纬度交给地图 App，
+///     终点就是钓位本身。不再区分「GPS 点的」还是「地址解析来的」——
+///     地址解析出来的坐标本来就是那句地址的位置，放着坐标不用去搜文字，
+///     反而会因为重名/简称搜到别处。
+///   · **没坐标**（lat/lng 是 0）→ 把**完整文字地址**塞进目的地，并走各 App 的
+///     「关键词搜索 / 关键词导航」入口，让它自己匹配到对应地点再开导航：
+///       高德 → keywordNavi（匹配到就直接进导航）
+///       腾讯 → map/search（列出匹配地点，点一下即导航）
+///       百度 → direction（destination 支持纯文字地址）
+///       苹果 → maps?daddr=地址
+///     ★ 这条路径上**一个经纬度参数都不许带**：带了 App 就优先用坐标，
+///       「按地址搜」又变回「导到某个点」。
 ///
 /// 坐标系：库内存 WGS-84
 ///   高德 / 腾讯 / 百度 → GCJ-02（先转换）
 class MapLauncher {
+  /// 把地址整理成「能直接喂给地图 App」的样子
+  ///
+  /// 用户手打地址时常带换行、全角空格、开头结尾的空格；这些原样塞进
+  /// scheme 会让地图 App 搜不到（尤其换行，会把关键词截成两半）。
+  static String tidy(String s) => s
+      .replaceAll(RegExp(r'[\r\n\t]+'), ' ')
+      .replaceAll('\u3000', ' ')
+      .replaceAll(RegExp(r' {2,}'), ' ')
+      .trim();
+
   /// 让用户选一个已安装的地图 App 去导航
   ///
-  /// [precise] 为 false（或 [lat]/[lng] 为空）时走「文字地址导航」：
-  /// 不传坐标，只把 [address] 作为目的地关键词。
+  /// [lat]/[lng] 有效（非 0）→ 按坐标导航；否则把 [address] 当目的地关键词搜。
   static Future<void> navigate(
     BuildContext context, {
     required String name,
     String address = '',
     double? lat,
     double? lng,
-    bool precise = true,
   }) async {
-    // 坐标有效 = 标记为精确 + 经纬度都是真实值（0 是「没有坐标」的约定）
-    final hasCoord = precise &&
-        lat != null &&
+    // 坐标有效 = 经纬度都是真实值（0 是「没有坐标」的约定）
+    final hasCoord = lat != null &&
         lng != null &&
         lat.abs() > 0.0001 &&
         lng.abs() > 0.0001;
 
-    final dest = (address.trim().isNotEmpty ? address.trim() : name.trim());
+    // 目的地文字：地址优先（完整那句），没地址才退回名称
+    final addr = tidy(address);
+    final spotName = tidy(name);
+    final dest = addr.isNotEmpty
+        ? addr
+        : (spotName.isNotEmpty ? spotName : '目的地');
     final destQ = Uri.encodeComponent(dest);
-    final nameQ =
-        Uri.encodeComponent(name.trim().isEmpty ? dest : name.trim());
+    // 同一个字符串编两次会变成 %25E6…，所以名称单独编
+    final nameQ = Uri.encodeComponent(spotName.isEmpty ? dest : spotName);
 
     double dlat = 0, dlng = 0;
     String coord = '';
@@ -213,21 +233,25 @@ class MapLauncher {
         NavTarget(
           name: '高德地图',
           nativeUrl: hasCoord
-              ? 'amapuri://route/plan/?dlat=$latS&dlon=$lngS&dname=$nameQ'
+              // 有坐标：终点直接给经纬度，高德算路一步到位
+              ? 'amapuri://route/plan/?dlat=$latS&dlon=$lngS&dname=$destQ'
                   '&dev=0&t=0&sourceApplication=fishing_app'
-              // 只给 dname，不给 dlat/dlon：高德会自己去搜这个地名
-              : 'amapuri://route/plan/?dname=$destQ'
-                  '&dev=0&t=0&sourceApplication=fishing_app',
+              // 没坐标：走「关键词导航」。高德的 route/plan **只认 dlat/dlon**，
+              // 光给 dname 它会打开一个没有终点的路线页（v2.1.79 之前就是这样，
+              // 用户点了以为坏了）。keywordNavi 才会拿文字去匹配地点并直接进导航。
+              : 'androidamap://keywordNavi?sourceApplication=fishing_app'
+                  '&keyword=$destQ&style=2',
           color: const Color(0xFF1677FF),
           icon: Icons.navigation_rounded,
         ),
         NavTarget(
           name: '腾讯地图',
           nativeUrl: hasCoord
-              ? 'qqmap://map/routeplan?type=drive&to=$destQ'
+              ? 'qqmap://map/routeplan?type=drive&fromcoord=CurrentLocation'
+                  '&to=$destQ'
                   '&tocoord=$coord&policy=0&referer=fishingapp'
-              : 'qqmap://map/routeplan?type=drive&to=$destQ'
-                  '&policy=0&referer=fishingapp',
+              // 没坐标：routeplan 缺 tocoord 规划不出路线，改走地点搜索
+              : 'qqmap://map/search?keyword=$destQ&referer=fishingapp',
           color: const Color(0xFF07C160),
           icon: Icons.map_rounded,
         ),
@@ -237,6 +261,7 @@ class MapLauncher {
               ? 'baidumap://map/direction?destination=latlng:$coord'
                   '|name:$destQ&coord_type=gcj02&mode=driving'
                   '&src=android.fishingapp'
+              // 没坐标：百度的 destination 支持纯文字地址，它会自己解析
               : 'baidumap://map/direction?destination=$destQ'
                   '&mode=driving&src=android.fishingapp',
           color: const Color(0xFFE64A3B),
@@ -249,19 +274,19 @@ class MapLauncher {
           name: '高德地图',
           nativeUrl: hasCoord
               ? 'iosamap://path?sourceApplication=fishing_app'
-                  '&dlat=$latS&dlon=$lngS&dname=$nameQ&dev=0&t=0'
-              : 'iosamap://path?sourceApplication=fishing_app'
-                  '&dname=$destQ&dev=0&t=0',
+                  '&dlat=$latS&dlon=$lngS&dname=$destQ&dev=0&t=0'
+              : 'iosamap://keywordNavi?sourceApplication=fishing_app'
+                  '&keyword=$destQ&style=2',
           color: const Color(0xFF1677FF),
           icon: Icons.navigation_rounded,
         ),
         NavTarget(
           name: '腾讯地图',
           nativeUrl: hasCoord
-              ? 'qqmap://map/routeplan?type=drive&to=$destQ'
+              ? 'qqmap://map/routeplan?type=drive&fromcoord=CurrentLocation'
+                  '&to=$destQ'
                   '&tocoord=$coord&policy=0&referer=fishingapp'
-              : 'qqmap://map/routeplan?type=drive&to=$destQ'
-                  '&policy=0&referer=fishingapp',
+              : 'qqmap://map/search?keyword=$destQ&referer=fishingapp',
           color: const Color(0xFF07C160),
           icon: Icons.map_rounded,
         ),
@@ -279,7 +304,9 @@ class MapLauncher {
         // 苹果自带地图：iOS 一定存在，保证任何情况下都有 App 可用
         NavTarget(
           name: '苹果地图',
-          nativeUrl: hasCoord ? 'maps://?daddr=$coord&dirflg=d' : 'maps://?daddr=$destQ&dirflg=d',
+          nativeUrl: hasCoord
+              ? 'maps://?daddr=$coord&dirflg=d'
+              : 'maps://?daddr=$destQ&dirflg=d',
           color: const Color(0xFF3B82F6),
           icon: Icons.explore_rounded,
         ),
@@ -345,16 +372,14 @@ class MapLauncher {
 
   /// 兼容旧调用：等价于 navigate（同样先检测再让用户选）
   ///
-  /// v44 起 lat/lng 可空、[precise] 可关：钓点详情页遇到「只填了文字地址」的点
-  /// 会传 `precise: false`，让地图 App 按地址自己搜。
+  /// v46 起不再有 `precise` 开关：只要有坐标就按坐标导航，
+  /// 没坐标才把文字地址交给地图 App 搜。
   static Future<void> showNavSheet(
     BuildContext context, {
     double? lat,
     double? lng,
     String name = '目的地',
     String address = '',
-    bool precise = true,
   }) =>
-      navigate(context,
-          lat: lat, lng: lng, name: name, address: address, precise: precise);
+      navigate(context, lat: lat, lng: lng, name: name, address: address);
 }
