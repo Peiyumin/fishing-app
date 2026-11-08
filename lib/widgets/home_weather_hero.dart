@@ -6,10 +6,15 @@ import '../services/tide_service.dart';
 import '../services/weather_service.dart';
 import 'weather_icon.dart';
 
-/// 首页顶部的「钓鱼天气」大区（v46，v2.1.86 按钓法分叉）
+/// 首页顶部的「钓鱼天气」大区（v46，v2.1.86 按钓法分叉，v2.1.87 重排首行）
 ///
 /// 版式参考用户在需求里给的那张图：整块深色通栏画面，
 /// 大号钓鱼指数 + 等级 + 一句建议，底部四格指标。
+///
+/// ★ v2.1.87 首行改版（用户要求）：
+///     定位（放大到 21pt）在左、指数（58pt 斜体）在右，去掉「7 天预报 >」。
+///     原来是「左上小字地名 + 中间 46pt 数字 + 右上 7 天预报」三处分散，
+///     现在是「左边在哪、右边几分」两栏，视线一次落定。
 ///
 /// ★ 四格里的**第三格按钓法变**（v2.1.86 用户要求）：
 ///     海钓          → 潮汐（+1.2m / 涨潮）
@@ -62,6 +67,12 @@ class HomeWeatherHero extends StatelessWidget {
     final place = (placeLabel ?? '').trim();
     final atLabel = has ? w.atLabel : '';
 
+    // ★ 窄屏（320dp 的 SE/小屏安卓）：首行「21pt 地名 + 58pt 斜体数字 + 等级列」
+    //   在 320 上只剩 288 可用宽，用 58 会顶出去 4~9px。这里不是把布局改两套，
+    //   只是把三个字号各降一档（58→52 / 15→14 / 11→10），结构、对齐完全不变。
+    final narrow = MediaQuery.sizeOf(context).width < 340;
+    final scoreSize = narrow ? 52.0 : 58.0;
+
     // 四个指标：气温 / 水温（没有就退成湿度）/ 第三格（潮汐或水氧）/ 风力
     final third = homeThirdMetric(mode: mode, weather: weather, tide: tide);
     final metrics = <_Metric>[
@@ -97,93 +108,123 @@ class HomeWeatherHero extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // —— 第一行：地名 + 更新时间 + 7 天预报 ——
-              Row(
-                children: [
-                  const Icon(Icons.place, size: 14, color: Colors.white54),
-                  const SizedBox(width: 4),
-                  Flexible(
-                    child: Text(
-                      // 顶部定位胶囊去掉后，地名只在这里出现一次：
-                      // 能取到就写地名，取不到写「当前位置」。
-                      // 不再缀「· 实时天气」—— 右边就是更新时间，整块本来就是实时天气，
-                      // 缀上去反而把地名挤成「当前位置 · 实时⋯」
-                      place.isEmpty ? '当前位置' : place,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white70),
-                    ),
-                  ),
-                  if (atLabel.isNotEmpty) ...[
-                    const SizedBox(width: 6),
-                    Text(atLabel,
-                        style: const TextStyle(
-                            fontSize: 11.5, color: Colors.white38)),
-                  ],
-                  const Spacer(),
-                  Row(
-                    children: [
-                      Text('7 天预报',
-                          style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.white.withOpacity(0.75))),
-                      const Icon(Icons.chevron_right,
-                          size: 15, color: Colors.white54),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-
-              // —— 指数 + 等级 + 建议 ——
+              // —— 第一行：定位（放大）↔ 今日指数（靠右、斜体大号）——
+              //
+              // v2.1.87 按用户要求重排这一块：
+              //   ① 地名从「左上角 13pt 小字」挪到指数左边，字号 13 → 21：
+              //      「我在哪 + 这里几分」要一眼同时看到，不该一个在角上一个在中间；
+              //   ② 「7 天预报 >」整条删掉 —— 点这块天气区本来就进天气页，
+              //      那个箭头只是在右上角多开一个入口；
+              //   ③ 指数整体靠右贴容器右缘，数字 46 → 58 且改**斜体**：
+              //      斜体 + 极紧字距让三位数抱成一团，比同字号的正体更「跳」。
               Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: WeatherGlyph(
-                      code: has ? w.weatherCode : 0,
-                      day: has ? !w.isNightAt : true,
-                      size: 26,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    has ? '$score' : '--',
-                    style: TextStyle(
-                      fontSize: 46,
-                      height: 1.0,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -1.5,
-                      color: scoreColor,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
+                  // 左：定位 + 更新时间（Expanded 把右边的指数推到贴边）
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          has ? w.fishIndex : '获取中',
-                          style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: scoreColor),
+                        Row(
+                          children: [
+                            const Icon(Icons.place,
+                                size: 16, color: Colors.white60),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                // 能取到就写地名（县/区级），取不到写「当前位置」。
+                                // 不缀「· 实时天气」：右边就是更新时间，整块本来就是实时天气。
+                                place.isEmpty ? '当前位置' : place,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: narrow ? 19 : 21,
+                                  height: 1.12,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.2,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                        const Text('钓鱼指数 / 100',
-                            style:
-                                TextStyle(fontSize: 11, color: Colors.white38)),
+                        if (atLabel.isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          Text('更新 $atLabel',
+                              style: const TextStyle(
+                                  fontSize: 11.5, color: Colors.white38)),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  // 右：天气图标 + 大号斜体指数 + 等级
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 1),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 9),
+                          child: WeatherGlyph(
+                            code: has ? w.weatherCode : 0,
+                            day: has ? !w.isNightAt : true,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          has ? '$score' : '--',
+                          style: TextStyle(
+                            fontSize: scoreSize,
+                            height: 0.95,
+                            fontWeight: FontWeight.w900,
+                            // ★ 斜体：用户要求的「数字斜体、要突出」
+                            fontStyle: FontStyle.italic,
+                            // 斜体自带右倾，字距再紧 -2.5 才不会散成一排
+                            letterSpacing: -2.5,
+                            color: scoreColor,
+                            // 深色底上给一层淡投影，把数字从渐变里「拔」出来
+                            shadows: const [
+                              Shadow(
+                                  color: Color(0x59000000),
+                                  blurRadius: 10,
+                                  offset: Offset(0, 2)),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 9),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Column(
+                            // 整块贴右缘：等级和「钓鱼指数 / 100」都右对齐
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                has ? w.fishIndex : '获取中',
+                                style: TextStyle(
+                                    fontSize: narrow ? 14 : 15,
+                                    fontWeight: FontWeight.w700,
+                                    color: scoreColor),
+                              ),
+                              // 窄屏把「钓鱼指数」缩成「指数」：省的 2 个字正好
+                              // 换回地名不被截断（320 上地名最长也就 6~8 字）
+                              Text(narrow ? '指数 / 100' : '钓鱼指数 / 100',
+                                  style: TextStyle(
+                                      fontSize: narrow ? 10 : 11,
+                                      color: Colors.white38)),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 9),
               Text(
                 has ? w.fishAdvice : '正在获取当前位置的天气…',
                 maxLines: 2,

@@ -31,6 +31,7 @@ import '../services/map_tile_source.dart';
 import '../services/api_config.dart';
 import '../services/geo_bounds.dart';
 import '../services/spot_service.dart';
+import '../utils/spot_sync.dart';
 import '../services/tile_health.dart';
 import '../widgets/spot_pin.dart';
 import '../utils/spot_marker_style.dart';
@@ -155,6 +156,13 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   List<FishingSpot> _spots = const [];
   Map<String, FishingSpot> _spotById = const {};
 
+  /// 上一轮宿主页（钓点页）喂进来的钓点 id
+  ///
+  /// 用来判断「哪些点是被后台删掉/下架的」：宿主页刷新后拿到的列表里
+  /// 不再包含某个 id，而它上一轮明明来自宿主页 → 说明后台已经删了，
+  /// 必须从地图上摘掉（见 [_mergeSpots]）。
+  Set<String> _extraIds = const {};
+
   /// 默认只挂一层底图（卫星），路网注记关掉。
   ///
   /// 竞品「钓鱼佬」的底图配置里，卫星 / 路网是**互斥的两个选项**，
@@ -266,7 +274,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
     }
   }
 
-  /// 把一批钓点并进现有集合，然后只更新 GeoJSON source
+  /// 把一批钓点同步进现有集合，然后只更新 GeoJSON source
   ///
   /// 用 `setGeoJsonSource` 而不是重建图层：重建会让整层闪一下，
   /// 而且 addLayer 在同名图层已存在时会直接抛异常。
@@ -276,13 +284,29 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   ///   钓点名称 / 位置，或者钓点数变少（被后台下架），宿主页点「刷新」
   ///   拿到的数据根本进不了地图，看着就是刷新没生效。现在只要数据有变化
   ///   就整体重写 source；完全没变化时也只是多写一次，代价可忽略。
+  ///
+  /// ★ v2.1.87：这里是「后台删了钓点、App 刷新后地图上还在」的真因。
+  ///   老写法是「以现有 `_spots` 为底，把 incoming 盖上去」—— **只增不删**：
+  ///   后台删掉一个野钓点后，宿主页 `_load()` 拿到的 `_wild` 里已经没有它，
+  ///   `didUpdateWidget` 也照常被调用，但合并时旧点一直留在 map 里，
+  ///   地图上照旧长着那个点，点进去还能进详情（数据是上一版快照）。
+  ///   现在改成「上一轮宿主页给过、这一轮名单里没有的，一律剔除」，
+  ///   其余来源（地图自己 fetch 的钓场/渔具店）不受影响。
   Future<void> _mergeSpots(List<FishingSpot> incoming) async {
     if (!mounted) return;
-    final map = <String, FishingSpot>{for (final s in _spots) s.id: s};
-    if (incoming.isEmpty) {
+    // 合并口径抽到 utils/spot_sync.dart：只写一份、可被单测钉住。
+    // 关键在 servedIds —— 上一轮宿主页给过、这一轮没了 = 后台已删。
+    final map = syncSpotMap(
+      current: _spots,
+      servedIds: _extraIds,
+      incoming: incoming,
+    );
+    _extraIds = drawableSpotIds(incoming);
+
+    if (map.isEmpty) {
       // 后端确实返回了空列表（比如全部被下架）：地图也该跟着清空，
       // 否则会一直显示上一次的快照、点了还进详情。
-      if (map.isEmpty) return;
+      if (_spots.isEmpty) return;
       setState(() {
         _spots = const [];
         _spotById = const {};
@@ -290,11 +314,6 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       await _updateSpotsSource();
       return;
     }
-    for (final s in incoming) {
-      if (s.lat == 0 && s.lng == 0) continue;
-      map[s.id] = s; // 覆盖成最新数据（名称 / 坐标 / 简介可能在后台改过）
-    }
-    if (map.isEmpty) return;
     setState(() {
       _spots = map.values.toList();
       _spotById = map;
@@ -362,6 +381,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       for (final s in widget.extraSpots) {
         if (s.lat != 0 || s.lng != 0) map[s.id] = s;
       }
+      // 首屏就把「这批点是宿主页给的」记下来：否则第一次刷新时
+      // _extraIds 还是空的，被后台删掉的那个点会被当成「地图自己拉的」保留下来
+      _extraIds = drawableSpotIds(widget.extraSpots);
       setState(() {
         _spots = map.values.toList();
         _spotById = map;

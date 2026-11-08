@@ -19,6 +19,7 @@ import '../services/map_data_service.dart';
 import '../services/map_tile_source.dart';
 import '../services/refresh_bus.dart';
 import '../services/spot_service.dart';
+import '../utils/spot_sync.dart';
 import '../services/weather_service.dart';
 import '../utils/coord_transform.dart';
 import '../utils/spot_marker_style.dart';
@@ -121,6 +122,12 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
   int _catchCount = 0;
   bool _loading = true;
 
+  /// 上一轮宿主页（钓点页）喂进来的钓点 id
+  ///
+  /// v2.1.87：后台删掉钓点后，宿主页刷新拿到的新 `extraSpots` 里没有它了，
+  /// 这份名单用来判断「哪些点是刚被删掉的」，并据此重建 marker 缓存。
+  Set<String> _extraIds = const {};
+
   // 我的位置（WGS-84）
   double? _myLat;
   double? _myLng;
@@ -183,6 +190,8 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
       if (mounted && !_gotAnyTile) _onTileFail();
     });
     _load();
+    // 首屏就把「这批点是宿主页给的」记下来（口径和 didUpdateWidget 一致）
+    _extraIds = drawableSpotIds(widget.extraSpots);
     // v45：刚在添加页按地址存下的点，回到地图要能立刻看到（不用杀进程重开）
     RefreshBus.spotTick.addListener(_onSpotsChanged);
     _searchCtrl.addListener(_onSearchChanged);
@@ -203,6 +212,23 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
     if (!mounted) return;
     setState(() {
       _spots = list.where((s) => s.lat != 0 && s.lng != 0).toList();
+    });
+  }
+
+  /// 宿主页（钓点页）刷新后把新钓点同步进来
+  ///
+  /// ★ v2.1.87：以前这个内核**没有** didUpdateWidget —— 宿主页点「刷新」
+  ///   拿到的新列表只在重建 build 时读一次 `widget.extraSpots`，而
+  ///   `_computeLayerSig` 用的又是 `extraSpots.length`：后台删掉一个点、
+  ///   宿主页列表少一个，长度确实变了能重建，但「删一个 + 加一个」长度不变
+  ///   就整个不刷新。现在改成按 id 签名 + 显式同步一次，两种情况都跟得上。
+  @override
+  void didUpdateWidget(covariant SpotMapScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.extraSpots, widget.extraSpots)) return;
+    setState(() {
+      _extraIds = drawableSpotIds(widget.extraSpots);
+      _layerSig = ''; // 强制重建 marker 缓存（下面那句 sig 只是保险）
     });
   }
 
@@ -1307,7 +1333,9 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
         _waters.length,
         _zones.zones.length,
         _spots.length,
-        widget.extraSpots.length,
+        // v2.1.87：用 id 集合而不是 length —— 「删一个 + 加一个」长度不变，
+        // 只比对 length 会漏掉这次变化，地图上就少一个/多一个点
+        _extraIds.join(','),
         _myLat,
         _myLng,
       ].join('|');
