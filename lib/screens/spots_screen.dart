@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
@@ -22,6 +23,11 @@ import 'spot_detail_screen.dart';
 import 'spot_map_gl.dart';
 import 'spot_map_screen.dart';
 import '../widgets/app_refresh.dart';
+
+/// 顶部悬浮导航条高度：状态栏以下那一行（44 的灰色透明胶囊 + 上下各 4）
+///
+/// 状态栏留白不在这里，用 `MediaQuery.paddingOf(context).top` 单独加。
+const double kSpotsHeaderH = 52;
 
 /// 钓点页：三 Tab（v2.1.39 起渔具店从「本地钓场」筛选里独立成一级入口）
 ///   ① 本地钓场：图2 样式卡片列表（封面 / 星级 / 标签 / 地址 / 距离 / 收费 / 简介）
@@ -203,36 +209,17 @@ class _SpotsScreenState extends State<SpotsScreen>
 
   @override
   Widget build(BuildContext context) {
+    // ★ v2.1.88 顶部改成「悬浮导航」：
+    //   ① 标题「钓点」删掉 —— 三颗胶囊已经写明这一页是哪三块内容；
+    //   ② 顶部**整条背景去掉**（全透明）：地图/列表直接从屏幕最上沿开始铺，
+    //      只有二级分类那一条本身是灰色透明（见 [_header]）；
+    //   ③ body 顶到 y=0（extendBodyBehindAppBar），二级导航因此上移到
+    //      贴住状态栏。
+    //   浮层让位高度统一由 [headerH] 算，别处不要再写死 64。
+    final headerH = MediaQuery.paddingOf(context).top + kSpotsHeaderH;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('钓点'),
-        // 头部高度与其他主 Tab 统一（首页 46，发现 44 + 44）
-        toolbarHeight: 46,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(44),
-          child: Container(
-            color: Colors.white,
-            child: Row(
-              children: [
-                _tabChip(0, '本地钓场（${_venues.length}）'),
-                _tabChip(1, '野钓钓点'),
-                _tabChip(2, '渔具店（${_shops.length}）'),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          // 右上角「+」按当前 Tab 分流（v2.1.55）：
-          //   本地钓场 → 添加钓场表单
-          //   野钓钓点 → 标记野钓点（地图选点，免审核）
-          //   渔具店   → 添加渔具店表单（店名/门店·流动/饵料·鱼竿·鱼线/可配送）
-          IconButton(
-            icon: Icon(_addIcon),
-            tooltip: _addLabel,
-            onPressed: _openAddForm,
-          ),
-        ],
-      ),
+      extendBodyBehindAppBar: true,
+      appBar: _header(headerH),
       body: TabBarView(
         controller: _tabController,
         // ★ 禁止左右滑动切页，只能用顶部胶囊切换。
@@ -243,15 +230,124 @@ class _SpotsScreenState extends State<SpotsScreen>
         //   ② 产品上地图页需要整屏响应拖动 / 双指缩放，不能有翻页手势。
         physics: const NeverScrollableScrollPhysics(),
         children: [
-          _TabKeepAlive(child: _buildVenueTab()),
-          _TabKeepAlive(child: _buildWildTab()),
-          _TabKeepAlive(child: _buildShopTab()),
+          // 列表 Tab：顶部让出浮层高度，第一条卡片不会被导航条压住
+          _TabKeepAlive(
+            child: Padding(
+              padding: EdgeInsets.only(top: headerH),
+              child: _buildVenueTab(),
+            ),
+          ),
+          // 地图 Tab：地图铺满整屏（含状态栏后面），浮层由 [headerH] 往下让
+          _TabKeepAlive(child: _buildWildTab(headerH + 8)),
+          _TabKeepAlive(
+            child: Padding(
+              padding: EdgeInsets.only(top: headerH),
+              child: _buildShopTab(),
+            ),
+          ),
         ],
       ),
     );
   }
 
+  /// 顶部悬浮导航条
+  ///
+  /// 不再用 AppBar 的 title —— 这里只要「一行灰色透明胶囊」。
+  /// 状态栏留白自己补（[totalH] 已含），所以用 PreferredSize 而不是 AppBar，
+  /// 免得再跟主题的 1px 底边、centerTitle 打架。
+  ///
+  /// ★ 背景：最外层**完全透明**（用户要求「顶部背景透明或是去掉」），
+  ///   只有三个 Tab 那一条是灰色透明（0xC7 浅灰），像一块浮在地图上的毛玻璃。
+  ///   所以状态栏图标颜色必须跟着当前 Tab 走：地图页底下是卫星图（深）→ 白图标，
+  ///   两个列表页底下是白底 → 深图标。写死任何一边都会有一半场景看不见。
+  PreferredSizeWidget _header(double totalH) {
+    final topPad = MediaQuery.paddingOf(context).top;
+    // 地图 Tab 右上角的「+」去掉（用户要求）：地图左侧竖条里已经有「标记」，
+    // 两个入口做同一件事，还压着地图右上角。
+    // 两个列表 Tab 必须保留 —— 那是「提交钓场 / 提交渔具店」唯一的入口。
+    final showAdd = _tabController.index != 1;
+    return PreferredSize(
+      preferredSize: Size.fromHeight(totalH),
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: _tabController.index == 1
+            ? SystemUiOverlayStyle.light
+            : SystemUiOverlayStyle.dark,
+        child: Container(
+          height: totalH,
+          padding: EdgeInsets.only(top: topPad, left: 12, right: 12),
+          child: Row(
+            children: [
+              // ---- 二级分类：灰色透明胶囊 ----
+              Expanded(
+                child: Container(
+                  height: 44,
+                  decoration: BoxDecoration(
+                    // 灰色透明：地图从底下透出来，字仍然清楚
+                    // （用色板里的 background 加透明度，别写死新颜色）
+                    color: AppTheme.background.withOpacity(0.8),
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(color: const Color(0x14000000)),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x1F000000),
+                        blurRadius: 10,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(22),
+                    child: Row(
+                      children: [
+                        _tabChip(0, '本地钓场（${_venues.length}）'),
+                        _tabChip(1, '野钓钓点'),
+                        _tabChip(2, '渔具店（${_shops.length}）'),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              // 右上角「+」按当前 Tab 分流（v2.1.55）：
+              //   本地钓场 → 添加钓场表单
+              //   渔具店   → 添加渔具店表单（店名/门店·流动/饵料·鱼竿·鱼线/可配送）
+              // （野钓钓点 → 标记野钓点，入口在左侧竖条「标记」，v2.1.88 起不再重复放）
+              if (showAdd) ...[
+                const SizedBox(width: 8),
+                _addButton(),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 右上角「+」：白底圆钮，44pt 触控目标
+  Widget _addButton() {
+    return Tooltip(
+      message: _addLabel,
+      child: Material(
+        color: Colors.white,
+        shape: const CircleBorder(),
+        elevation: 2,
+        shadowColor: Colors.black26,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: _openAddForm,
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Icon(_addIcon, size: 22, color: AppTheme.primary),
+          ),
+        ),
+      ),
+    );
+  }
+
   /// 顶部 Tab 胶囊（与「发现」页同款，替代默认 TabBar 让头部高度统一）
+  ///
+  /// v2.1.88：导航条变成半透明浮层后，胶囊左右内边距 14 → 11、高度 44 → 40，
+  /// 一行里还要塞下右上角的「+」圆钮，窄屏（320）才不至于把字压得太小。
   Widget _tabChip(int index, String label) {
     final selected = _tabController.index == index;
     return Expanded(
@@ -262,13 +358,13 @@ class _SpotsScreenState extends State<SpotsScreen>
           setState(() {});
         },
         child: Container(
-          height: 44,
+          height: 40,
           alignment: Alignment.center,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
             decoration: BoxDecoration(
               color: selected ? AppTheme.primary : Colors.transparent,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(18),
             ),
             // 三颗胶囊平分宽度后只有 ~110px，窄屏（320）上「本地钓场（12）」
             // 会顶到边界。FittedBox 让它按需缩字，绝不溢出。
@@ -280,7 +376,11 @@ class _SpotsScreenState extends State<SpotsScreen>
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: selected ? Colors.white : AppTheme.textSecondary,
+                  // 半透明底上未选中用「近黑压到 70%」：
+                  // 比 textSecondary(7D8694) 对比度高，13pt 也看得清
+                  color: selected
+                      ? Colors.white
+                      : AppTheme.textPrimary.withOpacity(0.7),
                 ),
               ),
             ),
@@ -576,10 +676,12 @@ class _SpotsScreenState extends State<SpotsScreen>
     _load(); // 返回后刷新：新标记全员实时可见
   }
 
-  Widget _buildWildTab() {
+  Widget _buildWildTab(double topPad) {
     return Stack(
       children: [
         // 地图本体（嵌入模式：顶部无搜索栏、底部统计条由水面/钓点/渔获胶囊承担）
+        // ★ v2.1.88：地图铺到状态栏后面，浮层从 [topPad] 开始往下排，
+        //   两套渲染内核用同一个值（写死 64 的话，切内核按钮就平移了）。
         Positioned.fill(
           // 渲染内核：默认原生 MapLibre（GPU、自带瓦片缓存，拖动不卡），
           // 后台「地图底图 → 渲染内核」可切回 flutter_map 兜底
@@ -588,18 +690,20 @@ class _SpotsScreenState extends State<SpotsScreen>
                   embedded: true,
                   extraSpots: _wild,
                   controller: _mapCtrl,
+                  embeddedTopInset: topPad,
                 )
               : SpotMapScreen(
                   embedded: true,
                   extraSpots: _wild,
                   controller: _mapCtrl,
+                  embeddedTopInset: topPad,
                 ),
         ),
         // 左侧竖排信息条（不再横着压在标准图上方，视野让给地图）
         Positioned(
           left: 12,
-          // 让开地图自带的「图层 / 禁钓名录」两个圆按钮
-          top: 62,
+          // 让开顶部半透明导航条
+          top: topPad,
           child: Container(
             width: 48,
             padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),

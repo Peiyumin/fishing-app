@@ -83,10 +83,16 @@ class SpotMapGlScreen extends StatefulWidget {
     this.embedded = false,
     this.extraSpots = const [],
     this.controller,
+    this.embeddedTopInset = 64,
   });
 
   /// 嵌入钓点页「野钓钓点」Tab 时为 true（不画搜索栏，顶部让位）
   final bool embedded;
+
+  /// 嵌入模式下浮层距顶部的距离（px）—— 必须与 flutter_map 内核
+  /// （[SpotMapScreen.embeddedTopInset]）用同一个值，否则降级切内核时
+  /// 右侧工具条会整体平移。
+  final double embeddedTopInset;
 
   /// 外层传入的野钓点（钓点页已拉过，避免重复请求）
   final List<FishingSpot> extraSpots;
@@ -2142,6 +2148,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
         embedded: widget.embedded,
         extraSpots: widget.extraSpots,
         controller: widget.controller,
+        embeddedTopInset: widget.embeddedTopInset,
       );
     }
 
@@ -2222,10 +2229,12 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       ),
 
       // AI 找钓点：底部中间（压在全局「+」发布按钮上方，两者不重叠）
+      // v2.1.88：用户要求往下移，88 → 52；「+」顶边在 28，
+      // 留 24px 间隙，两个内核必须是同一个值，否则降级切内核会跳。
       Positioned(
         left: 0,
         right: 0,
-        bottom: 88,
+        bottom: 52,
         child: Center(child: _buildAiButton()),
       ),
 
@@ -2242,7 +2251,7 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
           left: 12,
           right: 12,
           top: (widget.embedded
-                  ? 64.0
+                  ? widget.embeddedTopInset
                   : MediaQuery.of(context).padding.top + 96) -
               4,
           child: IgnorePointer(
@@ -2295,7 +2304,9 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       // 右侧工具条
       Positioned(
         right: 12,
-        top: widget.embedded ? 64 : MediaQuery.of(context).padding.top + 96,
+        top: widget.embedded
+            ? widget.embeddedTopInset
+            : MediaQuery.of(context).padding.top + 96,
         child: Column(children: [
           _roundBtn(
               _layers.satellite ? Icons.satellite_alt : Icons.map_outlined,

@@ -56,6 +56,14 @@ class SpotMapScreen extends StatefulWidget {
   /// 外部定位联动用（钓点页拿到定位后调用 [SpotMapController.moveToLocation]）
   final SpotMapController? controller;
 
+  /// 嵌入模式下浮层距顶部的距离（px）。
+  ///
+  /// ★ v2.1.88：钓点页把导航做成半透明浮层、地图铺到了状态栏后面，
+  ///   地图顶部不再等于「屏幕顶部 + 固定 64」。让开多少由宿主页算好传进来，
+  ///   两套渲染内核（本页 / spot_map_gl）都用这同一个值 ——
+  ///   一旦各自写死，降级换内核时整排按钮就会平移。
+  final double embeddedTopInset;
+
   /// 测试专用：为 true 时不加载底图瓦片。
   /// widget 测试环境没有网络，瓦片请求会抛 ClientException 污染断言；
   /// 关掉底图后仍能完整验证浮层 / 图层面板的布局。生产代码恒为 false。
@@ -66,6 +74,7 @@ class SpotMapScreen extends StatefulWidget {
     this.embedded = false,
     this.extraSpots = const [],
     this.controller,
+    this.embeddedTopInset = 64,
   });
 
   @override
@@ -1646,12 +1655,15 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
         // ---------------- 右侧工具栏 ----------------
         //
         // ★★ 与原生 MapLibre 内核**逐项对齐**：卫星 / 放大 / 缩小 / 定位 / 图层，
-        //   嵌入模式 top=64，非嵌入 top=状态栏+140。
+        //   嵌入模式 top=[embeddedTopInset]（由宿主页给，让开状态栏 + 半透明导航），
+        //   非嵌入 top=状态栏+140。
         //   位置、按钮顺序、按钮数量以前两套内核各不相同，一旦降级切内核，
         //   用户看到的就是整排按钮平移、还多两个少两个。
         Positioned(
           right: 12,
-          top: widget.embedded ? 64 : MediaQuery.of(context).padding.top + 140,
+          top: widget.embedded
+              ? widget.embeddedTopInset
+              : MediaQuery.of(context).padding.top + 140,
           child: Column(children: [
             _roundBtn(
                 _layers.satellite ? Icons.satellite_alt : Icons.map_outlined,
@@ -1725,7 +1737,8 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
         // ---------------- 嵌入模式：AI 胶囊 + 版权行 ----------------
         //
         // ★★ 位置和样式按原生内核（spot_map_gl.dart）来：
-        //   AI 胶囊 bottom=88（给底部「+」发布按钮和导航栏让位），
+        //   AI 胶囊 bottom=52（v2.1.88：用户要求「AI 钓点往下移」，
+        //   88 → 52，与全局「+」发布按钮顶上 28 之间还留 24px，不重叠），
         //   版权行 bottom=6、单行省略、半透明黑字。
         //   原来这里是「bottom=10 + 白色带阴影两行文字」，降级后既压住
         //   底部导航，颜色也从黑变白，看起来像换了个页面。
@@ -1733,7 +1746,7 @@ class _SpotMapScreenState extends State<SpotMapScreen> {
           Positioned(
             left: 0,
             right: 0,
-            bottom: 88,
+            bottom: 52,
             child: _aiCapsule(),
           ),
           Positioned(

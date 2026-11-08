@@ -126,28 +126,22 @@ class HomeWeatherHero extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.place,
-                                size: 16, color: Colors.white60),
-                            const SizedBox(width: 4),
-                            Flexible(
-                              child: Text(
-                                // 能取到就写地名（县/区级），取不到写「当前位置」。
-                                // 不缀「· 实时天气」：右边就是更新时间，整块本来就是实时天气。
-                                place.isEmpty ? '当前位置' : place,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: narrow ? 19 : 21,
-                                  height: 1.12,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 0.2,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                          ],
+                        // ★ v2.1.88：地名前的定位小图标删掉，只留名字。
+                        //   21pt 的字配上 16px 的图钉，图钉只占位不传递信息，
+                        //   反倒把地名往右挤了 20px。地名本身就是「我在哪」。
+                        Text(
+                          // 能取到就写地名（县/区级），取不到写「当前位置」。
+                          // 不缀「· 实时天气」：右边就是更新时间，整块本来就是实时天气。
+                          place.isEmpty ? '当前位置' : place,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: narrow ? 19 : 21,
+                            height: 1.12,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.2,
+                            color: Colors.white,
+                          ),
                         ),
                         if (atLabel.isNotEmpty) ...[
                           const SizedBox(height: 3),
