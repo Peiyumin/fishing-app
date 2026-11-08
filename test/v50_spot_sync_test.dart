@@ -13,6 +13,8 @@
 //   ② 上一轮没给过（地图自己拉的钓场/渔具店） → 即使不在 incoming 也保留
 //   ③ 同名 id 用新数据覆盖（后台改了名字/坐标）
 //   ④ 坐标是 0 的点不上图，也不进「这一轮名单」
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fishing_app/models/fishing_spot.dart';
@@ -142,6 +144,46 @@ void main() {
         incoming: [spot('A')],
       );
       expect(second.containsKey('A'), isTrue);
+    });
+  });
+
+  group('⑤ 两个渲染内核都真的接上了这套口径', () {
+    // 地图页要真的能跑起来就得有 MapLibre / 瓦片插件，widget 测试跑不动，
+    // 所以这里钉「接线」：一旦有人把合并逻辑改回「只增不删」，这条会红。
+    test('原生 GL 内核：走 syncSpotMap + 首屏就记下 servedIds', () {
+      final src = File('lib/screens/spot_map_gl.dart').readAsStringSync();
+      expect(src.contains('syncSpotMap('), isTrue,
+          reason: '合并必须走统一口径（只增不删的老写法会让已删的钓点一直留在图上）');
+      expect(src.contains('servedIds: _extraIds'), isTrue);
+      expect(src.contains('_extraIds = drawableSpotIds(widget.extraSpots)'),
+          isTrue,
+          reason: '首屏不记 servedIds，第一次刷新会把该删的点当成「地图自己拉的」留下');
+      // 反例：老写法「以现有为底」不许回来
+      expect(src.contains('{for (final s in _spots) s.id: s}'), isFalse);
+    });
+
+    test('兜底内核：宿主页刷新会同步 + 签名按 id 而不是数量', () {
+      final src = File('lib/screens/spot_map_screen.dart').readAsStringSync();
+      expect(src.contains('void didUpdateWidget(covariant SpotMapScreen'),
+          isTrue,
+          reason: '没有 didUpdateWidget，宿主页刷新后 marker 缓存根本不会重建');
+      expect(src.contains('_extraIds.join'), isTrue,
+          reason: '签名用 length 会漏掉「删一个 + 加一个」');
+      expect(src.contains('_extraIds = drawableSpotIds(widget.extraSpots)'),
+          isTrue);
+    });
+
+    test('钓点页：App 回到前台静默刷新一次', () {
+      final src = File('lib/screens/spots_screen.dart').readAsStringSync();
+      expect(src.contains('WidgetsBindingObserver'), isTrue);
+      expect(src.contains('AppLifecycleState.resumed'), isTrue);
+      expect(src.contains('removeObserver(this)'), isTrue,
+          reason: 'observer 不移除会泄漏，还会在页面销毁后 setState');
+      expect(
+          RegExp(r'AppLifecycleState\.resumed\)[\s\S]{0,400}?_load\(\)')
+              .hasMatch(src),
+          isTrue,
+          reason: 'resumed 之后必须真的去拉一次数据');
     });
   });
 }

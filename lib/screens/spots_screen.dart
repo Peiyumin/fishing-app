@@ -38,7 +38,7 @@ class SpotsScreen extends StatefulWidget {
 }
 
 class _SpotsScreenState extends State<SpotsScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final TabController _tabController;
   final SpotMapController _mapCtrl = SpotMapController();
 
@@ -67,6 +67,7 @@ class _SpotsScreenState extends State<SpotsScreen>
     _tabController.addListener(() {
       if (mounted) setState(() {});
     });
+    WidgetsBinding.instance.addObserver(this);
     _load();
     // 先拉后台地图配置（决定用原生 GL 还是 flutter_map 内核），拉到了再重建
     MapConfigService.load().then((_) {
@@ -79,8 +80,24 @@ class _SpotsScreenState extends State<SpotsScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _tabController.dispose();
     super.dispose();
+  }
+
+  /// App 从后台回到前台时静默刷一次钓点
+  ///
+  /// ★ v2.1.87：后台删掉 / 下架的钓点，App 里没有任何推送能感知，
+  ///   用户切回 App 看到的还是上次的快照，只能自己想起去点「刷新」——
+  ///   这就是「后台删了，前端不更新」最常被人踩到的那条路径。
+  ///   这里在 resumed 时补一次静默刷新：不打 toast、不影响界面，
+  ///   数据变了就换掉，没变就原地不动。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    // 首帧那次 _load 还在飞就别叠一次；失败/成功后 _loading 会落下来
+    if (_loading) return;
+    _load();
   }
 
   /// 拉钓点数据
