@@ -43,8 +43,13 @@ import 'msg_bell.dart';
 ///   写错的后果是 Flutter 静默回落系统字体（不报错、只是「不像毛笔字」），
 ///   所以 `test/v48_home_header_test.dart` 会读渲染后的 TextStyle 逐字核对。
 class HomeTopBar extends StatelessWidget implements PreferredSizeWidget {
-  /// 工具栏高度：标题 34pt（行高 1.05 ≈ 36）+ 上下各 13 的留白 = 62
-  static const double barHeight = 62;
+  /// 工具栏高度：标题 40pt（行高 1.05 = 42）+ 上下各 14 的留白 = 70
+  ///
+  /// ★ v2.1.91：字号 34 → 40（用户要求「左上角标题再大一点」），
+  ///   工具栏 62 → 70 跟着长。行书字面比黑体小一圈，40 的视觉大小约等于
+  ///   黑体 32；如果只加字号不加高度，40 × 1.05 = 42 挤进 62 里只剩
+  ///   上下各 10，笔锋的出锋会被工具栏裁掉。
+  static const double barHeight = 70;
 
   /// 标题下面那条钓法分类（台钓 / 路亚 / 钓场 / 海钓）
   final HomeMode mode;
@@ -90,8 +95,8 @@ class HomeTopBar extends StatelessWidget implements PreferredSizeWidget {
         '渔报',
         style: TextStyle(
           fontFamily: 'YuBaoBrush',
-          // 行书笔画瘦，34 才够份量；再大就会顶到 62 高的工具栏
-          fontSize: 34,
+          // 行书笔画瘦，40 才够份量（v2.1.91：34 → 40）
+          fontSize: 40,
           // 行书上下都有出锋，行高留 1.05 避免贴边被裁
           height: 1.05,
           // 笔画细了更要拉开间距，不然两字会挨在一起；3 → 5

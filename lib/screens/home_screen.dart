@@ -643,6 +643,16 @@ class _HomeScreenState extends State<HomeScreen>
           // 夹紧滚动：头部是深色整块，回弹时把它拉下去会露出页面底色，
           // 顶部那一截会显得「断层」。夹紧后不会过卷，视觉始终是一整块。
           physics: const ClampingScrollPhysics(),
+          // ★ v2.1.91：ListView 的 padding 传 null 时会**自动套用
+          //   MediaQuery 的垂直 padding**（顶部 = 状态栏高度）。结果就是第一项
+          //   深色头部从状态栏下方才开始画，上面那一条露出 Scaffold 的浅色底
+          //   ——用户看到的就是「顶部一条留白」，而状态栏图标被我们设成白色，
+          //   白压浅灰几乎看不见。
+          //   这里显式只留底部安全区（iPhone 的 home indicator），顶部归零，
+          //   深色块从 y=0 铺起；「渔报」不会被顶到状态栏上，因为 AppBar 的
+          //   primary 会自己再让出一次状态栏高度。
+          padding: EdgeInsets.only(
+              bottom: MediaQuery.paddingOf(context).bottom),
           children: [
             // ① 深色头部（一整块）：毛笔「渔报」+ 铃铛 + 钓法分类 + 天气通栏
             Container(

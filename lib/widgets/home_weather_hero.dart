@@ -147,10 +147,15 @@ class HomeWeatherHero extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: narrow ? 19 : 21,
-                            height: 1.12,
+                            // ★ v2.1.91：21 → 17（用户要求「定位名字小一点」）。
+                            //   顶栏「渔报」放大到 40 之后，地名再保持 21 会和
+                            //   标题抢视觉重心；17 刚好是「次要信息」的量级，
+                            //   也比右边的 58pt 指数低一整个层级，三个元素
+                            //   的大小关系才立得住。
+                            fontSize: narrow ? 15.5 : 17,
+                            height: 1.18,
                             fontWeight: FontWeight.w700,
-                            letterSpacing: 0.2,
+                            letterSpacing: 0.3,
                             color: Colors.white,
                           ),
                         ),

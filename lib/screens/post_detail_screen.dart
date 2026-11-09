@@ -1000,7 +1000,13 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     final has = hasGearInfo(bait: bait, rod: rod, water: water, note: note);
     final canEdit = _post.isMe && ApiConfig.enabled;
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      // ★ v2.1.91：原来这里是 `(16, 0, 16, 12)` —— 底部 12 会跟下面
+      //   `_waterCard`（天气三连）自己的 10 叠成 22，而页面其它卡片之间
+      //   只有 10。用户看到的就是「天气卡片上面的空隙格外大」。
+      //   现在统一成和 `_card()` 一模一样的 `(12, 10, 12, 0)`：
+      //   左右 12（和正文外的所有卡对齐，原来 16 会窄一截）、
+      //   顶部 10、底部 0（间距只由下一张卡的 top 提供，不叠加）。
+      margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
       padding: const EdgeInsets.fromLTRB(14, 10, 8, 13),
       decoration: BoxDecoration(
         color: AppTheme.surface,

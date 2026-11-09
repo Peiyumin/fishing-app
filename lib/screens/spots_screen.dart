@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -6,6 +8,7 @@ import '../app_theme.dart';
 import '../widgets/ui_kit.dart';
 
 import '../models/fishing_spot.dart';
+import '../services/last_pos.dart';
 import '../services/location_service.dart';
 import '../services/map_config_service.dart';
 import '../services/session_provider.dart';
@@ -75,6 +78,11 @@ class _SpotsScreenState extends State<SpotsScreen>
     });
     WidgetsBinding.instance.addObserver(this);
     _load();
+    // ★ v2.1.91：先把**上一次**的定位读出来，列表首屏就按「距我由近到远」
+    //   排好，不用干等 GPS。之前只靠下面那次实时定位，定位没回来（或用户
+    //   拒了权限）的那几秒里，列表是后端 `created_at DESC` 的顺序、也不显示
+    //   距离，看起来就是「没按远近排」。
+    _restoreLastPos();
     // 先拉后台地图配置（决定用原生 GL 还是 flutter_map 内核），拉到了再重建
     MapConfigService.load().then((_) {
       if (mounted) setState(() {});
@@ -150,6 +158,19 @@ class _SpotsScreenState extends State<SpotsScreen>
     }
   }
 
+  /// 首屏先用上次的定位排序（读磁盘，几百微秒，不等 GPS）
+  Future<void> _restoreLastPos() async {
+    if (_myLat != null && _myLng != null) return;
+    final ok = await LastPos.load();
+    if (!mounted || !ok) return;
+    // 实时定位可能已经先回来了，别把它覆盖回旧值
+    if (_myLat != null) return;
+    setState(() {
+      _myLat = LastPos.lat;
+      _myLng = LastPos.lng;
+    });
+  }
+
   /// 获取当前位置（仅用于距离展示与地图居中）
   ///
   /// [silent] = true 用于「打开页面自动定位」：失败不打扰用户。
@@ -164,6 +185,8 @@ class _SpotsScreenState extends State<SpotsScreen>
         _myLat = pos.latitude;
         _myLng = pos.longitude;
       });
+      // ★ v2.1.91：存下来给下次首屏用（与首页共用同一个 key）
+      unawaited(LastPos.save(pos.latitude, pos.longitude));
       // 卫星地图居中到当前位置
       // 野钓 Tab 还没渲染时地图实例不存在，controller 内部的 _move 为空，调用无副作用
       _mapCtrl.moveToLocation(pos.latitude, pos.longitude);
@@ -391,6 +414,52 @@ class _SpotsScreenState extends State<SpotsScreen>
   }
 
   // ==================== Tab ① 本地钓场 ====================
+  /// 没有定位时的提示条
+  ///
+  /// 没有坐标就算不出距离，也排不了序 —— 列表只能按后端 `created_at DESC`
+  /// 铺，用户看到的是「乱序 + 没有距离」。与其让他猜测，不如直说一句，
+  /// 顺便给一个点一下就走的入口。
+  Widget _locateHint() {
+    return Padding(
+      padding:
+          const EdgeInsets.fromLTRB(AppTheme.pagePad, 8, AppTheme.pagePad, 0),
+      child: Material(
+        color: AppTheme.primary.withOpacity(.06),
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => _locate(),
+          child: const Padding(
+            padding: EdgeInsets.fromLTRB(12, 9, 8, 9),
+            child: Row(
+              children: [
+                Icon(Icons.near_me_outlined,
+                    size: 15, color: AppTheme.primary),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '未获取到定位，暂时按收录顺序展示',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  ),
+                ),
+                Text('按距离排序',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.primary)),
+                Icon(Icons.chevron_right_rounded,
+                    size: 16, color: AppTheme.primary),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildVenueTab() {
     return Column(
       children: [
@@ -414,6 +483,10 @@ class _SpotsScreenState extends State<SpotsScreen>
           ),
         ),
         const Divider(height: 1),
+        // ★ v2.1.91：没定位时明说一句，并给一个可点的入口。
+        //   以前定位失败是「静默」的 —— 列表照旧铺出来，只是没有距离、顺序
+        //   也退回后端入库顺序，用户只会觉得「排序坏了」，不知道该去开权限。
+        if (_myLat == null && !_locating && !_loading) _locateHint(),
         Expanded(
           child: AppRefresh(
             onRefresh: _load,

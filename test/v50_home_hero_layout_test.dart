@@ -71,11 +71,14 @@ void main() {
           reason: '用户要求「定位放到垂钓指数前面」，地名必须在数字左侧');
     });
 
-    testWidgets('地名字号 ≥ 18（原来 13）、白色加粗', (t) async {
+    testWidgets('地名字号 17（v2.1.87 放大到 21，v2.1.91 按用户要求收回）、白色加粗', (t) async {
       await t.pumpWidget(wrap(hero()));
       final style = t.widget<Text>(find.text('青岛 · 市南区')).style!;
-      expect(style.fontSize, greaterThanOrEqualTo(18),
-          reason: '用户要求「放大」；旧版 13pt 是辅助信息的字号，不是主角');
+      // ★ v2.1.91：用户要求「下面的定位名字再小一点」。
+      //   顶栏「渔报」放大到 40 之后，地名保持 21 会跟标题抢视觉重心；
+      //   17 仍明显大于辅助信息（11.5 的更新时间），但比指数（58）低两个层级。
+      expect(style.fontSize, 17,
+          reason: '用户要求「定位名字小一点」；同时不能小到跟「更新 xx」同级');
       expect(style.color, Colors.white);
       expect(style.fontWeight, FontWeight.w700);
     });
