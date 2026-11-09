@@ -7,19 +7,25 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: '构建机（macos-15 默认 / macos-14 / macos-13）'
+        description: '构建机（macos-15-intel 默认 / macos-15 / macos-14 / macos-26）'
         required: false
-        default: 'macos-15'
+        default: 'macos-15-intel'
   push:
     tags: ['v*']
 
 jobs:
   build:
-    # 默认 macos-15。2026-11-06 踩到的坑：macos-14 会「dispatch 后十几秒
-    # 直接 cancelled、runner 未分配、steps=0」，连排队都不排；
-    # 同一个 commit 换 macos-15 就能正常进队列跑完。
-    # 遇到 0 steps 的 cancelled 先换标签，别怀疑代码。
-    runs-on: ${{ inputs.runner || 'macos-15' }}
+    # ★ 2026-11-09 六镜像并行探测结论（runner-probe.yml，run 42633628256）：
+    #   macos-15-intel  → success，秒级分配（runner 1000000297/1000000306）
+    #   macos-14        → cancelled，steps=0，runner 从未分配
+    #   macos-15        → 排队约 15 分钟后 cancelled，runner 从未分配
+    #   macos-26        → 排队约 15 分钟后 cancelled，runner 从未分配
+    #   macos-latest    → 排队约 15 分钟后 cancelled，runner 从未分配
+    #   macos-13        → 一直 queued（该标签已退役）
+    # 一句话：本账号下 arm64 的 macOS 机分不到，Intel 版（macos-15-intel）才有机器。
+    # 以后再遇到「dispatch 后 cancelled、steps=0」，先跑 runner-probe.yml 探一遍，
+    # 别改代码、别怀疑缓存。Xcode 15.4 在 Intel 镜像里同样可用，编出来的 ipa 一致。
+    runs-on: ${{ inputs.runner || 'macos-15-intel' }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
