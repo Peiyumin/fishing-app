@@ -46,6 +46,13 @@ class HomeWeatherHero extends StatelessWidget {
   /// 潮汐估算（仅海钓用；没拿到坐标时为 null → 第三格显示「--」）
   final TideInfo? tide;
 
+  /// ★ v2.1.90：嵌在首页头部大块里用（首页改版，头部与卡片整体滚动）。
+  ///
+  /// 为 true 时**不画自己的 headerGradient、也不留底部 8px 外距**，
+  /// 由外层 `HomeHeaderBlock` 画一次渐变把「标题 + 分类 + 天气」包成一整块。
+  /// 理由同 `HomeTopBar.embedded`：对角渐变各画一次会在接缝处断层。
+  final bool flat;
+
   const HomeWeatherHero({
     super.key,
     required this.weather,
@@ -54,6 +61,7 @@ class HomeWeatherHero extends StatelessWidget {
     this.waterTemp,
     this.mode = HomeMode.taiDiao,
     this.tide,
+    this.flat = false,
   });
 
   @override
@@ -97,10 +105,13 @@ class HomeWeatherHero extends StatelessWidget {
     ];
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: flat ? EdgeInsets.zero : const EdgeInsets.only(bottom: 8),
       // 直接用 AppBar 那条品牌渐变：天气区和顶栏连成一块，
       // 不在色板外另造一个近黑色（主题色板测试也会拦）
-      decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
+      // flat 时交给外层 HomeHeaderBlock 画，避免对角渐变在两块里各起一次头
+      decoration: flat
+          ? null
+          : const BoxDecoration(gradient: AppTheme.headerGradient),
       child: InkWell(
         onTap: onTap,
         child: Padding(

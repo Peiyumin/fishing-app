@@ -50,10 +50,23 @@ class HomeTopBar extends StatelessWidget implements PreferredSizeWidget {
   final HomeMode mode;
   final ValueChanged<HomeMode>? onModeChanged;
 
+  /// ★ v2.1.90：嵌进首页滚动流里用（首页改版：标题导航和下面卡片整体滚动）。
+  ///
+  /// 为 true 时顶栏**不再自己画那条 headerGradient**，只保留结构
+  /// （状态栏留白 + 62 的标题行 + 38 的分类条），背景交给外层的
+  /// `HomeHeaderBlock` 统一画一次。
+  ///
+  /// 为什么必须抽走背景：`AppTheme.headerGradient` 是
+  /// **topLeft → bottomRight 的对角渐变**。顶栏和天气卡各画一次，
+  /// 两块的渐变起点不同，接缝处颜色会「断层」—— 一眼就能看出是
+  /// 两块拼起来的，正好和「组在一起不要分开」相反。
+  final bool embedded;
+
   const HomeTopBar({
     super.key,
     this.mode = HomeMode.taiDiao,
     this.onModeChanged,
+    this.embedded = false,
   });
 
   @override
@@ -62,7 +75,7 @@ class HomeTopBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppBar(
+    final bar = AppBar(
       toolbarHeight: barHeight,
       // ★ 主题是 centerTitle: true；不写这一行，title 会被整块居中，
       //   光在 title 里写 Row/Align 是拗不过来的。
@@ -106,9 +119,29 @@ class HomeTopBar extends StatelessWidget implements PreferredSizeWidget {
         preferredSize: const Size.fromHeight(ModeTabs.height),
         child: ModeTabs(mode: mode, onChanged: onModeChanged),
       ),
-      flexibleSpace: Container(
-        decoration: const BoxDecoration(gradient: AppTheme.headerGradient),
-      ),
+      // embedded：背景由外层 HomeHeaderBlock 统一画（见 embedded 字段的注释）
+      backgroundColor: embedded ? Colors.transparent : null,
+      flexibleSpace: embedded
+          ? null
+          : Container(
+              decoration:
+                  const BoxDecoration(gradient: AppTheme.headerGradient),
+            ),
+    );
+
+    if (!embedded) return bar;
+
+    // ★ embedded（进滚动流）时必须**显式给定高度**。
+    //
+    //   AppBar 内部是 `Column(mainAxisSize: max)` + 若干 flex 子项，
+    //   在 Scaffold 的 appBar 槽里拿到的是固定高度；一旦塞进 ListView，
+    //   高度约束变成无限，Flutter 直接断言：
+    //     「RenderFlex children have non-zero flex but incoming height
+    //      constraints are unbounded」—— 整页白屏。
+    //   高度 = 标题行 + 分类条 + 状态栏（AppBar 的 primary 会自己吃掉 top padding）。
+    return SizedBox(
+      height: barHeight + ModeTabs.height + MediaQuery.of(context).padding.top,
+      child: bar,
     );
   }
 }

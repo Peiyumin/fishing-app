@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+// v2.1.90：头部滚出屏幕后要给状态栏换深色图标（SystemUiOverlayStyle）
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -71,6 +73,16 @@ class _HomeScreenState extends State<HomeScreen>
   bool _loadingPosts = true;
   final ScrollController _feedScroll = ScrollController();
 
+  /// ★ v2.1.90 首页改版：头部（渔报 + 钓法分类 + 天气）改成滚动流的第一项，
+  ///   和下面的卡片组一起滚。头部滚出屏幕后状态栏下面变成浅色内容，
+  ///   系统状态栏图标必须从白转深 —— 否则白图标压在浅底上等于消失。
+  ///   下面三个字段就是为这件事服务的：量出头部真实高度、跟住滚动位置、
+  ///   只在「整块是否已滚走」翻转时 setState（不是每帧都重建）。
+  final GlobalKey _headerKey = GlobalKey();
+  double _headerH = 0;
+  double _scrollOffset = 0;
+  bool _headerGone = false;
+
   /// 当前定位的地名（首页左上角显示「禹州 / 许昌」这类短名）
   ///
   /// ★ v2.1.89：初始值直接取启动页预热好的缓存 —— 用户要求「进首页定位
@@ -114,6 +126,8 @@ class _HomeScreenState extends State<HomeScreen>
     //   第一帧就是真实天气；随后 _loadWeather 只做「静默更新」。
     _weather = WeatherService.memoryCurrent;
     WidgetsBinding.instance.addObserver(this);
+    // v2.1.90：头部是否整体滚出屏幕，决定状态栏图标的深浅
+    _feedScroll.addListener(_onFeedScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_firstFrame.isCompleted) _firstFrame.complete();
     });
@@ -571,33 +585,95 @@ class _HomeScreenState extends State<HomeScreen>
     action();
   }
 
+  /// 头部滚出判定：只维护「整块是否已离开状态栏区域」这一位
+  ///
+  /// 不每帧 setState —— 只在布尔翻转时重建一次，否则滑动时整页狂重建。
+  void _onFeedScroll() {
+    if (!mounted || !_feedScroll.hasClients) return;
+    _scrollOffset = _feedScroll.offset;
+    if (_headerH <= 0) return;
+    final top = MediaQuery.of(context).padding.top;
+    final gone = _scrollOffset > (_headerH - top);
+    if (gone != _headerGone) setState(() => _headerGone = gone);
+  }
+
+  /// 量头部真实高度：天气卡随文案/水温行数变化，不能写死一个常数
+  void _measureHeader() {
+    final ro = _headerKey.currentContext?.findRenderObject();
+    if (ro is RenderBox && ro.hasSize && ro.size.height > 0) {
+      _headerH = ro.size.height;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final topAd = _layout.topAd;
+    // 滚完这一帧顺手量一下头部高度（只赋值不 setState，不会触发重建循环）
+    WidgetsBinding.instance.addPostFrameCallback((_) => _measureHeader());
+    // 头部还盖着状态栏 → 白图标；整块滚走、露出浅色卡片 → 深图标
+    final sysTop = MediaQuery.of(context).padding.top;
+    final headerGone =
+        _headerH > 0 && _scrollOffset > (_headerH - sysTop);
+
     return Scaffold(
-      // v2.1.84：顶栏整块抽成 HomeTopBar —— 左上角毛笔「渔报」+ 右侧铃铛，
-      // 并且显式盖掉主题那条 1px 底边线（以前它横在「渔报」下面像一条白胶带）。
-      // 搜索框、左上定位胶囊在 v2.1.83 已移除：搜索走「钓点」页，
-      // 定位地名在下面的天气通栏里显示，顶部不再堆入口。
+      // ★ v2.1.90 首页改版：标题导航和下面的卡片组「一个整体滚动」。
       //
-      // v2.1.86：标题下面挂钓法分类（台钓/路亚/钓场/海钓），切换后
-      // 下面的天气通栏第三格跟着换（海钓 → 潮汐，其余 → 水氧），指数也重算。
-      appBar: HomeTopBar(mode: _mode, onModeChanged: _setMode),
-      // ★ v2.1.89：不再套 AppRefresh —— 用户要求取消下拉刷新。
-      //   刷新时机改为：打开 App 自动一次 + 从二级页返回 + 点底部「首页」。
-      body: ListView(
+      //   改之前：顶栏是 Scaffold 的 appBar 槽里那个 HomeTopBar，钉死在顶上，
+      //   body 的 ListView 自己滚 —— 内容从顶栏底下钻过去，视觉上是两截。
+      //
+      //   现在：顶栏不占 appBar 槽了，缩成普通 widget 进 ListView 第一项，
+      //   外面套一层画 headerGradient 的 Container，把
+      //   「渔报 + 钓法分类 + 天气通栏」包成同一块深色，跟着列表一起滚。
+      //
+      //   两条必须守住的细节：
+      //     ① 渐变只画一次（HomeTopBar.embedded / HomeWeatherHero.flat 都
+      //        关掉自己的背景）—— headerGradient 是 topLeft→bottomRight 的
+      //        对角渐变，两块各画一次，接缝处颜色会断层；
+      //     ② 头部滚出后状态栏下面是浅色卡片，系统状态栏图标要从白转深。
+      //
+      // 页面底色必须是浅色：宫格之外还有「附近钓点 / 钓友动态」这些
+      // 直接落在页面底上的黑字标题，底色一深就整行看不见了。
+      // 顶部一旦过卷（iOS 回弹）会露出这层浅色，属于可接受的常规表现。
+      backgroundColor: AppTheme.background,
+      body: AnnotatedRegion<SystemUiOverlayStyle>(
+        value:
+            headerGone ? SystemUiOverlayStyle.dark : SystemUiOverlayStyle.light,
+        child: ListView(
           controller: _feedScroll,
+          // 夹紧滚动：头部是深色整块，回弹时把它拉下去会露出页面底色，
+          // 顶部那一截会显得「断层」。夹紧后不会过卷，视觉始终是一整块。
+          physics: const ClampingScrollPhysics(),
           children: [
-            // ① 顶部天气（改版：整块深色通栏，指数 + 建议 + 四格指标）
-            HomeWeatherHero(
-              weather: _weather,
-              placeLabel: _place?.label,
-              waterTemp: WeatherService.memoryWaterTemp,
-              mode: _mode,
-              tide: _tide,
-              onTap: () => _guard(() => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const WeatherScreen()))),
+            // ① 深色头部（一整块）：毛笔「渔报」+ 铃铛 + 钓法分类 + 天气通栏
+            Container(
+              key: _headerKey,
+              decoration:
+                  const BoxDecoration(gradient: AppTheme.headerGradient),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                // AppBar 自身不带宽度约束，Column 必须 stretch 才铺满整宽
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  HomeTopBar(
+                      mode: _mode, onModeChanged: _setMode, embedded: true),
+                  HomeWeatherHero(
+                    weather: _weather,
+                    placeLabel: _place?.label,
+                    waterTemp: WeatherService.memoryWaterTemp,
+                    mode: _mode,
+                    tide: _tide,
+                    // 背景交给外面那层 Container，自己不画（否则渐变断层）
+                    flat: true,
+                    onTap: () => _guard(() => Navigator.of(context).push(
+                        MaterialPageRoute(
+                            builder: (_) => const WeatherScreen()))),
+                  ),
+                ],
+              ),
             ),
+            // 深色块与白色卡片之间留 8（原先这 8 是天气卡自己的 margin-bottom，
+            // flat 模式里已经让出来了，放在这里才对——在容器里会被渐变吃掉）
+            const SizedBox(height: 8),
             // ② 分类导航：名字 / 图标 / 顺序 / 一行几个全部来自后台
             GridNav(items: _layout.categories, crossAxisCount: _layout.gridCols),
             // ③ 首页广告位：后台没配在投广告时整块不占位，不留空坑
@@ -671,6 +747,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 builder: (_) => PostDetailScreen(post: p)))),
                       ),
           ],
+        ),
       ),
     );
   }
