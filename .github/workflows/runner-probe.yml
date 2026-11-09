@@ -1,0 +1,40 @@
+# 构建机探测：只打印机器信息，不编译，用来快速判断某个 runs-on 标签
+# 能不能真的分配到机器（而不是排队 20 分钟后 cancelled、steps=0）。
+# 用法：Actions 页面 Run workflow，labels 传 JSON 数组，例如
+#   ["macos-13","macos-14","macos-15","macos-15-intel","macos-26","macos-latest"]
+name: Runner-Probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      labels:
+        description: 'JSON 数组形式的 runs-on 标签列表'
+        required: true
+        default: '["macos-15"]'
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        label: ${{ fromJSON(inputs.labels) }}
+    runs-on: ${{ matrix.label }}
+    timeout-minutes: 12
+    steps:
+      - name: 机器信息
+        run: |
+          echo "=== label: ${{ matrix.label }} ==="
+          echo "runner.name=$RUNNER_NAME"
+          echo "runner.os=$RUNNER_OS  arch=$RUNNER_ARCH"
+          uname -a
+          sw_vers
+          echo "cpu: $(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo unknown)"
+          echo "cpus: $(sysctl -n hw.ncpu)"
+          echo "mem: $(($(sysctl -n hw.memsize)/1024/1024/1024)) GB"
+          echo "disk:"; df -h /
+          if [ -d /Applications/Xcode.app ]; then
+            echo "xcode: $(/usr/bin/xcodebuild -version 2>&1 | tr '\n' ' ')"
+          else
+            echo "xcode: 未安装 /Applications/Xcode.app"
+          fi
+          echo "=== OK: ${{ matrix.label }} 已分配到机器 ==="
