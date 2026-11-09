@@ -49,3 +49,8 @@ app.*.map.json
 .verify/
 *.apk
 *.ipa
+
+# 随包底图（v2.1.89）：2394 个散瓦片不进仓库，只存 assets/tiles_pack.tar.gz，
+# 构建时由 .github/workflows/ios-unsigned.yml 的「解出随包底图」一步解开。
+# 本地打 Android 包需要散文件时：tar -xzf assets/tiles_pack.tar.gz -C assets/
+/assets/tiles/

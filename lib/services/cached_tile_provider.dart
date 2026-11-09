@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -10,6 +9,8 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
+
+import 'offline_tiles.dart';
 
 /// 带「内置离线包 → 磁盘缓存 → 网络」三级优先级的瓦片提供器
 ///
@@ -264,6 +265,24 @@ class _TileImage extends ImageProvider<_TileImage> {
   Future<ui.Codec> _loadAsync() async {
     Uint8List? bytes;
 
+    // ⓪ 随包底图（v2.1.89）：已解到本机的 z0~z8，读文件是微秒级。
+    //    只对卫星影像层生效（包里没有注记/矢量图），且不超过随包层级。
+    if (layer == 'img') {
+      final off = OfflineTiles.tileFile(z, x, y);
+      if (off != null) {
+        try {
+          final f = File(off);
+          if (await f.exists()) {
+            final b = await f.readAsBytes();
+            if (b.isNotEmpty) {
+              bytes = b;
+              CachedTileProvider.statDisk++;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
     // ① 磁盘缓存
     String? path;
     try {
@@ -295,9 +314,7 @@ class _TileImage extends ImageProvider<_TileImage> {
     }
 
     // ③ 网络
-    if (bytes == null) {
-      bytes = await _fetch();
-    }
+    bytes ??= await _fetch();
 
     if (bytes == null) {
       // 三级全失败：返回 1x1 透明图，让底图背景透出来，

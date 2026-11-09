@@ -74,7 +74,9 @@ void main() {
     late String src;
 
     setUpAll(() {
-      final f = File('lib/screens/spot_map_gl.dart');
+      // v2.1.89 起样式 JSON 由 services/map_style.dart 的纯函数生成，
+      // 断言要跟着搬家（spot_map_gl 现在只剩调用）
+      final f = File('lib/services/map_style.dart');
       expect(f.existsSync(), isTrue);
       src = f.readAsStringSync();
     });

@@ -21,6 +21,8 @@ import '../models/water_body.dart';
 import 'ai_radar_screen.dart';
 import '../services/location_service.dart';
 import '../services/map_config_service.dart';
+import '../services/offline_tiles.dart';
+import '../services/map_style.dart';
 import '../services/ai_spot_service.dart';
 import '../services/ai_quota_service.dart';
 import '../services/session_provider.dart';
@@ -233,6 +235,14 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
       if (!mounted) return;
       // 先切底图源，_buildStyle() 依赖 _tile
       _tile = MapConfigService.source;
+      // 随包底图（v2.1.89）：最多等 2.5 秒把 z0~z8 解到本机。
+      // 首次解包可能要几秒 —— 等不到就先按在线低清层建图（这一次稍慢），
+      // 下次进来就已经解好了，直接秒开。绝不为了它把用户按在灰屏上。
+      await OfflineTiles.ensureReady().timeout(
+        const Duration(milliseconds: 2500),
+        onTimeout: () {},
+      );
+      if (!mounted) return;
       // ★ 样式必须落成文件传绝对路径，原因见 _stylePath 注释
       final path = await _writeStyleFile(_buildStyle());
       if (!mounted) return;
@@ -467,93 +477,19 @@ class _SpotMapGlScreenState extends State<SpotMapGlScreen> {
   }
 
   String _buildStyle() {
-    final hd = _hdBounds;
-    return jsonEncode(<String, dynamic>{
-      'version': 8,
-      'sources': {
-        // ---------------- 低清概览层：全球铺底 ----------------
-        // 最高只到 z8。z9 以上它靠「放大 z8 瓦片」呈现 ——
-        // 这正好就是用户要的「定位点 50km 之外模糊显示」，
-        // 而且每屏只多 1~4 块瓦片（一块 z8 抵 256 块 z16），开销可以忽略。
-        // ★ 为什么定 z8 而不是 z12：低清层如果太清晰，缩小到 100km 视野时
-        //   圈内圈外一样清楚，用户根本看不出「50 公里边界」在哪，
-        //   分级加载就成了看不见的摆设。
-        'sat-low': {
-          'type': 'raster',
-          'tiles': _urls(_tile.satelliteTemplate),
-          'tileSize': 256,
-          'maxzoom': 8,
-          'attribution': _tile.attribution,
-        },
-        // ---------------- 高清层：只在定位点周围 50km ----------------
-        // ★ bounds 是这里的关键：MapLibre 文档明确写了
-        //   「设了 bounds 之后，范围外的瓦片一律不请求」。
-        //   所以高清瓦片只会在那 50km 里被拉下来，范围外由上面的低清层顶住。
-        // ★ maxzoom 必须等于瓦片源真实最大级别（星图 18）。
-        //   之前相机允许缩放到 22 级，超过 18 后 MapLibre 不再请求新瓦片，
-        //   只是把 18 级瓦片放大 16 倍 —— 用户看到的就是「放大后不加载、
-        //   一片模糊」。现在相机上限也一起压到 18（见 minMaxZoomPreference）。
-        'sat': {
-          'type': 'raster',
-          'tiles': _urls(_tile.satelliteTemplate),
-          'tileSize': 256,
-          // z9 起接管（z9 的视野正好约 100km，能一眼看到 50km 那个圈）
-          'minzoom': 9,
-          'maxzoom': _tile.maxNativeZoom,
-          if (hd != null) 'bounds': hd,
-        },
-        'vec': {
-          'type': 'raster',
-          'tiles': _urls(_tile.vectorTemplate),
-          'tileSize': 256,
-          'maxzoom': _tile.maxNativeZoom,
-        },
-        'cia': {
-          'type': 'raster',
-          'tiles': _urls(_tile.labelTemplate),
-          'tileSize': 256,
-          'maxzoom': _tile.maxNativeZoom,
-        },
-      },
-      'layers': [
-        {
-          'id': 'bg',
-          'type': 'background',
-          'paint': {'background-color': _Hex.background},
-        },
-        // raster-fade-duration: 0 —— 关掉瓦片淡入动画。
-        // 默认 300ms 的淡入会让原生层在瓦片刚到时反复重绘，
-        // 快速拖动时叠加上一层重绘，是掉帧的隐形大头。
-        {
-          'id': 'sat-low',
-          'type': 'raster',
-          'source': 'sat-low',
-          'paint': {'raster-fade-duration': 0},
-        },
-        {
-          'id': 'sat',
-          'type': 'raster',
-          'source': 'sat',
-          'paint': {'raster-fade-duration': 0},
-        },
-        {
-          'id': 'vec',
-          'type': 'raster',
-          'source': 'vec',
-          'layout': {'visibility': 'none'},
-          'paint': {'raster-fade-duration': 0},
-        },
-        {
-          'id': 'cia',
-          'type': 'raster',
-          'source': 'cia',
-          // 低倍视野下地名注记看不清也没意义，却不省瓦片请求 ——
-          // 10 级以下直接不请求，全国视角只拉一层影像。
-          'minzoom': 10,
-          'paint': {'raster-fade-duration': 0},
-        },
-      ],
-    });
+    // 随包底图：只有星图地球（未加偏、与包内瓦片同源）才能用。
+    // 换成高德（GCJ-02）时不能用 —— 包里的图是 WGS-84，硬叠会整体偏 500m。
+    final offline = _tile.kind == TileSourceKind.geovisearth
+        ? OfflineTiles.tileTemplate
+        : null;
+    // 样式本体在 services/map_style.dart（纯函数，单测能直接验结构）
+    return jsonEncode(buildRasterStyle(
+      tile: _tile,
+      urls: _urls,
+      hdBounds: _hdBounds,
+      offlineTemplate: offline,
+      background: _Hex.background,
+    ));
   }
 
   /// 把样式 JSON 写进临时目录，返回绝对路径

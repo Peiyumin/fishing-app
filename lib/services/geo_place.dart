@@ -9,6 +9,7 @@ import 'api_config.dart';
 import 'location_service.dart';
 import '../utils/text_safe.dart';
 import '../utils/json_num.dart';
+import '../utils/zh_hans.dart';
 
 /// 中文地名（由经纬度反查得到）
 ///
@@ -57,14 +58,21 @@ class GeoPlace {
   /// ★ 全部字段过 [safeText]：地名来自第三方地名接口，偶发把 UTF-8 从
   ///   中间截断（如「禹州市」截成「禹州\uFFFD」），不净化就会在首页顶部
   ///   的定位胶囊里显示成一个小方块。
+  ///
+  /// ★ v2.1.89：再统一过一遍 [ZhHans.toSimplified]。第三方地名库对部分
+  ///   县市返回繁体（湖南「漢壽縣」），后端 `/geo/reverse` 也是同一套数据。
+  ///   在这里做唯一出口，缓存里的旧值、后端返回、直连兜底三条路一起治。
   factory GeoPlace.fromJson(Map<String, dynamic> j) => GeoPlace(
-        province: safeText(j['province']),
-        city: safeText(j['city']),
-        district: safeText(j['district']),
-        street: safeText(j['street']),
-        short: safeText(j['short']),
-        display: safeText(j['display']),
+        province: _cn(j['province']),
+        city: _cn(j['city']),
+        district: _cn(j['district']),
+        street: _cn(j['street']),
+        short: _cn(j['short']),
+        display: _cn(j['display']),
       );
+
+  /// 净化 + 转简体（顺序不能反：先修掉半截 UTF-8，再逐字换简体）
+  static String _cn(Object? v) => ZhHans.toSimplified(safeText(v));
 
   // ── 缓存 ──
   static const String _cacheKey = 'geo_place_v1';
@@ -72,6 +80,27 @@ class GeoPlace {
   static const Duration _cacheTtl = Duration(hours: 12);
 
   static GeoPlace? _memo;
+
+  /// 内存里已有的地名（没解析过就是 null）
+  ///
+  /// 首页 initState 用它**同步**取值：启动页阶段已经 [warmUp] 过，
+  /// 首帧就能把地址画出来，不用等一次 await 后再 setState 补一帧。
+  static GeoPlace? get memo => _memo;
+
+  /// 启动页阶段预热：只读本地缓存（12h 内有效），不碰 GPS、不联网
+  ///
+  /// ★ 为什么要在启动页做：用户的要求是「进首页定位地址就要显示出来」。
+  ///   以前首页 initState 里 `_loadPlace()` 才去读缓存，读盘是异步的，
+  ///   首帧地名是空的，要过一两帧才蹦出来。
+  static Future<void> warmUp() async {
+    if (_memo != null && !_memo!.isEmpty) return;
+    try {
+      final cached = await _readCache();
+      if (cached != null) _memo = cached;
+    } catch (_) {
+      // 预热失败不影响启动，首页仍会自己再试一次
+    }
+  }
 
   /// 当前定位的地名（进程内缓存 + 本地磁盘缓存 12 小时）
   ///
@@ -135,9 +164,13 @@ class GeoPlace {
 
   static Future<GeoPlace?> _reverseDirect(double lat, double lng) async {
     try {
+      // ★ localityLanguage 必须是 **zh-Hans**：传 `zh` 时这套库对部分县市
+      //   会回繁体（实测湖南汉寿：`zh` → 漢壽縣，`zh-Hans` → 汉寿县，
+      //   `zh-CN` 也仍是繁体）。后端那边还是 `zh`，所以显示前另有
+      //   [ZhHans] 兜底，两处都要。
       final uri = Uri.parse(
           'https://api.bigdatacloud.net/data/reverse-geocode-client'
-          '?latitude=$lat&longitude=$lng&localityLanguage=zh');
+          '?latitude=$lat&longitude=$lng&localityLanguage=zh-Hans');
       final req = await _http.getUrl(uri);
       final res = await req.close();
       if (res.statusCode != 200) return null;
@@ -147,9 +180,10 @@ class GeoPlace {
       if (j is! Map) return null;
 
       // 第三方接口偶尔返回半截 UTF-8 → 解码后是 U+FFFD，一律清掉
-      final province = safeText(j['principalSubdivision']);
-      final city = safeText(j['city']);
-      final district = safeText(j['locality']);
+      // （再过一遍简体：直连虽然已经要了 zh-Hans，仍可能给繁体）
+      final province = _cn(j['principalSubdivision']);
+      final city = _cn(j['city']);
+      final district = _cn(j['locality']);
 
       var street = '';
       final admin = j['localityInfo']?['administrative'];
@@ -157,7 +191,7 @@ class GeoPlace {
         for (final a in admin) {
           if (a is! Map) continue;
           if (jsonInt(a['adminLevel']) == 8) {
-            final nm = safeText(a['name']);
+            final nm = _cn(a['name']);
             if (nm.isNotEmpty && nm.toLowerCase() != 'none') {
               street = nm;
               break;

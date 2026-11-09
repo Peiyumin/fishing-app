@@ -30,7 +30,11 @@ import 'services/app_shortcuts.dart';
 import 'services/app_settings.dart';
 import 'services/message_poller.dart';
 import 'services/notification_service.dart';
+import 'services/offline_tiles.dart';
 import 'services/post_service.dart';
+import 'services/refresh_bus.dart';
+import 'services/geo_place.dart';
+import 'services/app_route_observer.dart';
 import 'services/session_provider.dart';
 import 'services/weather_service.dart';
 import 'screens/home_screen.dart';
@@ -46,6 +50,9 @@ import 'widgets/update_dialog.dart';
 
 /// 全局导航 key：用于「新消息」顶部弹条在任意页面悬浮展示
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+/// 全局路由观察者（v2.1.89）—— 定义在 services 里，避免环形 import
+/// 首页用它实现「从别的页面返回时自动刷新一次」（用户要求取消下拉刷新）。
 
 /// 老安卓（Android 5.x / API 22 及以下）系统证书库缺失三张现代根证书：
 ///   - ISRG Root X1      （Let's Encrypt / open-meteo 天气）
@@ -348,6 +355,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       animation: AppSettings.instance,
       builder: (context, _) => MaterialApp(
       navigatorKey: navigatorKey,
+      navigatorObservers: [routeObserver],
       title: '渔报',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
@@ -411,7 +419,11 @@ class _StartupGateState extends State<StartupGate> {
   ///   而这一项是整个放行链路上唯一**依赖网络**的等待。启动广告/预览页
   ///   本来就是「有就看、没有就直接进」的可选项，为它多等 1.7 秒不值当：
   ///   弱网下宁可这次不展示广告，也要让用户进得去。
-  static const _bootTimeout = Duration(milliseconds: 800);
+  ///
+  /// ★ v2.1.89：800 → 600ms，且**有本机缓存时根本不走这个等待**（见
+  ///   [_prepare] 里的 `cachedBoot`）。这一段现在只在「首次安装 / 缓存
+  ///   过期」时才可能碰到。
+  static const _bootTimeout = Duration(milliseconds: 600);
 
   /// 本机还没走过权限引导（首次安装，或刚升级到带新引导标记的版本）。
   ///
@@ -478,7 +490,7 @@ class _StartupGateState extends State<StartupGate> {
             .timeout(_bootTimeout)
             .catchError((_) => const AppBootstrap());
 
-    // ④ 只等这四件（都是本地读 + 一个带超时的接口，正常在 300ms 内）
+    // ④ 只等这几件（都是本地读 + 一个带超时的接口，正常在 300ms 内）
     await Future.wait<void>([
       // 本机偏好：字体大小 / 个性化推荐 / 鱼获隐私默认值
       AppSettings.instance.load().catchError((_) {}),
@@ -486,9 +498,20 @@ class _StartupGateState extends State<StartupGate> {
       session.restore().catchError((_) {}),
       // 首页天气卡的数据源：把磁盘缓存提到内存，首页 initState 同步取值
       WeatherService.warmUp(),
+      // 启动配置缓存：有它就不用每次冷启动都等接口（v2.1.89）
+      AppService.warmUp(),
+      // 定位地名缓存：进首页第一帧就要有「汉寿县」这种字样（v2.1.89）
+      GeoPlace.warmUp(),
     ]);
 
-    final boot = await bootF;
+    // 有新鲜缓存 → 立刻放行，接口结果丢到后台，下次启动才生效。
+    // 没有缓存（首次安装 / 过了 6 小时）→ 才等那最多 600ms。
+    final cachedBoot = _firstRun ? null : AppService.cached;
+    final boot = cachedBoot ?? await bootF;
+    if (cachedBoot != null) {
+      // 后台把最新配置写进缓存，顺便把广告/预览的新内容备好
+      unawaited(bootF);
+    }
     if (!mounted) return;
     setState(() {
       _boot = boot;
@@ -510,6 +533,14 @@ class _StartupGateState extends State<StartupGate> {
     MessagePoller.instance.onNewItems = (items, summary) {
       _showFeedBanner(items, summary);
     };
+
+    // ⑦ 随包底图解包（v2.1.89）：延后 2 秒、错开首屏，一次性的 I/O。
+    //   解完之后地图页直接用本地瓦片，打开即出图（详见 OfflineTiles）。
+    Timer(const Duration(seconds: 2), () {
+      if (Platform.isAndroid || Platform.isIOS) {
+        unawaited(OfflineTiles.ensureReady());
+      }
+    });
 
     // 启动后检查热更新（有新版本才弹窗；强制更新不可跳过）
     // ★ 首次安装不查：这也是一次网络请求，同样会把「无线数据」系统弹窗
@@ -724,7 +755,12 @@ class _MainShellState extends State<MainShell> {
     ProfileScreen(),
   ];
 
-  void _onTabTapped(int index) => setState(() => _currentIndex = index);
+  void _onTabTapped(int index) {
+    setState(() => _currentIndex = index);
+    // 点「首页」= 回首页：让首页自动刷一次（v2.1.89，取代原来的下拉刷新）。
+    // 无论是「从别的 Tab 切回来」还是「已经在首页又点了一下」，都刷。
+    if (index == 0) RefreshBus.bumpHome();
+  }
 
   /// 点底部 tab：未登录只放行首页，其余三个都先弹登录页
   Future<void> _onTabTap(int index) async {

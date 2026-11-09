@@ -14,6 +14,7 @@ import '../services/home_service.dart';
 import '../services/location_service.dart';
 import '../services/post_service.dart';
 import '../services/refresh_bus.dart';
+import '../services/app_route_observer.dart';
 import '../services/session_provider.dart';
 import '../services/tide_service.dart';
 import '../services/spot_service.dart';
@@ -35,7 +36,6 @@ import 'signin_screen.dart';
 import 'weather_screen.dart';
 import 'spots_screen.dart';
 import 'spot_detail_screen.dart';
-import '../widgets/app_refresh.dart';
 import '../services/app_settings.dart';
 
 /// 首页：搜索框 + 宫格导航 + 天气/钓点 + 实时动态流
@@ -47,7 +47,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, RouteAware {
   FishingWeather? _weather;
 
   /// 顶部钓法分类（v2.1.86）：台钓 / 路亚 / 钓场 / 海钓
@@ -69,13 +69,14 @@ class _HomeScreenState extends State<HomeScreen>
   List<FishingSpot> _spots = [];
   List<Post> _posts = [];
   bool _loadingPosts = true;
-  int _feedPage = 1;
-  bool _feedHasMore = true;
-  bool _feedLoadingMore = false;
   final ScrollController _feedScroll = ScrollController();
 
   /// 当前定位的地名（首页左上角显示「禹州 / 许昌」这类短名）
-  GeoPlace? _place;
+  ///
+  /// ★ v2.1.89：初始值直接取启动页预热好的缓存 —— 用户要求「进首页定位
+  ///   地址就要显示出来」。以前这里是 null，首帧地名是空的，要等一次
+  ///   异步读盘 + setState 才蹦出来。
+  GeoPlace? _place = GeoPlace.memo;
   bool _locatingPlace = false;
 
   /// 自身定位坐标（用于「附近钓点」按距离由近到远排序）
@@ -125,7 +126,8 @@ class _HomeScreenState extends State<HomeScreen>
     // 发布成功（渔获 / 动态 / 钓点）后即时刷新首页，不用手动下拉
     RefreshBus.feedTick.addListener(_onFeedTick);
     RefreshBus.spotTick.addListener(_onSpotTick);
-    _feedScroll.addListener(_onFeedScroll);
+    // 回到首页（点底部「首页」/ 从别的 Tab 切回来）自动刷一次（v2.1.89）
+    RefreshBus.homeTick.addListener(_onHomeTick);
     _startAutoRefresh();
     // 首帧渲染完成后再真正定位一次，保证打开 App 就自动获取当前位置
     WidgetsBinding.instance.addPostFrameCallback((_) => _autoLocate());
@@ -158,10 +160,34 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.removeObserver(this);
     RefreshBus.feedTick.removeListener(_onFeedTick);
     RefreshBus.spotTick.removeListener(_onSpotTick);
+    RefreshBus.homeTick.removeListener(_onHomeTick);
+    routeObserver.unsubscribe(this);
     _feedScroll.dispose();
     _feedTimer?.cancel();
     _slowTimer?.cancel();
     super.dispose();
+  }
+
+  /// 从二级页返回首页时自动刷一次（v2.1.89）
+  ///
+  /// 用户要求取消下拉刷新，改成「回来自动刷」—— 这个回调就是那个时机。
+  /// 只刷数据、不弹任何提示条，用户回来看到的就是最新内容。
+  @override
+  void didPopNext() => _refreshOnReturn();
+
+  void _onHomeTick() => _refreshOnReturn();
+
+  /// 回到首页时的静默刷新（点底部首页 / 从别页返回都会走到）
+  void _refreshOnReturn() {
+    if (!mounted) return;
+    unawaited(_loadFeed(silent: true));
+    unawaited(_loadWeather(silent: true));
+    unawaited(_loadSpots());
+    unawaited(_loadLayout());
+    // 地名只有「还没有」时才重新定位：每次返回都拉 GPS 既费电又没必要
+    if (_place == null || _place!.isEmpty) {
+      unawaited(_loadPlace(refresh: true));
+    }
   }
 
   @override
@@ -269,12 +295,20 @@ class _HomeScreenState extends State<HomeScreen>
 
   String? _lastSessionAvatar;
   bool _sessionWatchInited = false;
+  ModalRoute<void>? _route;
 
   /// 登录态变化（登录 / 编辑头像 / 退出）时刷新信息流，
   /// 保证自己动态上的头像、昵称立即更新，不需要杀掉 App 重开
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // 订阅「从二级页返回」事件（v2.1.89 的自动刷新）
+    final r = ModalRoute.of(context);
+    if (r != _route) {
+      routeObserver.unsubscribe(this);
+      _route = r;
+      if (r != null) routeObserver.subscribe(this, r);
+    }
     final session = Provider.of<SessionProvider>(context);
     if (!_sessionWatchInited) {
       // 首次只记录基准值，不触发刷新
@@ -492,88 +526,25 @@ class _HomeScreenState extends State<HomeScreen>
     return CoordTransform.distanceMeters(lat, lng, s.lat, s.lng);
   }
 
-  Future<void> _loadFeed({bool silent = false, bool loadMore = false}) async {
-    if (loadMore) {
-      if (_feedLoadingMore || !_feedHasMore || _posts.isEmpty) return;
-      _feedLoadingMore = true;
-      if (mounted) setState(() {});
-    }
+  Future<void> _loadFeed({bool silent = false}) async {
     try {
-      final page = loadMore ? _feedPage + 1 : 1;
       final posts = await PostService.fetchFeed(
         limit: 20,
-        offset: (page - 1) * 20,
         // 「设置 - 个性化推荐」关掉后按纯时间倒序，不再按热度推荐
         tab: AppSettings.instance.personalized ? 'recommend' : null,
       );
       if (!mounted) return;
       setState(() {
-        if (loadMore) {
-          // 去重（演示模式回落时后端会返回同一批，避免死循环追加）
-          final seen = _posts.map((p) => p.id).toSet();
-          final fresh = posts.where((p) => !seen.contains(p.id)).toList();
-          _posts = [..._posts, ...fresh];
-          _feedPage = page;
-          if (fresh.length < posts.length || posts.length < 20) {
-            _feedHasMore = false;
-          }
-        } else {
-          _posts = posts;
-          _feedPage = 1;
-          _feedHasMore = posts.length >= 20;
-          _lastUpdated = DateTime.now();
-        }
+        _posts = posts;
+        _lastUpdated = DateTime.now();
       });
     } catch (e) {
-      if (mounted && !silent && !loadMore) {
+      if (mounted && !silent) {
         CenterToast.show(context, '动态加载失败：$e');
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _loadingPosts = false;
-          if (loadMore) _feedLoadingMore = false;
-        });
-      }
+      if (mounted) setState(() => _loadingPosts = false);
     }
-  }
-
-  /// 首页信息流滚动接近底部时触发上滑加载更多
-  void _onFeedScroll() {
-    if (!_feedScroll.hasClients) return;
-    final pos = _feedScroll.position;
-    if (pos.maxScrollExtent <= 0) return;
-    if (pos.pixels >= pos.maxScrollExtent - 400) _loadFeedMore();
-  }
-
-  Future<void> _loadFeedMore() async {
-    await _loadFeed(loadMore: true);
-  }
-
-  /// 上滑加载更多的底部指示器（与顶部刷新提示条彻底分离）
-  Widget _feedFooter() {
-    if (!_feedHasMore) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 18),
-        child: Center(
-          child: Text('没有更多了',
-              style: TextStyle(color: AppTheme.textTertiary, fontSize: 12)),
-        ),
-      );
-    }
-    if (_feedLoadingMore) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 18),
-        child: Center(
-          child: SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-      );
-    }
-    return const SizedBox(height: 18);
   }
 
   /// 拉首页装修（分类导航 + 广告位 + 一行几个）
@@ -591,29 +562,6 @@ class _HomeScreenState extends State<HomeScreen>
     if (!mounted) return;
     // 名字/图标/顺序都可能变，直接整块替换；HomeLayout 很小，重画代价可忽略
     setState(() => _layout = fresh);
-  }
-
-  /// 手动下拉刷新：顺带重新定位一次，保证「附近钓点」距离是新的
-  ///
-  /// ★ 定位不参与 await（v2.1.19）。
-  ///   下拉刷新必须「点了就一定会停」，不能因为 GPS 在室内锁不上
-  ///   就一直转圈 —— 这是用户反馈的「刷新图标一直转，刷新不出来」。
-  ///   现在：定位放后台跑（自己会 setState），内容刷新有硬超时兜底。
-  Future<void> _onRefresh() async {
-    // 定位先发起，不等它。它回来后会自己刷新地名和钓点距离
-    _loadPlace(refresh: true);
-    // ★ 下拉只等「动态」一件事：用户下拉就是想看有没有新帖。
-    //   旧写法把天气（要先拿 GPS）和钓点一起 await，室内定位锁不上时
-    //   刷新要转好几秒 —— 现在是天气/钓点甩到后台，刷新几百毫秒就收。
-    try {
-      await _loadFeed().timeout(const Duration(seconds: 6));
-    } catch (_) {
-      // 失败也照常收起提示条，不能把用户晾在加载态里
-    }
-    unawaited(_loadWeather(silent: true));
-    unawaited(_loadSpots());
-    unawaited(_loadLayout()); // 后台刚上的广告/分类，下拉就能立刻看到
-    if (mounted) setState(() => _lastUpdated = DateTime.now());
   }
 
   /// 游客点任何内容都先弹登录页（v2.1.48），登录成功后接着做原动作
@@ -635,9 +583,9 @@ class _HomeScreenState extends State<HomeScreen>
       // v2.1.86：标题下面挂钓法分类（台钓/路亚/钓场/海钓），切换后
       // 下面的天气通栏第三格跟着换（海钓 → 潮汐，其余 → 水氧），指数也重算。
       appBar: HomeTopBar(mode: _mode, onModeChanged: _setMode),
-      body: AppRefresh(
-        onRefresh: _onRefresh,
-        child: ListView(
+      // ★ v2.1.89：不再套 AppRefresh —— 用户要求取消下拉刷新。
+      //   刷新时机改为：打开 App 自动一次 + 从二级页返回 + 点底部「首页」。
+      body: ListView(
           controller: _feedScroll,
           children: [
             // ① 顶部天气（改版：整块深色通栏，指数 + 建议 + 四格指标）
@@ -693,7 +641,10 @@ class _HomeScreenState extends State<HomeScreen>
             // ★ 版式与「钓友圈」共用同一张双列瀑布卡（WaterfallPostCard），
             //   用户要求首页这一块和参考图一模一样，所以不再用竖排大卡片。
             //   嵌在 ListView 里 → shrinkWrap + 禁掉自己的滚动，避免两个
-            //   滚动容器抢手势（外层 AppRefresh 才是真正的滚动者）。
+            //   滚动容器抢手势（外层 ListView 才是真正的滚动者）。
+            //
+            //   v2.1.89：去掉「上滑加载更多」—— 首页只展示最新一页（20 条），
+            //   看完去「钓友圈」翻页。底部那个「没有更多了 / 转圈」也一并删了。
             _loadingPosts
                 ? const Center(
                     child: Padding(
@@ -708,24 +659,18 @@ class _HomeScreenState extends State<HomeScreen>
                           child: Text('还没有动态，点击中间「+」发布第一条吧'),
                         ),
                       )
-                    : Column(
-                        children: [
-                          WaterfallGrid(
-                            posts: _posts,
-                            shrinkWrap: true,
-                            // v2.1.62：上 4 → 2、下 pagePad → 6，
-                            // 和上面的「钓友动态」标题咬得更紧
-                            padding: const EdgeInsets.fromLTRB(
-                                AppTheme.pagePad, 2, AppTheme.pagePad, 6),
-                            onTap: (p) => _guard(() =>
-                                Navigator.of(context).push(MaterialPageRoute(
-                                    builder: (_) => PostDetailScreen(post: p)))),
-                          ),
-                          _feedFooter(),
-                        ],
+                    : WaterfallGrid(
+                        posts: _posts,
+                        shrinkWrap: true,
+                        // v2.1.62：上 4 → 2、下 pagePad → 6，
+                        // 和上面的「钓友动态」标题咬得更紧
+                        padding: const EdgeInsets.fromLTRB(
+                            AppTheme.pagePad, 2, AppTheme.pagePad, 6),
+                        onTap: (p) => _guard(() =>
+                            Navigator.of(context).push(MaterialPageRoute(
+                                builder: (_) => PostDetailScreen(post: p)))),
                       ),
           ],
-        ),
       ),
     );
   }

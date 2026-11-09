@@ -24,6 +24,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 随包底图（v2.1.89 起）：z0~z8 共 2394 张 webp + manifest.json，约 18MB。
+      # 仓库里以单个 tar.gz 存放，而不是 2394 个散文件 —— 散文件走 Git Data API
+      # 要发 2400 次请求，会撞 GitHub 的 secondary rate limit（实测掉到 0.18 个/秒）。
+      # 这里解开到 assets/tiles/，pubspec.yaml 里声明的路径就对上了。
+      - name: 解出随包底图
+        run: |
+          set -e
+          ls -la assets/tiles_pack.tar.gz
+          tar -xzf assets/tiles_pack.tar.gz -C assets/
+          n=$(find assets/tiles/img -name '*.webp' | wc -l | tr -d ' ')
+          echo "解出瓦片 $n 张"
+          test "$n" -ge 2000
+          test -f assets/tiles/manifest.json
+
       - name: 缓存 pub 依赖
         uses: actions/cache@v4
         with:

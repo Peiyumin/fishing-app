@@ -1,7 +1,7 @@
 name: fishing_app
 description: 垂钓社区 App —— 钓鱼天气、钓点导航、渔获分享（Flutter 双端）
 publish_to: 'none'
-version: 2.1.88+98
+version: 2.1.89+99
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -72,6 +72,23 @@ flutter:
     # 钓点地图数据（水域图层 + 禁钓区图层，随 App 版本更新）
     - assets/data/waters.json
     - assets/data/no_fishing_zones.json
+    # 随包底图（v2.1.89）：z0~z8、覆盖中国范围的卫星瓦片（星图地球 img/webp，
+    # 与在线底图同源、未加偏）。地图打开先用它秒出图，放大到 z9 以上再走网络。
+    # 清单见 assets/tiles/manifest.json（OfflineTiles 依它解到本机给原生内核用）。
+    #
+    # ★ Flutter 的资源目录**不递归**：写 `assets/tiles/` 只会带上同级的
+    #   manifest.json，img/z/x_y.webp 全丢。所以每个层级都要单独列一行
+    #   （每层是扁平的一组文件，不写子目录也能带全）。
+    - assets/tiles/manifest.json
+    - assets/tiles/img/0/
+    - assets/tiles/img/1/
+    - assets/tiles/img/2/
+    - assets/tiles/img/3/
+    - assets/tiles/img/4/
+    - assets/tiles/img/5/
+    - assets/tiles/img/6/
+    - assets/tiles/img/7/
+    - assets/tiles/img/8/
     - assets/avatars/avatar_07.png
     - assets/avatars/avatar_08.png
     # 老安卓（5.x）缺失的现代根证书：让 Dart HTTP 信任现代 HTTPS（天气/定位反查）

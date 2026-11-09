@@ -17,9 +17,18 @@ class RefreshBus {
   /// 我的资料刷新计数（积分兑换、编辑资料后刷新「我的」页）
   static final ValueNotifier<int> profileTick = ValueNotifier<int>(0);
 
+  /// 首页刷新计数（v2.1.89）
+  ///
+  /// 首页的「下拉刷新」已经取消（用户要求：不要手动刷新），改为在
+  /// **回到首页**这个动作上自动刷一次 —— 点底部「首页」、或从别的 Tab
+  /// 切回来时由 MainShell 打一枪，首页收到就静默重拉一遍数据。
+  static final ValueNotifier<int> homeTick = ValueNotifier<int>(0);
+
   static void bumpFeed() => feedTick.value++;
 
   static void bumpSpots() => spotTick.value++;
 
   static void bumpProfile() => profileTick.value++;
+
+  static void bumpHome() => homeTick.value++;
 }
