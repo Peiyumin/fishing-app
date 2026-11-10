@@ -53,6 +53,15 @@ class GridNav extends StatelessWidget {
           crossAxisCount: cols,
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
+          // ★ v2.1.92：必须显式给 zero。
+          //
+          //   GridView 的 `padding` 传 null 时，Flutter 会自动套用
+          //   `MediaQuery.padding`（见 ScrollView 的 `_effectivePadding`）：
+          //   卡片组于是被垫上「状态栏 44 + 底部 34 = 78pt」的空白。
+          //   两行还好、只显得松；后台只配 5 个（一行）时，上面那 44pt 和
+          //   下面的 12pt 一对比，就是用户截图里「上面留空太多了」。
+          //   显式归零后，上下只由外层 Padding 的 12 决定，单行/多行都对称。
+          padding: EdgeInsets.zero,
           // 4 个一行时格子更宽，比例跟着调，图标才不会被拉成扁的
           childAspectRatio: cols == 4 ? 0.92 : 0.85,
           children: list
