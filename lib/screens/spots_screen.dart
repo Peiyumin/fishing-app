@@ -17,6 +17,7 @@ import '../utils/coord_transform.dart';
 import '../utils/spot_sort.dart';
 import '../widgets/center_toast.dart';
 import '../widgets/location_prompt.dart';
+import '../widgets/venue_empty_view.dart';
 import 'auth_screen.dart';
 import 'publish_spot_screen.dart';
 import 'publish_shop_screen.dart';
@@ -73,9 +74,7 @@ class _SpotsScreenState extends State<SpotsScreen>
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     // 左右滑动切换时同步胶囊高亮
-    _tabController.addListener(() {
-      if (mounted) setState(() {});
-    });
+    _tabController.addListener(_onTabChanged);
     WidgetsBinding.instance.addObserver(this);
     _load();
     // ★ v2.1.91：先把**上一次**的定位读出来，列表首屏就按「距我由近到远」
@@ -91,6 +90,32 @@ class _SpotsScreenState extends State<SpotsScreen>
     // 也不至于在没有地图实例时去操作 MapController。
     WidgetsBinding.instance.addPostFrameCallback((_) => _locate(silent: true));
   }
+
+  /// 上次成功拿到定位的时间（用于切 Tab 时判断要不要重新定位）
+  DateTime? _lastFixAt;
+
+  /// Tab 切换
+  ///
+  /// ★ v2.1.92：切到「本地钓场」时要**重新取一次实时位置**。
+  ///   用户可能刚从别的城市开车回来，或者开着 App 跨了半个省 ——
+  ///   缓存里的坐标还是昨天的，列表就会继续按旧位置排，「本地」两个字就是假的。
+  ///   20 秒内反复切 Tab 不重复请求（省电，也避免连点把系统的定位框顶掉）。
+  void _onTabChanged() {
+    if (!mounted) return;
+    final i = _tabController.index;
+    if (i != _lastTab) {
+      _lastTab = i;
+      if (i == 0) {
+        final last = _lastFixAt;
+        final stale = last == null ||
+            DateTime.now().difference(last) > const Duration(seconds: 20);
+        if (stale) unawaited(_locate(silent: true));
+      }
+    }
+    setState(() {});
+  }
+
+  int _lastTab = 0;
 
   @override
   void dispose() {
@@ -184,6 +209,7 @@ class _SpotsScreenState extends State<SpotsScreen>
       setState(() {
         _myLat = pos.latitude;
         _myLng = pos.longitude;
+        _lastFixAt = DateTime.now();
       });
       // ★ v2.1.91：存下来给下次首屏用（与首页共用同一个 key）
       unawaited(LastPos.save(pos.latitude, pos.longitude));
@@ -219,11 +245,32 @@ class _SpotsScreenState extends State<SpotsScreen>
   ///   —— 批量导入的 51 个钓场全在 4 毫秒内入库（created_at 只有 18 个不同值），
   ///   并列行的顺序由 MySQL 决定，于是页面看起来就是「随便排的」。
   ///   距离文案本来就是这里按 CoordTransform 算的，排序放在同一处才不会打架。
+  ///
+  /// ★ v2.1.92：名字叫「本地钓场」，就得真的只放**我附近的**。
+  ///   之前是把库里所有 kind=venue 全铺出来：人在北京，列表却是 564km 外的
+  ///   许昌钓场，标题还写着「本地钓场（49）」—— 用户根本不认这是「本地」。
+  ///   现在以**实时定位**为圆心，只保留 [_localRadiusKm] 以内的，再由近到远排。
+  ///   拿不到定位时不做半径过滤（否则会把整页判成空），只靠顶部提示条说明。
   List<FishingSpot> get _visibleVenues {
     final list = _type == '全部'
         ? _venues
         : _venues.where((s) => s.type == _type).toList();
-    return sortSpotsByDistance(list, _myLat, _myLng);
+    return sortSpotsByDistance(
+        _withinLocalRange(list), _myLat, _myLng);
+  }
+
+  /// 「本地」的范围：以当前位置为圆心 100 公里（钓鱼当天往返的合理半径）
+  static const double _localRadiusKm = 100;
+
+  /// 只保留我附近的钓场；没有定位时原样返回（不能把整页判空）
+  List<FishingSpot> _withinLocalRange(List<FishingSpot> list) {
+    final lat = _myLat, lng = _myLng;
+    if (lat == null || lng == null) return list;
+    const limit = _localRadiusKm * 1000;
+    return list
+        .where((s) =>
+            CoordTransform.distanceMeters(lat, lng, s.lat, s.lng) <= limit)
+        .toList();
   }
 
   /// 渔具店 Tab 展示：同样按距离由近到远
@@ -322,7 +369,10 @@ class _SpotsScreenState extends State<SpotsScreen>
                     borderRadius: BorderRadius.circular(22),
                     child: Row(
                       children: [
-                        _tabChip(0, '本地钓场（${_venues.length}）'),
+                        // ★ v2.1.92：数字必须和列表里实际能看到的条数一致。
+                        //   之前写的是全部 venue 数，扫码时会出现「本地钓场（49）」
+                        //   而下面一条都没有 —— 用户只会觉得数据没加载出来。
+                        _tabChip(0, '本地钓场（${_visibleVenues.length}）'),
                         _tabChip(1, '野钓钓点'),
                         _tabChip(2, '渔具店（${_shops.length}）'),
                       ],
@@ -489,20 +539,13 @@ class _SpotsScreenState extends State<SpotsScreen>
         if (_myLat == null && !_locating && !_loading) _locateHint(),
         Expanded(
           child: AppRefresh(
-            onRefresh: _load,
+            // ★ v2.1.92：下拉刷新先重取定位再拉数据 —— 「本地」就是按
+            //   当前坐标算的，只刷新列表不刷坐标，跨城市后还是旧位置的结果。
+            onRefresh: _refreshVenues,
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _visibleVenues.isEmpty
-                    ? ListView(children: const [
-                        SizedBox(height: 80),
-                        Center(child: Text('暂无相关内容')),
-                        SizedBox(height: 8),
-                        Center(
-                          child: Text('点右上角「+」提交钓场，审核通过后展示',
-                              style: TextStyle(
-                                  fontSize: 12, color: AppTheme.textTertiary)),
-                        ),
-                      ])
+                    ? _venueEmpty()
                     : ListView.separated(
                         // v2.1.61：卡与卡 8 → 6，底部 16 → 12
                         padding: const EdgeInsets.only(top: 6, bottom: 12),
@@ -515,6 +558,19 @@ class _SpotsScreenState extends State<SpotsScreen>
       ],
     );
   }
+
+  /// 本地钓场下拉刷新：先重新定位，再拉数据
+  Future<void> _refreshVenues() async {
+    await _locate(silent: true);
+    await _load();
+  }
+
+  /// 本地钓场空态（独立组件，见 [VenueEmptyView]）
+  Widget _venueEmpty() => VenueEmptyView(
+        radiusKm: _localRadiusKm.toInt(),
+        hasPosition: _myLat != null && _myLng != null,
+        onSubmit: _openVenueForm,
+      );
 
   /// 图2 样式钓场卡片：封面 / 名称 / 标签 / 星级 / 地址距离 / 鱼种 / 收费 / 简介
   /// 钓点卡（列表页）
