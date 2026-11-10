@@ -201,6 +201,14 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
   /// 本轮已经用 App 自己的框补过「无线数据」这一课，避免收尾时再弹一遍
   bool _netDialogShown = false;
 
+  /// ★ v2.1.92：首次安装点「一键开启」时，网络这一项先弹的**授权确认框**
+  /// 是否已经弹过（一次引导只弹一次，避免反复打断）
+  bool _netIntroShown = false;
+
+  /// 用户在授权框里点了「不允许」→ 不算「被系统挡住」，
+  /// 文案也不能说成"连不上服务器"
+  bool _netDeclined = false;
+
   /// 等用户从系统设置回到前台（用 completer 而不是死等固定时长）
   Completer<void>? _foregroundWait;
 
@@ -513,7 +521,30 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
     setState(() =>
         _runningLabel = '正在开启 1/${_rows.length + 1}：网络');
     var netOk = true;
-    if (_net != _NetState.ok) {
+    // ★ v2.1.92：网络也走一次「授权框」。
+    //
+    //   用户反馈（截图）：相机、通知都会弹系统框，唯独网络那一项直接变成
+    //   「已完成」—— 看起来像漏了一步，「是不是没真的开」。
+    //
+    //   事实是网络没有可申请的系统权限（Android 的 INTERNET 安装即授予，
+    //   iOS 只有「是否允许使用无线数据」这个不可主动请求的框），所以这里
+    //   补一个 App 侧的确认框，把「这一项也要你点头」这件事做实：
+    //   点「允许联网」→ 立刻探一次（顺势触发 iOS 那个系统框）；
+    //   点「不允许」→ 如实标成未允许，队列继续问后面五项。
+    if (_net == _NetState.idle && !_netIntroShown) {
+      final allow = await _askNetIntro();
+      if (!mounted) return;
+      if (!allow) {
+        setState(() {
+          _net = _NetState.offline;
+          _netDeclined = true;
+        });
+        // 已经在框里把话说清楚了，收尾时就别再弹一次修复框
+        _netDialogShown = true;
+        netOk = false;
+      }
+    }
+    if (netOk && _net != _NetState.ok) {
       netOk = await _waitNetReady();
       if (!mounted) return;
       // ★ 系统压根没弹授权框 → 立刻用 App 自己的框把这件「授权」补上。
@@ -894,6 +925,8 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
 
   /// 把底层英文异常压成半句话（完整堆栈留给修复弹窗里的「诊断详情」）
   String _shortNetReason() {
+    // 用户自己在授权框里点了「不允许」：这不是故障，别拿网络异常的说法糊弄
+    if (_netDeclined) return '你选择了不允许 · 登录需要联网';
     final e = (_netResult?.tcpError ?? '').toLowerCase();
     // ENETUNREACH / no route：iOS 关掉本 App 的「无线数据」就是这个表现。
     // 说成「手机没有可用网络」会把人指去重启路由器 —— 全错。
@@ -1125,6 +1158,13 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
   /// 只处理网络这一项（用户单独点「允许」时用），不动其余权限
   Future<void> _requestNetOnly() async {
     if (_running) return;
+    // 重新点「允许」= 推翻上一次的「不允许」
+    if (_netDeclined) {
+      setState(() {
+        _netDeclined = false;
+        _net = _NetState.idle;
+      });
+    }
     setState(() {
       _running = true;
       _runningLabel = '正在请求网络权限…';
@@ -1141,6 +1181,95 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
       _running = false;
       _runningLabel = _idleRunningLabel;
     });
+  }
+
+  /// 「网络」这一项的**授权确认框**（首次安装、点一键开启时第一个出现）
+  ///
+  /// 为什么网络也要弹：其余五项都有系统框，唯独网络直接显示「已完成」，
+  /// 用户会以为这一步被跳过了。系统层面确实没有可申请的「网络权限」，
+  /// 所以由 App 自己补一个同样分量的确认，把「这一项也需要你点头」讲明白。
+  ///
+  /// 返回值：true = 允许联网（继续探测）；false = 用户选了不允许。
+  Future<bool> _askNetIntro() async {
+    _netIntroShown = true;
+    final allow = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
+        titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+        contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+        actionsPadding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+        title: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: AppTheme.primaryLight,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.wifi,
+                  size: 18, color: AppTheme.primary),
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text('“渔报”想使用网络',
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.textPrimary)),
+            ),
+          ],
+        ),
+        content: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              '登录注册、查看附近钓场、实时渔情天气都需要联网。',
+              style: TextStyle(
+                  fontSize: 12.5, height: 1.6, color: AppTheme.textPrimary),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppTheme.primarySoft,
+                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+              ),
+              child: const Text(
+                '点「允许联网」后会立即连一次服务器。'
+                '如果手机紧接着弹出「允许使用无线数据」，请点允许。',
+                style: TextStyle(
+                    fontSize: 11.5,
+                    height: 1.55,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textPrimary),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('不允许',
+                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('允许联网',
+                style:
+                    TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return false;
+    return allow ?? false;
   }
 
   /// 「无线数据」这一步的 **App 侧授权框**。
