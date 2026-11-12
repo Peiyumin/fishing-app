@@ -1,6 +1,13 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+// CupertinoAlertDialog 只用来画「系统权限框同款」的网络授权框（见 _askNetIntro）
+import 'package:flutter/cupertino.dart'
+    show
+        CupertinoAlertDialog,
+        CupertinoColors,
+        CupertinoDialogAction,
+        CupertinoTheme;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:permission_handler/permission_handler.dart';
@@ -130,12 +137,12 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
     with WidgetsBindingObserver {
   /// 顺序即展示/申请顺序：通知 → 定位 → 相机 → 麦克风 → 相册
   static const List<_PermRow> _rows = [
-    _PermRow(Permission.notification, Icons.notifications_active_outlined,
-        '通知', '私信、评论、点赞、官方公告的提醒'),
-    _PermRow(Permission.locationWhenInUse, Icons.location_on_outlined,
-        '位置信息', '附近钓友、钓点导航、本地天气与渔获定位'),
-    _PermRow(Permission.camera, Icons.camera_alt_outlined, '相机',
-        '发布渔获时拍照、录像，拍钓点'),
+    _PermRow(Permission.notification, Icons.notifications_active_outlined, '通知',
+        '私信、评论、点赞、官方公告的提醒'),
+    _PermRow(Permission.locationWhenInUse, Icons.location_on_outlined, '位置信息',
+        '附近钓友、钓点导航、本地天气与渔获定位'),
+    _PermRow(
+        Permission.camera, Icons.camera_alt_outlined, '相机', '发布渔获时拍照、录像，拍钓点'),
     _PermRow(Permission.microphone, Icons.mic_none_outlined, '麦克风',
         '录像时录制现场声音（不开也能拍照）'),
     _PermRow(Permission.photos, Icons.photo_library_outlined, '照片与视频',
@@ -263,7 +270,8 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
       }
       return;
     }
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
       _leftForeground = true;
       return;
     }
@@ -303,10 +311,12 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
     try {
       final t = timeout;
       r = await (widget.probeNet ??
-          () => t == null ? NetDiag.run() : NetDiag.run(
-                tcpTimeout: t,
-                httpTimeout: t,
-              ))();
+          () => t == null
+              ? NetDiag.run()
+              : NetDiag.run(
+                  tcpTimeout: t,
+                  httpTimeout: t,
+                ))();
     } catch (e) {
       r = NetDiagResult(
         tcpOk: false,
@@ -449,7 +459,8 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
     final forced = widget.debugGrantPerms;
     for (final r in _rows) {
       if (forced != null) {
-        map[r.perm] = forced ? PermissionStatus.granted : PermissionStatus.denied;
+        map[r.perm] =
+            forced ? PermissionStatus.granted : PermissionStatus.denied;
         continue;
       }
       try {
@@ -518,8 +529,7 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
     // ── 第 1 项：网络 ──
     // 已经确认连通就不重复探（省一次往返，也不重复打扰系统弹窗）；
     // 之前失败或从没探过则重探 —— 用户可能刚去系统设置里开了无线数据。
-    setState(() =>
-        _runningLabel = '正在开启 1/${_rows.length + 1}：网络');
+    setState(() => _runningLabel = '正在开启 1/${_rows.length + 1}：网络');
     var netOk = true;
     // ★ v2.1.92：网络也走一次「授权框」。
     //
@@ -529,9 +539,17 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
     //   事实是网络没有可申请的系统权限（Android 的 INTERNET 安装即授予，
     //   iOS 只有「是否允许使用无线数据」这个不可主动请求的框），所以这里
     //   补一个 App 侧的确认框，把「这一项也要你点头」这件事做实：
-    //   点「允许联网」→ 立刻探一次（顺势触发 iOS 那个系统框）；
+    //   点「允许」→ 立刻探一次（顺势触发 iOS 那个系统框）；
     //   点「不允许」→ 如实标成未允许，队列继续问后面五项。
-    if (_net == _NetState.idle && !_netIntroShown) {
+    //
+    // ★ v2.1.93：触发条件去掉了 `_net == _NetState.idle`。
+    //
+    //   进这个页时后台已经在探网络（[_probe]），用户点按钮时 `_net` 通常已经是
+    //   `checking` / `offline` 了 —— 旧条件于是直接跳过授权框，紧接着
+    //   `_waitNetReady()` 失败、弹出「无线数据还没有授权」那个修复框。
+    //   用户看到的就是「首次安装没有授权框，只有一张报错卡」（图二）。
+    //   现在只要本轮没问过、也没被拒过，就先问这一下。
+    if (!_netIntroShown && !_netDeclined) {
       final allow = await _askNetIntro();
       if (!mounted) return;
       if (!allow) {
@@ -547,20 +565,13 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
     if (netOk && _net != _NetState.ok) {
       netOk = await _waitNetReady();
       if (!mounted) return;
-      // ★ 系统压根没弹授权框 → 立刻用 App 自己的框把这件「授权」补上。
+      // ★ v2.1.93：**不再**在这里自动弹「无线数据还没有授权」的修复框。
       //
-      //   用户要的是「点了一键开启 → 有一个授权界面 → 点完允许 → 显示已完成」。
-      //   系统那个框我们没权力让它再弹（iOS 一个 App 只问一次），但「有一个
-      //   授权界面」这件事必须做到 —— 否则用户看到的就是截图里那样：
-      //   「请求中」一直转，什么都没有，也不知道该点什么。
-      //
-      //   有 [_promptSeen] 做区分，所以不会再犯 v2.1.66 的错（那时系统框
-      //   正在屏幕上，我们却抢先弹自己的框，看起来像"还没点就说我错了"）：
-      //   见过的（用户正在读框）**绝不打扰**，继续等下一位。
-      if (!netOk && !_promptSeen) {
-        netOk = await _askNetAuthorize();
-        if (!mounted) return;
-      }
+      //   首次安装时那个框会在用户刚点完「允许」之后立刻盖上来，说的却是
+      //   「系统没有弹出授权框，你之前选了不允许」—— 用户刚点完允许，
+      //   等于当面说他说谎（用户截图图二就是这么来的，明确要求去掉）。
+      //   网络没通就如实标「未连通」，右侧留「去修复」按钮让用户自己决定
+      //   要不要看排查步骤；队列继续往下问，不打断。
     }
     if (netOk) {
       // ★ 用户要的正是这一拍：「点完系统弹窗 → 这一项显示已完成 → 再问下一项」。
@@ -587,8 +598,7 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
       setState(() {
         _activePerm = r.perm;
         final i = _rows.indexOf(r);
-        _runningLabel =
-            '正在开启 ${i + 2}/${_rows.length + 1}：${r.title}';
+        _runningLabel = '正在开启 ${i + 2}/${_rows.length + 1}：${r.title}';
       });
       try {
         await r.perm.request();
@@ -801,10 +811,9 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
                         foregroundColor: Colors.white,
                         // 「正在开启 2/6：通知」这类进度文本必须看得清：
                         // 默认的 disabled 前景是灰的，压在深底上几乎读不出来。
-                        disabledBackgroundColor: (netBlocked
-                                ? AppTheme.danger
-                                : AppTheme.primary)
-                            .withOpacity(0.72),
+                        disabledBackgroundColor:
+                            (netBlocked ? AppTheme.danger : AppTheme.primary)
+                                .withOpacity(0.72),
                         disabledForegroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                             borderRadius:
@@ -820,9 +829,7 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
                           : Text(
                               allDone
                                   ? '进入渔报'
-                                  : (netBlocked
-                                      ? '网络未通，点这里修复'
-                                      : '一键开启全部权限'),
+                                  : (netBlocked ? '网络未通，点这里修复' : '一键开启全部权限'),
                               style: const TextStyle(
                                   fontSize: 15, fontWeight: FontWeight.w700)),
                     ),
@@ -841,9 +848,8 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
                           // 网络确实不通时，文案改成「仍要先进入」：
                           // 不能因为网络问题把用户永久关在引导页里
                           onPressed: _done,
-                          child: Text(allDone
-                              ? '完成'
-                              : (netBlocked ? '仍要先进入' : '以后再说')),
+                          child: Text(
+                              allDone ? '完成' : (netBlocked ? '仍要先进入' : '以后再说')),
                         ),
                       ),
                     ],
@@ -904,16 +910,14 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
                 '${_rows.length + 1} 项权限已全部开启',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                    fontSize: 13.5,
-                    height: 1.7,
-                    color: AppTheme.textSecondary),
+                    fontSize: 13.5, height: 1.7, color: AppTheme.textSecondary),
               ),
               const SizedBox(height: 10),
               // 不用转圈：这一页只停 1.2 秒，转圈既看不清，还会在
               // widget 测试收尾时留下一个仍在跑的 ticker（测试直接失败）。
               const Text('正在进入渔报…',
-                  style: TextStyle(
-                      fontSize: 12.5, color: AppTheme.textSecondary)),
+                  style:
+                      TextStyle(fontSize: 12.5, color: AppTheme.textSecondary)),
             ],
           ),
         ),
@@ -935,9 +939,7 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
         e.contains('permission denied')) {
       // ★ 这里的路径必须分平台：iOS 那个开关在 App 自己的设置页里叫
       //   「无线数据」，安卓叫「流量使用」，写错一条就等于把人指进死胡同。
-      return Platform.isIOS
-          ? '被系统禁网：设置 → 渔报 → 无线数据'
-          : '被系统限网：设置 → 应用 → 渔报';
+      return Platform.isIOS ? '被系统禁网：设置 → 渔报 → 无线数据' : '被系统限网：设置 → 应用 → 渔报';
     }
     if (e.contains('timed out') || e.contains('timeout')) {
       return '连接超时，当前网络可能拦了端口';
@@ -1085,7 +1087,8 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
                           style: TextStyle(
                               fontSize: 11.5,
                               height: 1.35,
-                              color: bad || warn ? tone : AppTheme.textSecondary)),
+                              color:
+                                  bad || warn ? tone : AppTheme.textSecondary)),
                     ],
                   ),
                 ),
@@ -1169,213 +1172,107 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
       _running = true;
       _runningLabel = '正在请求网络权限…';
     });
-    final ok = await _waitNetReady();
+    await _waitNetReady();
     if (!mounted) return;
-    // 和「一键开启」保持一致：系统没弹授权框时，用 App 的框补上这一步，
-    // 不然用户点完「允许」什么都没发生，只会觉得这个按钮坏了。
-    if (!ok && !_promptSeen && !_netDialogShown) {
-      await _askNetAuthorize();
-      if (!mounted) return;
-    }
+    // ★ v2.1.93：不再自动弹「无线数据还没有授权」的修复框（用户明确要求去掉）。
+    //   没通就如实标「未连通」，右侧留「去修复」让用户自己点。
     setState(() {
       _running = false;
       _runningLabel = _idleRunningLabel;
     });
   }
 
-  /// 「网络」这一项的**授权确认框**（首次安装、点一键开启时第一个出现）
+  /// 「网络」这一项的**授权框**（首次安装点「一键开启」时第一个出现）
   ///
-  /// 为什么网络也要弹：其余五项都有系统框，唯独网络直接显示「已完成」，
-  /// 用户会以为这一步被跳过了。系统层面确实没有可申请的「网络权限」，
-  /// 所以由 App 自己补一个同样分量的确认，把「这一项也需要你点头」讲明白。
+  /// ★ v2.1.93：改成和系统权限框**同一个样子**。
+  ///
+  ///   用户原话：「我要图三那样的」——图三是 iOS 相机那个系统框：白底圆角、
+  ///   标题加粗居中、一句说明、下面一条细分割线、左右两个蓝色按钮
+  ///   「不允许 / 允许」。所以这里不用 App 自己的卡片式样式（那看着像
+  ///   「出错了」的提示），直接用 CupertinoAlertDialog 画一个同款。
+  ///
+  ///   网络本身没有可申请的系统权限（安卓 INTERNET 安装即授予，iOS 的
+  ///   「允许使用无线数据」由系统在 App 首次联网时自己决定弹不弹、
+  ///   一个 App 只问一次），所以这一框由 App 代劳 —— 但样式、文案、按钮
+  ///   顺序都跟系统一致，用户不会觉得「这里少了一步」。
   ///
   /// 返回值：true = 允许联网（继续探测）；false = 用户选了不允许。
   Future<bool> _askNetIntro() async {
     _netIntroShown = true;
+    final ios = Theme.of(context).platform == TargetPlatform.iOS;
     final allow = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.surface,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
-        titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-        contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-        actionsPadding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
-        title: Row(
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: AppTheme.primaryLight,
-                borderRadius: BorderRadius.circular(10),
+      builder: (ctx) {
+        if (ios) {
+          // iOS：系统同款。标题 17pt 半粗、正文 13pt、按钮蓝色，
+          // 全部由 CupertinoAlertDialog 自己按 HIG 给，不要覆盖。
+          //
+          //  ★ 必须把 primaryColor 钉成 iOS 系统蓝：
+          //    这个 App 的品牌主色是近黑（AppTheme.primary = #07080C），
+          //    MaterialApp 会把它塞进 CupertinoTheme 的 primaryColor，
+          //    CupertinoDialogAction 的按钮于是变黑 —— 和系统框差得远。
+          return CupertinoTheme(
+            data: CupertinoTheme.of(ctx)
+                .copyWith(primaryColor: CupertinoColors.activeBlue),
+            child: CupertinoAlertDialog(
+              title: const Text('“渔报”想使用无线数据'),
+              content: const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text('用于登录注册、查看附近钓场和实时渔情天气。'),
               ),
-              child: const Icon(Icons.wifi,
-                  size: 18, color: AppTheme.primary),
+              actions: [
+                CupertinoDialogAction(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('不允许'),
+                ),
+                CupertinoDialogAction(
+                  key: const ValueKey('net-allow'),
+                  isDefaultAction: true,
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('允许'),
+                ),
+              ],
             ),
-            const SizedBox(width: 10),
-            const Expanded(
-              child: Text('“渔报”想使用网络',
-                  style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                      color: AppTheme.textPrimary)),
-            ),
-          ],
-        ),
-        content: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              '登录注册、查看附近钓场、实时渔情天气都需要联网。',
+          );
+        }
+        // 安卓：保持 Material，但按钮文案与顺序跟系统一致
+        return AlertDialog(
+          backgroundColor: AppTheme.surface,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
+          titlePadding: const EdgeInsets.fromLTRB(22, 22, 22, 0),
+          contentPadding: const EdgeInsets.fromLTRB(22, 10, 22, 0),
+          actionsPadding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
+          title: const Text('“渔报”想使用无线数据',
+              textAlign: TextAlign.center,
               style: TextStyle(
-                  fontSize: 12.5, height: 1.6, color: AppTheme.textPrimary),
+                  fontSize: 16.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textPrimary)),
+          content: const Text('用于登录注册、查看附近钓场和实时渔情天气。',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 13, height: 1.5, color: AppTheme.textPrimary)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('不允许',
+                  style:
+                      TextStyle(fontSize: 14, color: AppTheme.textSecondary)),
             ),
-            const SizedBox(height: 10),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: AppTheme.primarySoft,
-                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-              ),
-              child: const Text(
-                '点「允许联网」后会立即连一次服务器。'
-                '如果手机紧接着弹出「允许使用无线数据」，请点允许。',
-                style: TextStyle(
-                    fontSize: 11.5,
-                    height: 1.55,
-                    fontWeight: FontWeight.w600,
-                    color: AppTheme.textPrimary),
-              ),
+            TextButton(
+              key: const ValueKey('net-allow'),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('允许',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
             ),
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('不允许',
-                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('允许联网',
-                style:
-                    TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-          ),
-        ],
-      ),
+        );
+      },
     );
     if (!mounted) return false;
     return allow ?? false;
-  }
-
-  /// 「无线数据」这一步的 **App 侧授权框**。
-  ///
-  /// 用户要的是「点了一键开启 → 弹一个授权界面 → 点完允许 → 这一项已完成」。
-  /// iOS 那个系统框我们没法让它再弹（一个 App 只问一次，记成「不允许」之后
-  /// 任何 API 都不会再触发），但「有一个授权界面」这件事必须做到 ——
-  /// 否则用户在「请求中」里干等，既不知道发生了什么，也不知道该点什么。
-  ///
-  /// 框里给的是**唯一能真正解决**的那条路：跳到系统的「渔报」设置页。
-  /// 用户去打开、切回来，这里会一直等到他回来再重探，通了就直接接上
-  /// 「网络已完成 · 1/6 → 2/6」的队列。
-  Future<bool> _askNetAuthorize() async {
-    _netDialogShown = true;
-    final path = netFixSteps().first;
-    final act = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.surface,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
-        titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-        contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-        actionsPadding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
-        title: Row(
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: AppTheme.warningLight,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(Icons.wifi_tethering,
-                  size: 18, color: AppTheme.warning),
-            ),
-            const SizedBox(width: 10),
-            const Expanded(
-              child: Text('无线数据还没有授权',
-                  style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                      color: AppTheme.textPrimary)),
-            ),
-          ],
-        ),
-        content: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              '系统没有弹出「允许渔报使用无线数据」。'
-              '这个开关一个 App 只问一次 —— 之前选过「不允许」之后，'
-              '系统就不会再问，只能手动打开：',
-              style: TextStyle(
-                  fontSize: 12.5, height: 1.6, color: AppTheme.textPrimary),
-            ),
-            const SizedBox(height: 10),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: AppTheme.primarySoft,
-                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-              ),
-              child: Text(
-                path,
-                style: const TextStyle(
-                    fontSize: 12.5,
-                    height: 1.5,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.textPrimary),
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              '打开后回到这里，会自动重新检测，通了这一项就变「已完成」。',
-              style: TextStyle(
-                  fontSize: 11.5, height: 1.5, color: AppTheme.textSecondary),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop('skip'),
-            child: const Text('继续开启其他权限',
-                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop('settings'),
-            child: const Text('去打开设置',
-                style:
-                    TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-          ),
-        ],
-      ),
-    );
-    if (!mounted) return false;
-    if (act != 'settings') return false;
-    await _openSettingsThenWait();
-    if (!mounted) return false;
-    setState(() => _runningLabel = '正在开启 1/${_rows.length + 1}：网络');
-    await _waitNetReady();
-    if (!mounted) return false;
-    return _net == _NetState.ok || _net == _NetState.serverIssue;
   }
 
   /// 打开系统设置，**等用户回来**再往下走。
@@ -1446,8 +1343,8 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
                 color: AppTheme.dangerLight,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(Icons.wifi_off,
-                  size: 18, color: AppTheme.danger),
+              child:
+                  const Icon(Icons.wifi_off, size: 18, color: AppTheme.danger),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -1484,8 +1381,7 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
               if (mounted) await _reprobe();
             },
             child: const Text('去打开设置',
-                style:
-                    TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
           ),
         ],
       ),
@@ -1519,8 +1415,8 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
                 color: AppTheme.dangerLight,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(Icons.wifi_off,
-                  size: 18, color: AppTheme.danger),
+              child:
+                  const Icon(Icons.wifi_off, size: 18, color: AppTheme.danger),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -1566,7 +1462,9 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
                 child: SelectableText(
                   _netResult?.summary ?? '尚未检测',
                   style: const TextStyle(
-                      fontSize: 10.5, height: 1.5, color: AppTheme.textSecondary),
+                      fontSize: 10.5,
+                      height: 1.5,
+                      color: AppTheme.textSecondary),
                 ),
               ),
             ],
@@ -1586,12 +1484,13 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
           TextButton(
             onPressed: () async {
               Navigator.of(ctx).pop();
-              await _openSettings();
+              // 等用户真的从设置切回来再重探：只睡固定时长的话，
+              // 他还在菜单里翻，我们在后台探多少次都是失败。
+              await _openSettingsThenWait();
               await _reprobe();
             },
             child: const Text('去系统设置',
-                style: TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w700)),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
           ),
           TextButton(
             onPressed: () async {
@@ -1599,8 +1498,7 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
               await _reprobe();
             },
             child: const Text('重新检测',
-                style: TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w700)),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
           ),
         ],
       ),
@@ -1620,9 +1518,8 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
         color: active ? AppTheme.primarySoft : AppTheme.surface,
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         border: Border.all(
-            color: active
-                ? AppTheme.primary.withOpacity(0.45)
-                : AppTheme.border),
+            color:
+                active ? AppTheme.primary.withOpacity(0.45) : AppTheme.border),
       ),
       child: Row(
         children: [
@@ -1660,34 +1557,32 @@ class _PermissionOnboardScreenState extends State<PermissionOnboardScreen>
                     fontWeight: FontWeight.w700,
                     color: AppTheme.primary))
           else if (granted)
-            const Icon(Icons.check_circle,
-                color: AppTheme.primary, size: 21)
+            const Icon(Icons.check_circle, color: AppTheme.primary, size: 21)
           else
             TextButton(
-                onPressed: (_running || _reading)
-                    ? null
-                    : () async {
-                        if (blocked) {
-                          await _openSettings();
-                          return;
-                        }
-                        try {
-                          await r.perm.request();
-                        } catch (_) {}
-                        if (mounted) await _refresh();
-                      },
-                style: TextButton.styleFrom(
-                  foregroundColor:
-                      blocked ? AppTheme.danger : AppTheme.primary,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: Text(blocked ? '去设置' : '允许',
-                    style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w700)),
+              onPressed: (_running || _reading)
+                  ? null
+                  : () async {
+                      if (blocked) {
+                        await _openSettings();
+                        return;
+                      }
+                      try {
+                        await r.perm.request();
+                      } catch (_) {}
+                      if (mounted) await _refresh();
+                    },
+              style: TextButton.styleFrom(
+                foregroundColor: blocked ? AppTheme.danger : AppTheme.primary,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
+              child: Text(blocked ? '去设置' : '允许',
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w700)),
+            ),
         ],
       ),
     );
