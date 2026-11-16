@@ -7,6 +7,8 @@ import '../models/fishing_species.dart';
 import '../models/weather_forecast.dart';
 import '../utils/json_num.dart';
 import 'api_config.dart';
+import 'cma_cn_weather.dart';
+import 'geo_place.dart';
 
 /// 钓鱼天气服务
 /// 数据源：Open-Meteo 免费接口（无需 API Key）
@@ -42,7 +44,12 @@ class WeatherService {
   ///   `api.open-meteo.com` 在部分移动网络（尤其 5G）下 TCP 能连上、TLS 却
   ///   一直握不上手 —— 典型表现就是等到 8 秒超时、界面始终没有任何结论。
   ///   现在超时缩短，失败立刻走自家后端代理，中间不再白等。
-  static const Duration _timeout = Duration(seconds: 5);
+  ///
+  /// ★ v2.1.96：5 秒 → 4 秒。失败后还要依次过「后端代理」和「国内气象局」，
+  ///   三级串行的总时长直接决定用户干等多久。实测 Open-Meteo 正常响应
+  ///   0.8~2.0 秒，4 秒足够判定「这条链路已经废了」，把剩余时间让给兜底。
+  ///   再压到 3 秒以内会误伤弱网（3G / 地铁）下的正常请求。
+  static const Duration _timeout = Duration(seconds: 4);
 
   /// 走自家后端 `/tile-proxy` 中转时的上限（服务端自己抓上游，通常 1~3 秒）
   static const Duration _proxyTimeout = Duration(seconds: 10);
@@ -52,6 +59,16 @@ class WeatherService {
 
   /// 最近一次拉取是不是靠后端代理救回来的（诊断用）
   static bool lastViaProxy = false;
+
+  /// 最近一次数据是谁给的：`open-meteo`（含后端代理）或 `cma-cn`（中国气象局）
+  ///
+  /// ★ v2.1.96：境外源在部分移动网络下会被卡死，现在退到国内源兜底。
+  ///   界面必须能说明「这份数是谁给的」—— 逐小时是国内源插值出来的，
+  ///   不能让用户以为还是原来那条逐时曲线。
+  static String lastSource = 'open-meteo';
+
+  /// 当前这份数据是不是「降级」的国内源（逐小时为插值、气压趋势缺失）
+  static bool get lastIsDomestic => lastSource == 'cma-cn';
 
   /// 直连连续失败次数 / 最近一次失败时间 —— 用来做短期熔断。
   ///
@@ -141,7 +158,9 @@ class WeatherService {
     _directDownAt = null;
     lastError = null;
     lastViaProxy = false;
+    lastSource = 'open-meteo';
     clientOverride = null;
+    CmaCnWeatherService.reset();
   }
 
   /// 缓存是否仍在有效期内（20 分钟内）。无效 / 缺时间戳一律视为过期。
@@ -362,24 +381,65 @@ class WeatherService {
       'uv_index_max,sunrise,sunset'
       '&timezone=auto&forecast_days=7',
     );
-    final res = await _get(uri);
-    if (res.statusCode != 200) {
-      throw Exception('天气获取失败：HTTP ${res.statusCode}');
+    try {
+      final res = await _get(uri);
+      if (res.statusCode != 200) {
+        throw Exception('天气获取失败：HTTP ${res.statusCode}');
+      }
+      final json = jsonDecode(res.body) as Map<String, dynamic>;
+      final cma = await cmaF;
+      final bundle = WeatherBundle.fromOpenMeteo(lat, lng, json,
+          ensembleJson: cma);
+      lastSource = 'open-meteo';
+      _memory = bundle;
+      _memoryAt = DateTime.now();
+      await _saveCache(_fcCacheKey, {
+        'lat': lat,
+        'lng': lng,
+        'ts': DateTime.now().millisecondsSinceEpoch,
+        'json': json,
+        'cma': cma,
+      });
+      return bundle;
+    } catch (e) {
+      // ★ v2.1.96：境外源整条链（直连 + 后端代理）都不通时，改问国内。
+      //   国内源只给实况 + 7 天日预报，逐小时是插值的（见 CmaCnWeatherService），
+      //   但用户至少能看到今天的温度、气压和未来一周，而不是一屏「获取中」。
+      final fb = await _domesticFallback(lat, lng);
+      if (fb != null) return fb;
+      rethrow;
     }
-    final json = jsonDecode(res.body) as Map<String, dynamic>;
-    final cma = await cmaF;
-    final bundle = WeatherBundle.fromOpenMeteo(lat, lng, json,
-        ensembleJson: cma);
-    _memory = bundle;
-    _memoryAt = DateTime.now();
-    await _saveCache(_fcCacheKey, {
-      'lat': lat,
-      'lng': lng,
-      'ts': DateTime.now().millisecondsSinceEpoch,
-      'json': json,
-      'cma': cma,
-    });
-    return bundle;
+  }
+
+  /// 试一次国内源；成功返回 bundle，失败返回 null
+  ///
+  /// 地名来自 [GeoPlace.memo]：用户通常已经定位过（首页顶部就显示「禹州」）。
+  /// 没有地名就没法查气象局站号，直接放弃 —— 不做无谓的请求。
+  static Future<WeatherBundle?> _domesticFallback(
+    double lat,
+    double lng,
+  ) async {
+    final gp = GeoPlace.memo;
+    if (gp == null || gp.isEmpty) return null;
+
+    // 先用区县名查（禹州 → 57088，比地级市更准）；很多小县没有自己的
+    // 地面站，查不到时退回地级市（许昌），再不行才放弃。
+    final tries = <String>[
+      if (gp.district.isNotEmpty) gp.district,
+      if (gp.city.isNotEmpty && gp.city != gp.district) gp.city,
+      if (gp.short.isNotEmpty && gp.short != gp.district) gp.short,
+    ];
+    for (final name in tries) {
+      final b = await CmaCnWeatherService.fetchBundle(lat, lng, placeName: name);
+      if (b == null) continue;
+      lastSource = 'cma-cn';
+      lastViaProxy = false;
+      lastError = null;
+      _memory = b;
+      _memoryAt = DateTime.now();
+      return b;
+    }
+    return null;
   }
 
   /// 拉一份「往前带 N 天」的逐时包（v2.1.43）
