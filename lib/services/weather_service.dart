@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/fishing_species.dart';
 import '../models/weather_forecast.dart';
 import '../utils/json_num.dart';
+import 'api_config.dart';
 
 /// 钓鱼天气服务
 /// 数据源：Open-Meteo 免费接口（无需 API Key）
@@ -23,10 +24,49 @@ class WeatherService {
   static const String _base = 'https://api.open-meteo.com/v1/forecast';
 
   /// 复用同一个连接（省掉每次 TLS 握手，冷启动快 200~400ms）
-  static final http.Client _client = http.Client();
+  static final http.Client _defaultClient = http.Client();
 
-  /// 单次请求上限：超时就走缓存兜底，绝不让页面一直转圈
-  static const Duration _timeout = Duration(seconds: 8);
+  /// 测试专用：替换底层 HTTP 客户端（生产路径永远是 null）。
+  ///
+  /// v2.1.95 的「直连失败 → 走自家代理」是纯网络路径，宿主机上没法真的把
+  /// open-meteo 打挂，只能靠注入的 MockClient 造出「直连抛异常 / 代理返回 200」，
+  /// 否则这条兜底逻辑没有任何测试保护。
+  static http.Client? clientOverride;
+
+  static http.Client get _client => clientOverride ?? _defaultClient;
+
+  /// 单次直连请求上限。
+  ///
+  /// ★ v2.1.95：8 秒 → 5 秒，并把「直连失败」当信号而不是终局（见 [_get]）。
+  ///   用户反馈（截图）卡在「获取中 / 正在获取当前位置的天气…」不动：
+  ///   `api.open-meteo.com` 在部分移动网络（尤其 5G）下 TCP 能连上、TLS 却
+  ///   一直握不上手 —— 典型表现就是等到 8 秒超时、界面始终没有任何结论。
+  ///   现在超时缩短，失败立刻走自家后端代理，中间不再白等。
+  static const Duration _timeout = Duration(seconds: 5);
+
+  /// 走自家后端 `/tile-proxy` 中转时的上限（服务端自己抓上游，通常 1~3 秒）
+  static const Duration _proxyTimeout = Duration(seconds: 10);
+
+  /// 最近一次拉取失败的原因（给界面显示「为什么没有天气」用；成功后清空）
+  static String? lastError;
+
+  /// 最近一次拉取是不是靠后端代理救回来的（诊断用）
+  static bool lastViaProxy = false;
+
+  /// 直连连续失败次数 / 最近一次失败时间 —— 用来做短期熔断。
+  ///
+  /// 为什么要熔断：`api.open-meteo.com` 被卡住时，每次刷新都要先白等 5 秒
+  /// 才轮到代理，用户体感就是「怎么永远在转圈」。连续失败两次、且发生在
+  /// 10 分钟内，就直接走代理；10 分钟后自动再试一次直连（网络可能已经恢复）。
+  static int _directFails = 0;
+  static DateTime? _directDownAt;
+
+  static bool get _skipDirect {
+    final at = _directDownAt;
+    if (_directFails < 2 || at == null) return false;
+    return DateTime.now().difference(at).inMinutes < 10;
+  }
+
 
   static const String _curCacheKey = 'wx_current_v1';
   static const String _fcCacheKey = 'wx_forecast_v1';
@@ -90,10 +130,18 @@ class WeatherService {
   }
 
   /// 供测试清理（避免用例之间互相污染）
+  ///
+  /// v2.1.95 起连「直连熔断状态 / 失败原因」一起复位：否则上一个用例把
+  /// 直连打成「连续失败」后，下一个用例会从熔断态开始，测不到直连分支。
   static void clearMemory() {
     _memory = null;
     _memoryAt = null;
     _memoryCurrent = null;
+    _directFails = 0;
+    _directDownAt = null;
+    lastError = null;
+    lastViaProxy = false;
+    clientOverride = null;
   }
 
   /// 缓存是否仍在有效期内（20 分钟内）。无效 / 缺时间戳一律视为过期。
@@ -107,6 +155,83 @@ class WeatherService {
   /// 测试专用：非空时替代真实的网络拉取，避免测试环境联网超时。
   static Future<WeatherBundle> Function(double lat, double lng)?
       testForecastOverride;
+
+  /// 统一的取数通道：**先直连，失败立刻退到自家后端代理**。
+  ///
+  /// 背景（v2.1.95，用户截图反馈「天气一直获取中」）：
+  ///   Open-Meteo 是境外服务（`51.81.167.44`，OVH 加拿大）。在部分移动网络下
+  ///   域名能解析、TCP 也建得起来，但 TLS 握手会被卡住 —— Dart 侧看到的就是
+  ///   一个一直不返回的请求，直到超时才抛错。用户界面此时既没有数、也没有
+  ///   「失败」的结论，只能看到「获取中」永远转下去。
+  ///
+  /// 所以这里不再把「直连超时」当终局：
+  ///   1. 直连（5 秒）→ 成功后清空熔断计数；
+  ///   2. 失败 → 同一个 URL 交给后端 `/tile-proxy`（服务端 PHP 8.3 自带现代
+  ///      根证书，走机房出口，国内可达性远好于手机蜂窝网），10 秒；
+  ///   3. 两条都不通才抛错，并把原因记进 [lastError]，界面据此显示重试入口。
+  ///
+  /// 熔断：连续两次直连失败且发生在 10 分钟内，直接跳过第 1 步，省掉每次
+  /// 5 秒的白等；10 分钟后自动再试直连。
+  static Future<http.Response> _get(Uri upstream, {bool quiet = false}) async {
+    Object? err;
+    if (!_skipDirect) {
+      try {
+        final res = await _client.get(upstream).timeout(_timeout);
+        if (res.statusCode == 200) {
+          _directFails = 0;
+          _directDownAt = null;
+          if (!quiet) {
+            lastViaProxy = false;
+            lastError = null;
+          }
+          return res;
+        }
+        err = 'HTTP ${res.statusCode}';
+      } catch (e) {
+        err = e;
+      }
+      _directFails++;
+      _directDownAt = DateTime.now();
+    }
+
+    if (ApiConfig.enabled) {
+      try {
+        final proxy = Uri.parse(
+            ApiConfig.tileProxyBase + Uri.encodeComponent(upstream.toString()));
+        final res = await _client.get(proxy).timeout(_proxyTimeout);
+        if (res.statusCode == 200) {
+          if (!quiet) {
+            lastViaProxy = true;
+            lastError = null;
+          }
+          return res;
+        }
+        err = '代理 HTTP ${res.statusCode}';
+      } catch (e) {
+        err = e;
+      }
+    }
+
+    final reason = _plainErr(err);
+    if (!quiet) lastError = reason;
+    throw Exception('天气获取失败：$reason');
+  }
+
+  /// 把原始异常压成一句人能看懂的短话（界面只用来显示一行小字）
+  static String _plainErr(Object? e) {
+    final s = '$e'.toLowerCase();
+    if (s.contains('timeout') || s.contains('timed out')) return '连接超时';
+    if (s.contains('handshake') || s.contains('certificate')) {
+      return '安全连接失败';
+    }
+    if (s.contains('failed host lookup') || s.contains('socketexception')) {
+      return '网络不可达';
+    }
+    if (s.contains('http 4') || s.contains('http 5')) {
+      return '数据服务异常';
+    }
+    return '网络不可达';
+  }
 
   /// 第二模型（中国气象局 GRAPES）逐时温压序列。
   /// 拿不到时返回 null，主流程自动退化为单模型，不影响可用性。
@@ -122,7 +247,7 @@ class WeatherService {
         '&models=cma_grapes_global'
         '&forecast_days=$days&timezone=auto',
       );
-      final res = await _client.get(uri).timeout(_timeout);
+      final res = await _get(uri, quiet: true);
       if (res.statusCode != 200) return null;
       return jsonDecode(res.body) as Map<String, dynamic>;
     } catch (_) {
@@ -237,9 +362,9 @@ class WeatherService {
       'uv_index_max,sunrise,sunset'
       '&timezone=auto&forecast_days=7',
     );
-    final res = await _client.get(uri).timeout(_timeout);
+    final res = await _get(uri);
     if (res.statusCode != 200) {
-      throw Exception('天气获取失败：${res.statusCode}');
+      throw Exception('天气获取失败：HTTP ${res.statusCode}');
     }
     final json = jsonDecode(res.body) as Map<String, dynamic>;
     final cma = await cmaF;
@@ -284,7 +409,7 @@ class WeatherService {
         '&timezone=auto&forecast_days=7'
         '&past_days=${pastDays.clamp(1, 92)}',
       );
-      final res = await _client.get(uri).timeout(_timeout);
+      final res = await _get(uri, quiet: true);
       if (res.statusCode != 200) return null;
       final json = jsonDecode(res.body) as Map<String, dynamic>;
       final b = WeatherBundle.fromOpenMeteo(lat, lng, json);
