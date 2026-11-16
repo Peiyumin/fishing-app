@@ -87,6 +87,13 @@ class GeoPlace {
   /// 首帧就能把地址画出来，不用等一次 await 后再 setState 补一帧。
   static GeoPlace? get memo => _memo;
 
+  /// 测试专用：直接塞一份地名进内存（生产路径永远不调）
+  ///
+  /// 国内天气源（[CmaCnWeatherService]）是按**地名**查气象局站号的，
+  /// 单测里必须能控制「现在是禹州」还是「没有地名」，否则那条降级分支
+  /// 在宿主机上根本走不到 —— 真实定位在测试环境里拿不到。
+  static void setMemoForTest(GeoPlace? p) => _memo = p;
+
   /// 启动页阶段预热：只读本地缓存（12h 内有效），不碰 GPS、不联网
   ///
   /// ★ 为什么要在启动页做：用户的要求是「进首页定位地址就要显示出来」。
