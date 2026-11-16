@@ -46,6 +46,20 @@ class HomeWeatherHero extends StatelessWidget {
   /// 潮汐估算（仅海钓用；没拿到坐标时为 null → 第三格显示「--」）
   final TideInfo? tide;
 
+  /// ★ v2.1.95：**拉取失败**要看得见，不能一直「获取中」。
+  ///
+  /// 用户截图反馈：天气卡停在「获取中 / 正在获取当前位置的天气…」不动。
+  /// 真因是数据源（open-meteo，境外）在部分移动网络下 TLS 握手被卡住，
+  /// 而卡片的无数据态只有一种画法 —— 用户根本分不清「还在拉」和「已经失败」。
+  /// 现在 [failed] 为 true 时右侧换成可点的「重试」，并给出失败原因。
+  final bool failed;
+
+  /// 失败原因（一句话，来自 `WeatherService.lastError`）
+  final String? failReason;
+
+  /// 点「重试」
+  final VoidCallback? onRetry;
+
   /// ★ v2.1.90：嵌在首页头部大块里用（首页改版，头部与卡片整体滚动）。
   ///
   /// 为 true 时**不画自己的 headerGradient、也不留底部 8px 外距**，
@@ -62,6 +76,9 @@ class HomeWeatherHero extends StatelessWidget {
     this.mode = HomeMode.taiDiao,
     this.tide,
     this.flat = false,
+    this.failed = false,
+    this.failReason,
+    this.onRetry,
   });
 
   @override
@@ -213,13 +230,41 @@ class HomeWeatherHero extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.end,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text(
-                                has ? w.fishIndex : '获取中',
-                                style: TextStyle(
-                                    fontSize: narrow ? 14 : 15,
-                                    fontWeight: FontWeight.w700,
-                                    color: scoreColor),
-                              ),
+                              if (!has && failed)
+                                GestureDetector(
+                                  onTap: onRetry,
+                                  behavior: HitTestBehavior.opaque,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 5),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.16),
+                                      borderRadius:
+                                          BorderRadius.circular(999),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.refresh_rounded,
+                                            size: 14, color: Colors.white),
+                                        const SizedBox(width: 3),
+                                        Text('重试',
+                                            style: TextStyle(
+                                                fontSize: narrow ? 12.5 : 13.5,
+                                                fontWeight: FontWeight.w700,
+                                                color: Colors.white)),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                              else
+                                Text(
+                                  has ? w.fishIndex : '获取中',
+                                  style: TextStyle(
+                                      fontSize: narrow ? 14 : 15,
+                                      fontWeight: FontWeight.w700,
+                                      color: scoreColor),
+                                ),
                               // 窄屏把「钓鱼指数」缩成「指数」：省的 2 个字正好
                               // 换回地名不被截断（320 上地名最长也就 6~8 字）
                               Text(narrow ? '指数 / 100' : '钓鱼指数 / 100',
@@ -236,7 +281,11 @@ class HomeWeatherHero extends StatelessWidget {
               ),
               const SizedBox(height: 9),
               Text(
-                has ? w.fishAdvice : '正在获取当前位置的天气…',
+                has
+                    ? w.fishAdvice
+                    : (failed
+                        ? '天气没拉到${failReason == null || failReason!.isEmpty ? '' : '（$failReason）'}，点右侧「重试」再来一次'
+                        : '正在获取当前位置的天气…'),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
