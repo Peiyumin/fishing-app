@@ -52,6 +52,12 @@ class _HomeScreenState extends State<HomeScreen>
     with WidgetsBindingObserver, RouteAware {
   FishingWeather? _weather;
 
+  /// 天气**拉取失败**（v2.1.95）：只在「完全没有数据」时才让卡片变成失败态。
+  ///
+  /// 以前失败只弹一条 toast，卡片仍画着「获取中」——用户分不清是在拉还是
+  /// 已经失败了，只能干等（截图里的「获取中 / 正在获取当前位置的天气…」）。
+  bool _weatherFailed = false;
+
   /// 顶部钓法分类（v2.1.86）：台钓 / 路亚 / 钓场 / 海钓
   ///
   /// 它不只改标签 —— 换钓法会用**同一小时**的天气按新权重重算指数，
@@ -507,6 +513,7 @@ class _HomeScreenState extends State<HomeScreen>
       if (mounted) {
         setState(() {
           _weather = w;
+          _weatherFailed = false;
           // 拉回来的是「台钓口径」的快照；当前选的是别的钓法就按那套权重重算，
           // 否则用户切到海钓、后台刷新一次又被打回 78 分
           _applyModeToWeather();
@@ -515,11 +522,22 @@ class _HomeScreenState extends State<HomeScreen>
     } catch (e) {
       if (mounted) {
         // 已有缓存 / 自动刷新时不打扰用户；完全没有数据时才提示
-        if (_weather == null && !silent) {
-          CenterToast.show(context, '天气暂不可用，请检查网络');
+        if (_weather == null) {
+          // 交给卡片自己显示「重试」，只弹一次 toast（自动刷新不吵人）
+          setState(() => _weatherFailed = true);
+          if (!silent) {
+            CenterToast.show(context, '天气暂不可用，请检查网络');
+          }
         }
       }
     }
+  }
+
+  /// 卡片上那个「重试」按钮（v2.1.95）
+  Future<void> _retryWeather() async {
+    if (!mounted) return;
+    setState(() => _weatherFailed = false);
+    await _loadWeather(silent: true);
   }
 
   /// 附近钓点：按「距我距离」由近到远排序（未定位成功时保持后台排序）
@@ -668,6 +686,9 @@ class _HomeScreenState extends State<HomeScreen>
                       mode: _mode, onModeChanged: _setMode, embedded: true),
                   HomeWeatherHero(
                     weather: _weather,
+                    failed: _weatherFailed,
+                    failReason: WeatherService.lastError,
+                    onRetry: _retryWeather,
                     placeLabel: _place?.label,
                     waterTemp: WeatherService.memoryWaterTemp,
                     mode: _mode,
